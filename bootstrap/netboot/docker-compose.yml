@@ -1,0 +1,69 @@
+version: "2.1"
+services:
+  # TFTP server for hosting boot files
+  pi-tftp:
+    image: pghalliday/tftp
+    container_name: pi-tftp
+    network_mode: host
+    profiles:
+      - nobuild
+      - debian
+    volumes:
+      - ./README.md:/var/tftpboot/test.txt:ro
+      - netboot-boot-data:/var/tftpboot
+    ports:
+      - 69:69/udp
+    healthcheck:
+      test: ["CMD", "test", "-f", "/var/tftpboot/test.txt"]
+      interval: 1m
+      timeout: 5s
+      retries: 0
+      start_period: 1m
+    restart: unless-stopped
+
+  # NFS server for hosting the OS files
+  pi-nfs:
+    image: erichough/nfs-server
+    container_name: pi-nfs
+    privileged: true
+    profiles:
+      - nobuild
+      - debian
+    env_file:
+      - .env
+    volumes:
+      - ./README.md:/mnt/nfsshare/test.txt:ro
+      - netboot-os-data:/mnt/nfsshare
+    ports:
+      - 111:111
+      - 111:111/udp
+      - 2049:2049
+      - 2049:2049/udp
+      - 32765-32768:32765-32768
+      - 32765-32768:32765-32768/udp
+    healthcheck:
+      test: ["CMD", "test", "-f", "/mnt/nfsshare/test.txt"]
+      interval: 1m
+      timeout: 5s
+      retries: 0
+      start_period: 1m
+    restart: unless-stopped
+
+  # Optional builder for creating Debian structure files on the servers
+  debian-builder:
+    container_name: debian-builder
+    build:
+      dockerfile: debian-builder.Dockerfile
+      network: host
+    privileged: true
+    profiles:
+      - debian
+    env_file:
+      - .env
+    volumes:
+      - .:/mnt/netboot
+      - netboot-boot-data:/mnt/netboot/boot
+      - netboot-os-data:/mnt/netboot/os
+volumes:
+  netboot-boot-data:
+  netboot-os-data:

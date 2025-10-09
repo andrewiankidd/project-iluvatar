@@ -1,0 +1,33 @@
+#cloud-config
+hostname: valar-1
+manage_etc_hosts: true
+
+users:
+  - name: kidd
+    gecos: Kidd
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: sudo, adm
+    shell: /bin/bash
+    lock_passwd: false
+    plain_text_passwd: "mellon"
+    #ssh_authorized_keys:
+    #  # optional: replace with your real SSH key
+    #  - ssh-ed25519 AAAA...yourpublickeyhere
+
+package_update: true
+package_upgrade: false
+
+runcmd:
+  # ensure networking is up
+  - systemctl is-active --quiet systemd-networkd || sleep 10
+
+  # install k3s (primary server, bootstrap)
+  - curl -sfL https://get.k3s.io | sh -s - server --cluster-init --disable traefik
+
+  # ensure k3s starts on boot
+  - systemctl enable k3s
+
+  # simple marker file for debugging
+  - echo "Bootstrap complete for $(hostname)" > /var/log/bootstrap-complete.log
+
+final_message: "Cloud-init for valar-1 complete. k3s installed."

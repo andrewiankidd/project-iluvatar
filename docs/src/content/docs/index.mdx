@@ -1,0 +1,39 @@
+---
+title: Project Ilúvatar
+description: Get started building your docs site with Starlight.
+template: splash
+hero:
+  tagline: Automated, PXE Multi-Cluster Provisioning
+  image:
+    file: ../../assets/logo.png
+  actions:
+    - text: Get Started
+      link: /project-iluvatar/about/
+      icon: right-arrow
+      variant: primary
+#    - text: About
+#     link: /project-iluvatar/reference/about/
+#     icon: external
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## More
+
+<CardGrid stagger>
+  <Card title="PXE Bootstrapping" icon="rocket">
+    Fully automated provisioning via PXE. Bootstrap nodes host TFTP/HTTP, enabling x86 nodes to self-install and join the cluster without manual steps.
+  </Card>
+  <Card title="GitOps" icon="github">
+    All infra and workloads are defined declaratively in <a href="https://github.com/andrewiankidd/kidd-network">Git</a>. Argo CD reconciles clusters for consistent, auditable deploys.
+  </Card>
+  <Card title="Immutable Infrastructure" icon="approve-check-circle">
+    Main cluster runs on <a href="https://www.talos.dev">Talos Linux</a> (secure, immutable, API-driven). Bootstrap services run on ARM64 with k3s.
+  </Card>
+  <Card title="Distributed Storage & Backups" icon="cloud-download">
+    <a href="https://longhorn.io">Longhorn</a> for replicated block storage; <a href="https://velero.io">Velero</a> for scheduled and on-demand backups.
+  </Card>
+  <Card title="Documentation" icon="open-book">
+    Architecture and operations documented with <a href="https://starlight.astro.build/">Starlight</a> for reproducible workflows.
+  </Card>
+</CardGrid>
