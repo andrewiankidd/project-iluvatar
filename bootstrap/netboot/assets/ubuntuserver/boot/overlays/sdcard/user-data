@@ -1,0 +1,52 @@
+#cloud-config
+
+resize_rootfs: true
+
+write_files:
+  # Journald: per-boot (volatile) logs so journalctl works even with tmpfs /var/log
+  - path: /etc/systemd/journald.conf.d/10-volatile.conf
+    permissions: '0644'
+    content: |
+      [Journal]
+      Storage=volatile
+      RuntimeMaxUse=64M
+      Compress=yes
+      SystemMaxFileSize=16M
+
+  # k3s tmpfs mounts preparation script
+  - path: /usr/local/bin/k3s-00-prepare-mounts.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      echo "[prepare] ensuring tmpfs mounts and fstab entries"
+      mkdir -p /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs /var/lib/rancher/k3s/agent/containerd/tmpmounts /var/lib/kubelet/pods /var/log
+      add_fstab_once() {
+        local line="$1"
+        local mountpoint="$2"
+        if ! grep -qE "^tmpfs[[:space:]]+${mountpoint}[[:space:]]+tmpfs" /etc/fstab; then
+          echo "$line" >> /etc/fstab
+        fi
+      }
+      add_fstab_once 'tmpfs /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs tmpfs defaults,size=20% 0 0' '/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs'
+      add_fstab_once 'tmpfs /var/lib/rancher/k3s/agent/containerd/tmpmounts tmpfs defaults,size=5% 0 0' '/var/lib/rancher/k3s/agent/containerd/tmpmounts'
+      add_fstab_once 'tmpfs /var/lib/kubelet/pods tmpfs defaults,size=20% 0 0' '/var/lib/kubelet/pods'
+      add_fstab_once 'tmpfs /var/log tmpfs defaults,size=5% 0 0' '/var/log'
+      mount -a || true
+      echo "[mounts] after mount -a:"; findmnt -t tmpfs | sed 's/^/[mounts] /'
+
+  # Netboot arg overlays for k3s install
+  - path: /usr/local/bin/k3s-15-netboot-arguments.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      echo "[args] staging netboot-specific K3S_* argument overlays"
+      ARGS_DIR="/run/k3s-bootstrap"
+      mkdir -p "$ARGS_DIR"
+      # Common args suited for netboot/ephemeral filesystems
+      cat >"$ARGS_DIR/K3S_COMMON_ARGS" <<'EOF'
+      --snapshotter=fuse-overlayfs --kubelet-arg=eviction-hard=nodefs.available<0%,imagefs.available<0%,containerfs.available<0% --kubelet-arg=image-gc-high-threshold=70 --kubelet-arg=image-gc-low-threshold=50 --kubelet-arg=eviction-pressure-transition-period=5m --kubelet-arg=serialize-image-pulls=true --kubelet-arg=container-log-max-size=5Mi --kubelet-arg=container-log-max-files=2
+      EOF
+
+final_message: "Cloud-init for valar-0 complete. k3s installed with sdcard runtime."

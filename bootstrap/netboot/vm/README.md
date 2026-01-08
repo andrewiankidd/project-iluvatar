@@ -5,7 +5,7 @@ This directory contains a collection of bash scripts designed to build a reprodu
 The VM is managed by [multipass](https://multipass.run/docs), a cross-platform tool that allows you to create, manage, and maintain ubuntu virtual machines with ease.
 
 ### Windows
-1. Install chocolatey    
+1. Install chocolatey
     ```powershell
     Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
     ```
@@ -19,7 +19,7 @@ The VM is managed by [multipass](https://multipass.run/docs), a cross-platform t
     ```
 
 ### Mac
-1. Install homebrew    
+1. Install homebrew
     ```bash
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     ```
@@ -69,5 +69,16 @@ multipass shell $VM_NAME
 If the VM gets in a bad state, or you're having issues with it, I recommend just removing it so you can recreate it:
 ```
 cd bootstrap/netboot
-source .env && multipass delete $VM_NAME --purge && .\vm\start.sh
+source .env && multipass delete $VM_NAME --purge; ./vm/start.sh
 ```
+
+And if multipass is stuck/misbehaving...
+
+**Windows:**
+Request service be stopped, kill the processes to be sure, wait 5 secs, start the service again
+```
+net stop multipass & taskkill.exe /IM multipass.gui.exe /F & taskkill.exe /IM multipassd.exe /F & timeout /t 5 /nobreak >nul & net start multipass
+```
+
+## Examples
+See [tasks.json](/.vscode/tasks.json)

@@ -56,13 +56,17 @@ sudo ufw allow 2049/tcp
 sudo ufw allow 2049/udp
 sudo ufw allow 32765:32768/tcp
 sudo ufw allow 32765:32768/udp
-sudo ufw allow 69/tcp
+# PXE/TFTP and ProxyDHCP ports
+sudo ufw allow 69/udp
+sudo ufw allow 67/udp
+sudo ufw allow 4011/udp
 
 # go
 echo "running: docker compose --profile $COMPOSE_PROFILE up --detach"
 sudo docker compose --profile $COMPOSE_PROFILE up --detach
 EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then
+    echo "docker compose failed with exit code $EXIT_CODE"
     exit 1
 fi
 sudo docker ps -a
