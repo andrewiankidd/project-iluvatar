@@ -24,12 +24,12 @@ export default defineConfig({
 				{
 					label: 'About',
 					collapsed: true,
-					autogenerate: { directory: 'about', exclude: ['drafts'] },
+					autogenerate: { directory: 'About', exclude: ['drafts'] },
 				},
 				{
 					label: 'Architecture',
 					collapsed: true,
-					autogenerate: { directory: 'architecture', exclude: ['drafts'] },
+					autogenerate: { directory: 'Architecture', exclude: ['drafts'] },
 				},
 				{
 					label: 'Getting Started',
