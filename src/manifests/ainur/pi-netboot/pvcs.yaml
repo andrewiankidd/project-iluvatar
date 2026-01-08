@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pi-netboot-boot
+  labels:
+    ainur.kidd.network/workload: pi-netboot
+    ainur.kidd.network/volume: boot
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: longhorn-replicated-ext4-immediate
+  resources:
+    requests:
+      storage: 128Mi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pi-netboot-os
+  labels:
+    ainur.kidd.network/workload: pi-netboot
+    ainur.kidd.network/volume: os
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: longhorn-replicated-ext4-immediate
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pi-netboot-nfs-state
+  labels:
+    ainur.kidd.network/workload: pi-netboot
+    ainur.kidd.network/volume: nfs-state
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: longhorn-replicated-ext4-immediate
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pi-netboot-download
+  labels:
+    ainur.kidd.network/workload: pi-netboot
+    ainur.kidd.network/volume: download
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: longhorn-replicated-ext4-immediate
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pi-netboot-extracted
+  labels:
+    ainur.kidd.network/workload: pi-netboot
+    ainur.kidd.network/volume: extracted
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: longhorn-replicated-ext4-immediate
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pi-netboot-output
+  labels:
+    ainur.kidd.network/workload: pi-netboot
+    ainur.kidd.network/volume: output
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: longhorn-replicated-ext4-immediate
+  resources:
+    requests:
+      storage: 2Gi

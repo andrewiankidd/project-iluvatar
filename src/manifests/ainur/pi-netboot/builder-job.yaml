@@ -1,0 +1,117 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pi-netboot-builder
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        job: pi-netboot-builder
+    spec:
+      initContainers:
+        - name: git-init
+          image: alpine:3.20
+          imagePullPolicy: IfNotPresent
+          command: ["sh","-c"]
+          args:
+            - |
+              set -euo pipefail
+              echo "Installing git"
+              apk add --no-cache git ca-certificates
+              update-ca-certificates || true
+              echo "Cloning repo (sparse, shallow) to /mnt/netboot/repo"
+              git clone --depth=1 --filter=blob:none --sparse --branch main \
+                https://github.com/andrewiankidd/project-iluvatar.git /mnt/netboot/repo
+              git -C /mnt/netboot/repo sparse-checkout set bootstrap/netboot
+              echo "Linking assets and scripts into /mnt/netboot"
+              ln -sfn /mnt/netboot/repo/bootstrap/netboot/scripts /mnt/netboot/scripts
+              ln -sfn /mnt/netboot/repo/bootstrap/netboot/assets /mnt/netboot/assets
+          volumeMounts:
+            - name: repo
+              mountPath: /mnt/netboot
+      # nodeSelector:
+      #   kidd.network/role: "control-plane"
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      restartPolicy: Never
+      containers:
+        - name: builder
+          image: andrewkidd/pi-netboot-builder:latest
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+          env:
+            - name: BOOTSTRAP_IP_ADDRESS
+              value: 192.168.1.59
+            - name: CLEAN_OS_FILES
+              value: "false"
+            - name: CLEAN_BOOT_FILES
+              value: "false"
+            # Hate that you cant do this via valueFrom
+            # - name: BOOTSTRAP_IP_ADDRESS
+            #   valueFrom:
+            #     serviceRef:
+            #       name: netboot-lb
+            #       fieldPath: status.loadBalancer.ingress[0].ip
+            # - name: DOWNLOAD_DIRECTORY
+            #   value: /tmp/pi-netboot-builder/download
+            # - name: EXTRACT_DIRECTORY
+            #   value: /tmp/pi-netboot-builder/extract
+            # - name: OUTPUT_DIR
+            #   value: /tmp/pi-netboot-builder/output
+            - name: BOOT_EXPORT_DIRECTORY
+              value: /tmp/pi-netboot-builder/boot
+            - name: OS_EXPORT_DIRECTORY
+              value: /tmp/pi-netboot-builder/os
+            - name: DOWNLOAD_DIRECTORY
+              value: /tmp/pi-netboot-builder/download
+            - name: EXTRACT_DIRECTORY
+              value: /tmp/pi-netboot-builder/extract
+            - name: OUTPUT_DIR
+              value: /tmp/pi-netboot-builder/output
+          envFrom:
+            - configMapRef:
+                name: pi-netboot-env
+          volumeMounts:
+            - name: repo
+              mountPath: /mnt/netboot
+            - name: boot
+              mountPath: /tmp/pi-netboot-builder/boot
+            - name: os
+              mountPath: /tmp/pi-netboot-builder/os
+            - name: download
+              mountPath: /tmp/pi-netboot-builder/download
+            - name: extracted
+              mountPath: /tmp/pi-netboot-builder/extract
+            - name: output
+              mountPath: /tmp/pi-netboot-builder/output
+            - name: dev
+              mountPath: /dev
+      volumes:
+        - name: repo
+          emptyDir: {}
+        - name: boot
+          persistentVolumeClaim:
+            claimName: pi-netboot-boot
+        - name: os
+          persistentVolumeClaim:
+            claimName: pi-netboot-os
+        - name: download
+          persistentVolumeClaim:
+            claimName: pi-netboot-download
+        - name: extracted
+          persistentVolumeClaim:
+            claimName: pi-netboot-extracted
+        - name: output
+          persistentVolumeClaim:
+            claimName: pi-netboot-output
+        - name: dev
+          hostPath:
+            path: /dev
+            type: Directory

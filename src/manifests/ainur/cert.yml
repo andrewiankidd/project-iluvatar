@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-download
+  namespace: ainur
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: ainur
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar
+    targetRevision:  main
+    path: src/manifests/ainur/cert
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ainur-cert
+  syncPolicy:
+    managedNamespaceMetadata:
+      labels:
+        ainur.kidd.network/ca: inject
+    syncOptions:
+      - CreateNamespace=true
+    automated:
+      prune: true
+      selfHeal: true
+

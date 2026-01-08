@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-conf
+  namespace: ainur-cert
+data:
+  default.conf: |
+    server {
+      listen 80 default_server;
+      server_name _;
+      root /usr/share/nginx/html;
+      index index.html;
+
+      # Serve CA file with a reasonable content type and downloadable filename
+
+      location = /ca.crt {
+        default_type application/x-x509-ca-cert;
+        add_header Content-Disposition "attachment; filename=lab-root-ca.crt";
+        try_files /ca/ca.crt =404;
+      }
+
+      location / {
+        try_files $uri /index.html =404;
+      }
+    }
