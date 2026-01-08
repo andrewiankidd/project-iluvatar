@@ -1,0 +1,26 @@
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: lab-ca-secret
+spec:
+  sources:
+    - secret:
+        name: cluster-root-ca
+        key: tls.crt
+        namespace: cert-manager
+  target:
+    secret:
+      key: ca.crt
+    namespaceSelector:
+      matchLabels:
+        ainur.kidd.network/ca: "inject"
+---
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: omni-https
+  namespace: ainur-sidero-omni
+spec:
+  serverName: omni.kidd.network
+  rootCAsSecrets:
+    - lab-ca-secret
