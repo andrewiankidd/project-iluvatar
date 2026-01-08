@@ -1,6 +1,5 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
-import { defineConfig } from 'astro/config';
 import mermaid from 'astro-mermaid';
 
 // https://astro.build/config
@@ -24,17 +23,17 @@ export default defineConfig({
 				{
 					label: 'About',
 					collapsed: true,
-					autogenerate: { directory: 'About', exclude: ['drafts'] },
+					autogenerate: { directory: 'About' },
 				},
 				{
 					label: 'Architecture',
 					collapsed: true,
-					autogenerate: { directory: 'Architecture', exclude: ['drafts'] },
+					autogenerate: { directory: 'Architecture' },
 				},
 				{
 					label: 'Getting Started',
 					collapsed: true,
-					autogenerate: { directory: 'Getting Started', exclude: ['drafts'] },
+					autogenerate: { directory: 'Getting Started' },
 				},
 				{
 					label: 'Guides',
@@ -47,39 +46,39 @@ export default defineConfig({
 						{
 							label: 'Diskless Pi Netboot',
 							collapsed: true,
-							autogenerate: { directory: 'Guides/Netbooting Raspberry Pi', exclude: ['drafts'] },
+							autogenerate: { directory: 'Guides/Netbooting Raspberry Pi' },
 						},
 						{
 							label: 'Ephemeral K3s Cluster',
 							collapsed: true,
-							autogenerate: { directory: 'Guides/Ephemeral K3s Cluster', exclude: ['drafts'] },
+							autogenerate: { directory: 'Guides/Ephemeral K3s Cluster' },
 						},
 						{
 							label: 'Self Signed Cluster SSO',
 							collapsed: true,
-							autogenerate: { directory: 'Guides/Self Signed Cluster SSO', exclude: ['drafts'] },
+							autogenerate: { directory: 'Guides/Self Signed Cluster SSO' },
 						},
 						{
 							label: 'Bootstrapping Kubernetes From Kubernetes',
 							collapsed: true,
-							autogenerate: { directory: 'Guides/Netbooting Pi from Kubernetes', exclude: ['drafts'] },
+							autogenerate: { directory: 'Guides/Netbooting Pi from Kubernetes' },
 						},
 						{
 							label: 'Netbooting x86',
 							collapsed: true,
-							autogenerate: { directory: 'Guides/Netbooting x86', exclude: ['drafts'] },
+							autogenerate: { directory: 'Guides/Netbooting x86' },
 						},
 						{
 							label: 'Other',
 							collapsed: true,
-							autogenerate: { directory: 'Guides/Other', exclude: ['drafts'] },
+							autogenerate: { directory: 'Guides/Other' },
 						},
 					],
 				},
 				{
 					label: 'Reference',
 					collapsed: true,
-					autogenerate: { directory: 'reference', exclude: ['drafts'] }
+					autogenerate: { directory: 'Reference' },
 				}
 			],
 		}),
