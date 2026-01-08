@@ -1,0 +1,40 @@
+defaultSettings:
+  defaultDataPath: /var/lib/longhorn/disks/nvme1
+  defaultReplicaCount: "3"
+  allowVolumeCreationWithDegradedAvailability: true
+  replicaSoftAntiAffinity: true
+  replicaZoneSoftAntiAffinity: true
+  replicaDiskSoftAntiAffinity: true
+  replicaAutoBalance: best-effort
+  createDefaultDiskLabeledNodes: false
+  storageOverProvisioningPercentage: "100"
+  storageMinimalAvailablePercentage: "10"
+  storageReservedPercentageForDefaultDisk: "10"
+  nodeDownPodDeletionPolicy: delete-both-statefulset-and-deployment-pod
+
+ingress:
+  enabled: false
+
+preUpgradeChecker:
+  jobEnabled: false
+  upgradeVersionCheck: false
+
+persistence:
+  defaultClass: true
+  defaultClassReplicaCount: 3
+
+longhornUI:
+  nodeSelector:
+    kidd.network/role: "control-plane"
+
+# Ensure the admission webhook always schedules even on tainted control-plane nodes.
+admissionWebhook:
+  nodeSelector:
+    kidd.network/role: "control-plane"
+  tolerations:
+    - key: "node-role.kubernetes.io/master"
+      operator: "Exists"
+      effect: "NoSchedule"
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"

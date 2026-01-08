@@ -1,0 +1,31 @@
+serviceAccount:
+  create: true
+  name: headlamp
+
+rbac:
+  create: true
+
+config:
+  inCluster: true
+  oidc:
+    clientID: "headlamp"
+    clientSecret: "dex-oidc-secret"
+    issuerURL: "https://dex.kidd.network"
+    scopes: "openid profile email"
+    callbackURL: "https://headlamp.kidd.network/oidc-callback"
+    useAccessToken: true
+
+env:
+  - name: SSL_CERT_DIR
+    value: /etc/ssl/local-ca
+volumes:
+  - name: local-ca
+    configMap:
+      name: lab-ca
+      optional: true
+volumeMounts:
+  - name: local-ca
+    mountPath: /etc/ssl/local-ca
+    readOnly: true
+clusterRoleBinding:
+  create: false

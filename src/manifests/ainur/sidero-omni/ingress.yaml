@@ -1,0 +1,71 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: omni-frontend
+  namespace: ainur-sidero-omni
+  labels:
+    app.kubernetes.io/part-of: sidero-omni
+    app.kubernetes.io/component: omni
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+  selector:
+    app.kubernetes.io/component: omni
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: omni
+  namespace: ainur-sidero-omni
+  annotations:
+    cert-manager.io/cluster-issuer: local-ca
+    kubernetes.io/ingress.class: traefik
+    traefik.ingress.kubernetes.io/service.serversscheme: https
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: omni.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: omni-frontend
+                port:
+                  number: 80
+  tls:
+    - secretName: omni-tls
+      hosts:
+        - omni.kidd.network
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: omni-kubernetes-proxy
+  namespace: ainur-sidero-omni
+  annotations:
+    cert-manager.io/cluster-issuer: local-ca
+    kubernetes.io/ingress.class: traefik
+    traefik.ingress.kubernetes.io/service.serversscheme: https
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: omni.kubernetes.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: internal
+                port:
+                  number: 8095
+  tls:
+    - secretName: omni-tls
+      hosts:
+        - omni.kubernetes.kidd.network
