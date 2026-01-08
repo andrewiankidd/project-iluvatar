@@ -1,5 +1,6 @@
 ---
 title: Cluster Storage Notes
+slug: reference/cluster-storage-notes
 description: Things to do
 draft: true
 ---

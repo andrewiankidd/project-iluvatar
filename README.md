@@ -1,6 +1,9 @@
 # Project Ilúvatar
+> WIP GitOps PXE Multi-cluster
 
-WIP GitOps PXE Multi-cluster 
+![alt text](docs/src/assets/logo.png)
+
+> ... the music and the echo of the music went out into the Void, and it was not void
 
 # Docs
 

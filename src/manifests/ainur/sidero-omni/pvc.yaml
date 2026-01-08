@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: omni-pvc
+  namespace: ainur-sidero-omni
+  labels:
+    ainur.kidd.network/workload: sidero-omni
+    ainur.kidd.network/volume: etcd
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn-replicated-xfs-immediate
+  resources:
+    requests:
+      storage: 20Gi

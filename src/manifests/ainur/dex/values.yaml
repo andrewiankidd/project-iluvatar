@@ -1,0 +1,35 @@
+config:
+  issuer: https://dex.kidd.network
+  storage:
+    type: memory
+  enablePasswordDB: true
+  staticPasswords:
+    - email: admin@kidd.network
+      # bcrypt of a demo password: change for your environment
+      # generate with: htpasswd -nbBC 10 "" 'YourStrongPass' | tr -d ':\n'
+      # Password: ubuntu
+      hash: $2y$10$66R20C4j0E4d0tjg7YewX.b7UvI3XoA6CcxAFO7Pj8J6izWLY18S6
+      username: admin
+      userID: "0001"
+  staticClients:
+    - id: headlamp
+      name: headlamp
+      secret: dex-oidc-secret
+      redirectURIs:
+        - https://headlamp.kidd.network/oidc-callback
+    - id: argocd
+      name: argocd
+      secret: dex-oidc-secret
+      redirectURIs:
+        - https://argocd.kidd.network/auth/callback
+    - id: omni
+      name: omni
+      secret: dex-oidc-secret
+      redirectURIs:
+        - https://omni.kidd.network/oidc/consume
+        - https://omni.kidd.network/auth/callback
+        - https://omni.kidd.network/oidc/callback
+        - https://omni.kidd.network/callback
+
+service:
+  type: ClusterIP
