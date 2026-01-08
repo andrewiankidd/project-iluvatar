@@ -5,8 +5,7 @@ on:
       - main
     paths:
       - '.github/workflows/publish-docs.yml'
-      - 'bootstrap/netboot/pi-netboot-builder.Dockerfile'
-      - 'bootstrap/netboot/scripts/**'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
