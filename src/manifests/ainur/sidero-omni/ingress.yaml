@@ -25,6 +25,7 @@ metadata:
     cert-manager.io/cluster-issuer: local-ca
     kubernetes.io/ingress.class: traefik
     traefik.ingress.kubernetes.io/service.serversscheme: https
+    traefik.ingress.kubernetes.io/service.serverstransport: omni-https@kubernetescrd
 spec:
   ingressClassName: traefik
   rules:
@@ -52,6 +53,7 @@ metadata:
     cert-manager.io/cluster-issuer: local-ca
     kubernetes.io/ingress.class: traefik
     traefik.ingress.kubernetes.io/service.serversscheme: https
+    traefik.ingress.kubernetes.io/service.serverstransport: omni-https@kubernetescrd
 spec:
   ingressClassName: traefik
   rules:
