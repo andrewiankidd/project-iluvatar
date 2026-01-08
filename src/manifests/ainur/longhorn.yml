@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: longhorn
+  namespace: ainur
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: ainur
+  sources:
+    - repoURL: https://charts.longhorn.io
+      targetRevision: 1.10.0
+      chart: longhorn
+      helm:
+        valueFiles:
+          - $values/src/manifests/ainur/longhorn/values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision:  main
+      path: src/manifests/ainur/longhorn
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision:  main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ainur-longhorn
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    managedNamespaceMetadata:
+      labels:
+        ainur.kidd.network/ca: inject
+    automated:
+      prune: true
+      selfHeal: true

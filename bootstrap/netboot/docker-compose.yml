@@ -1,0 +1,115 @@
+services:
+  # TFTP server for hosting boot files (aligned with k8s manifests)
+  pi-tftp:
+    image: andrewkidd/tftp-server:v1.0.3
+    container_name: pi-tftp
+    network_mode: host
+    profiles:
+      - netboot
+      - debian-netboot
+    environment:
+      HOSTNETWORK: "true"
+      TFTPD_LISTEN: "true"
+      TFTPD_ADDRESS: "0.0.0.0:69"
+      TFTPD_DEBUG: "true"
+      TFTPD_PORT_RANGE: "5000:5010"
+      TFTPD_FOREGROUND: "true"
+      TFTPD_VERBOSE_COUNT: "5"
+      TFTPD_VERBOSITY: "8"
+      TFTPD_SECURE_MODE: "true"
+      TFTPD_DIRECTORIES: "/var/tftpboot"
+    volumes:
+      - ./README.md:/var/tftpboot/test.txt:ro
+      - netboot-boot-data:/var/tftpboot
+    ports:
+      - 69:69/udp
+      - 5000:5000/udp
+      - 5001:5001/udp
+      - 5002:5002/udp
+      - 5003:5003/udp
+      - 5004:5004/udp
+      - 5005:5005/udp
+      - 5006:5006/udp
+      - 5007:5007/udp
+      - 5008:5008/udp
+      - 5009:5009/udp
+      - 5010:5010/udp
+    healthcheck:
+      test: ["CMD", "test", "-f", "/var/tftpboot/test.txt"]
+      interval: 1m
+      timeout: 5s
+      retries: 0
+      start_period: 1m
+    restart: unless-stopped
+
+  # NFS server for hosting the OS files (aligned with k8s manifests)
+  pi-nfs:
+    image: andrewkidd/nfs-server:v2.2.6
+    container_name: pi-nfs
+    privileged: true
+    profiles:
+      - netboot
+      - debian-netboot
+    env_file:
+      - .env
+    environment:
+      NFS_VERSION: "3"
+      NFS_EXPORT_0: "/mnt/nfsshare *(rw,fsid=0,async,no_subtree_check,no_auth_nlm,insecure,no_root_squash)"
+      NFS_LOG_LEVEL: "DEBUG"
+    volumes:
+      - ./README.md:/mnt/nfsshare/test.txt:ro
+      - netboot-os-data:/mnt/nfsshare
+    ports:
+      - 111:111
+      - 111:111/udp
+      - 2049:2049
+      - 2049:2049/udp
+      - 32765-32768:32765-32768
+      - 32765-32768:32765-32768/udp
+    healthcheck:
+      test: ["CMD", "test", "-f", "/mnt/nfsshare/test.txt"]
+      interval: 1m
+      timeout: 5s
+      retries: 0
+      start_period: 1m
+    restart: unless-stopped
+
+  # HTTP server for cloud-init metadata (user-data, meta-data)
+  cloud-init-http:
+    image: nginx:alpine
+    container_name: cloud-init-http
+    profiles:
+      - netboot
+      - debian-netboot
+    env_file:
+      - .env
+    volumes:
+      - netboot-boot-data:/usr/share/nginx/html:ro
+    ports:
+      - "80:80"
+    restart: unless-stopped
+
+  # Optional builder for creating Debian structure files on the servers
+  pi-netboot-builder:
+    container_name: pi-netboot-builder
+    build:
+      dockerfile: pi-netboot-builder.Dockerfile
+      network: host
+    privileged: true
+    profiles:
+      - debian-netboot
+      - debian-sdcard
+    env_file:
+      - .env
+    volumes:
+      - .:/mnt/netboot
+      - netboot-extract-data:/mnt/netboot/extract
+      - netboot-boot-data:/mnt/netboot/boot
+      - netboot-os-data:/mnt/netboot/os
+      - netboot-output-data:/mnt/netboot/output
+
+volumes:
+  netboot-extract-data:
+  netboot-boot-data:
+  netboot-os-data:
+  netboot-output-data:

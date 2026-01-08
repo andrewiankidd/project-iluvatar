@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: headlamp-ingress
+  namespace: ainur-headlamp
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+    cert-manager.io/cluster-issuer: "local-ca"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - headlamp.kidd.network
+      secretName: headlamp-tls
+  rules:
+    - host: headlamp.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: headlamp
+                port:
+                  number: 80

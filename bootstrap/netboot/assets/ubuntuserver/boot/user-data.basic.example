@@ -1,0 +1,25 @@
+#cloud-config
+# https://cloudinit.readthedocs.io/
+
+hostname: valar-0
+
+resize_rootfs: false
+
+ssh_pwauth: true
+
+package_update: true
+
+package_upgrade: false
+
+users:
+  - name: ubuntu
+    plain_text_passwd: ubuntu
+    lock_passwd: false
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: sudo,adm
+
+chpasswd:
+  expire: false
+
+final_message: "Cloud-init complete."

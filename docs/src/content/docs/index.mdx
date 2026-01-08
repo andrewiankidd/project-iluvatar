@@ -1,0 +1,55 @@
+---
+title: Project Ilúvatar
+description: Automated bare-metal and PXE multi-cluster provisioning for homelabs.
+template: splash
+hero:
+  tagline: "<em>… the music and the echo of the music went out into the Void, and it was not void</em>"
+  image:
+    file: ../../assets/logo.png
+  actions:
+    - text: Get Started
+      link: /project-iluvatar/about/
+      icon: right-arrow
+      variant: primary
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What is it?
+Project Ilúvatar documents the design and automation of a self-hosting Kubernetes platform.
+Utilizing netboot, a single script can bootstrap a Raspberry Pi based cluster, which in turn provisions x86 workload clusters over PXE, with everything managed via GitOps - a complete bare-metal, immutable infrastructure built from scratch.
+
+## Core Concepts
+
+<CardGrid stagger>
+  <Card title="Bare-Metal Automation" icon="server">
+    End-to-end provisioning across mixed ARM and x86 hardware.
+    PXE-booted nodes self-install, configure, and join the cluster without imaging or SSH.
+  </Card>
+
+  <Card title="PXE Bootstrapping" icon="rocket">
+    Automated network boot via TFTP/HTTP.
+    Bootstrap nodes host the infrastructure stack for self-replicating cluster creation.
+  </Card>
+
+  <Card title="GitOps" icon="github">
+    All infrastructure and workloads defined declaratively in
+    <a href="https://github.com/andrewiankidd/kidd-network">Git</a>.
+    Argo CD ensures consistent, auditable cluster state.
+  </Card>
+
+  <Card title="Immutable Infrastructure" icon="approve-check-circle">
+    Workload clusters run on <a href="https://www.talos.dev">Talos Linux</a> - secure, immutable, API-driven.
+    Bootstrap services operate on ARM64 with k3s.
+  </Card>
+
+  <Card title="Distributed Storage & Backups" icon="cloud-download">
+    <a href="https://longhorn.io">Longhorn</a> provides replicated block storage;
+    <a href="https://velero.io">Velero</a> handles scheduled and on-demand backups.
+  </Card>
+
+  <Card title="Documentation" icon="open-book">
+    Architecture, process, and lessons learned documented with
+    <a href="https://starlight.astro.build/">Starlight</a> for reproducible workflows.
+  </Card>
+</CardGrid>

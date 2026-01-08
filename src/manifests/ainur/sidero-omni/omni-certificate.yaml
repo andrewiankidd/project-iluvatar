@@ -1,0 +1,14 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: omni
+  namespace: ainur-sidero-omni
+spec:
+  secretName: omni-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: local-ca
+  dnsNames:
+    - omni.kidd.network
+    - omni.siderolink.kidd.network
+    - omni.kubernetes.kidd.network

@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cert-download
+  namespace: ainur-cert
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+    cert-manager.io/cluster-issuer: "local-ca"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - cert.kidd.network
+      secretName: cert-site-tls
+  rules:
+    - host: cert.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cert-download
+                port:
+                  number: 80
