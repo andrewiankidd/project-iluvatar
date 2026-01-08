@@ -1,1 +1,3 @@
 bootstrap/netboot/.env
+bootstrap/netboot/assets/raspios/boot/.config
+bootstrap/netboot/output/**

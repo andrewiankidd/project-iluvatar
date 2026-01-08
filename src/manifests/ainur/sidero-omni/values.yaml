@@ -1,0 +1,82 @@
+domainName: omni.kidd.network
+accountUuid: "8a6f8e9c-9d2a-4f8e-8c6e-9f01d3b7a4c1"
+privateKeySource: "file:///omni.asc"
+
+deployment:
+  image: ghcr.io/siderolabs/omni
+  tag: "latest"
+  replicaCount: 1
+  imagePullPolicy: IfNotPresent
+  # nodeSelector:
+  #   kidd.network/role: "worker"
+
+name: "Omni"
+
+initialUsers:
+  - admin@kidd.network
+
+includeGenericDevicePlugin: false
+
+auth:
+  auth0:
+    enabled: false
+  saml:
+    enabled: false
+
+service:
+  type: ClusterIP
+  siderolink:
+    domainName: omni.siderolink.kidd.network
+    wireguard:
+      address: ""  # optional; set if using host address for WireGuard
+      port: 30180
+  k8sProxy:
+    domainName: omni.kubernetes.kidd.network
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+extraArgs:
+  - --auth-oidc-enabled=true
+  - --auth-oidc-provider-url=https://dex.kidd.network
+  - --auth-oidc-client-id=omni
+  - --auth-oidc-client-secret=dex-oidc-secret
+  - --auth-oidc-scopes=openid
+  - --auth-oidc-scopes=profile
+  - --auth-oidc-scopes=email
+
+volumeMounts:
+  tls:
+    mountPath: "/etc/omni/tls"
+    readOnly: true
+  omniAsc:
+    mountPath: "/omni.asc"
+    subPath: "omni.asc"
+    readOnly: true
+
+volumes:
+  etcd:
+    persistentVolumeClaimName: omni-pvc
+  tls:
+    secretName: omni-tls
+  gpg:
+    secretName: omni-gpg  # created automatically by pre-sync hook if absent
+
+customVolumes:
+  - name: lab-ca
+    configMap:
+      name: lab-ca
+      optional: true
+
+customVolumeMounts:
+  # Omni image bundles certs via siderolabs/ca-certificates and FHS.
+  # That stack uses the Debian-style bundle path below; one mount is sufficient.
+  - name: lab-ca
+    mountPath: /etc/ssl/certs/ca-certificates.crt
+    subPath: ca.crt
+    readOnly: true

@@ -1,0 +1,155 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "VM: View NFS/Root Data",
+      "type": "shell",
+      "options": {
+        "cwd": "${workspaceFolder}/bootstrap/netboot/vm",
+        "shell": {
+          "executable": "bash",
+          "args": [
+            "-lc"
+          ]
+        }
+      },
+      "command": "export MSYS_NO_PATHCONV=1; source ./../.env; multipass exec \"$VM_NAME\" -- sudo ls /var/lib/docker/volumes/netboot_netboot-os-data/_data/ubuntu-24.04.3-preinstalled-server-arm64+raspi/",
+      "problemMatcher": []
+    },
+    {
+      "label": "VM: View TFTP/Boot Data",
+      "type": "shell",
+      "options": {
+        "cwd": "${workspaceFolder}/bootstrap/netboot/vm",
+        "shell": {
+          "executable": "bash",
+          "args": [
+            "-lc"
+          ]
+        }
+      },
+      "command": "export MSYS_NO_PATHCONV=1; source ./../.env; multipass exec \"$VM_NAME\" -- sudo ls /var/lib/docker/volumes/netboot_netboot-boot-data/_data/",
+      "problemMatcher": []
+    },
+    {
+      "label": "VM: View Persisted Data (k3s-token, k3s-leader)",
+      "type": "shell",
+      "options": {
+        "cwd": "${workspaceFolder}/bootstrap/netboot/vm",
+        "shell": {
+          "executable": "bash",
+          "args": [
+            "-lc"
+          ]
+        }
+      },
+      "command": "export MSYS_NO_PATHCONV=1; source ./../.env; multipass exec \"$VM_NAME\" -- sudo ls /var/lib/docker/volumes/netboot_netboot-os-data/_data/home/",
+      "problemMatcher": []
+    },
+    {
+      "label": "VM: Clear Persisted Data (fresh cluster)",
+      "type": "shell",
+      "options": {
+        "cwd": "${workspaceFolder}/bootstrap/netboot/vm",
+        "shell": {
+          "executable": "bash",
+          "args": [
+            "-lc"
+          ]
+        }
+      },
+      "command": "export MSYS_NO_PATHCONV=1; source ./../.env; multipass exec \"$VM_NAME\" -- sudo rm -rf /var/lib/docker/volumes/netboot_netboot-os-data/_data/home/ubuntu/*",
+      "problemMatcher": []
+    },
+    {
+      "label": "VM: Modify cloud-config (nano)",
+      "type": "shell",
+      "options": {
+        "cwd": "${workspaceFolder}/bootstrap/netboot/vm",
+        "shell": {
+          "executable": "bash",
+          "args": [
+            "-lc"
+          ]
+        }
+      },
+      "command": "export MSYS_NO_PATHCONV=1; source ./../.env; multipass exec \"$VM_NAME\" -- sudo nano /var/lib/docker/volumes/netboot_netboot-boot-data/_data/user-data",
+      "problemMatcher": []
+    },
+    {
+      "label": "VM: Transfer updated cloud-config",
+      "type": "shell",
+      "options": {
+        "cwd": "${workspaceFolder}/bootstrap/netboot/vm",
+        "shell": {
+          "executable": "bash",
+          "args": [
+            "-lc"
+          ]
+        }
+      },
+      "command": "export MSYS_NO_PATHCONV=1; source ./../.env; multipass transfer ./../assets/ubuntuserver/boot/user-data \"$VM_NAME\":/tmp/user-data && multipass exec \"$VM_NAME\" -- sudo install -m0644 /tmp/user-data /var/lib/docker/volumes/netboot_netboot-boot-data/_data/user-data",
+      "problemMatcher": []
+    },
+    {
+      "label": "VM: Wipe OS filesystem",
+      "type": "shell",
+      "options": {
+        "cwd": "${workspaceFolder}/bootstrap/netboot/vm",
+        "shell": {
+          "executable": "bash",
+          "args": [
+            "-lc"
+          ]
+        }
+      },
+      "command": "export MSYS_NO_PATHCONV=1; source ./../.env; multipass exec \"$VM_NAME\" -- bash -c \"docker compose up -d --force-recreate pi-netboot-builder && docker compose logs -f pi-netboot-builder\"",
+      "problemMatcher": []
+    },
+    {
+      "label": "VM: Force recreate OS filesystem outputs",
+      "type": "shell",
+      "options": {
+        "cwd": "${workspaceFolder}/bootstrap/netboot/vm",
+        "shell": {
+          "executable": "bash",
+          "args": [
+            "-lc"
+          ]
+        }
+      },
+      "command": "export MSYS_NO_PATHCONV=1; source ./../.env; multipass exec \"$VM_NAME\" -- docker compose up -d --force-recreate pi-netboot-builder",
+      "problemMatcher": []
+    },
+    {
+      "label": "VM: View logs (pi-netboot-builder)",
+      "type": "shell",
+      "options": {
+        "cwd": "${workspaceFolder}/bootstrap/netboot/vm",
+        "shell": {
+          "executable": "bash",
+          "args": [
+            "-lc"
+          ]
+        }
+      },
+      "command": "export MSYS_NO_PATHCONV=1; source ./../.env; multipass exec \"$VM_NAME\" -- docker compose logs pi-netboot-builder",
+      "problemMatcher": []
+    },
+    {
+      "label": "VM: Recreate VM",
+      "type": "shell",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "shell": {
+          "executable": "bash",
+          "args": [
+            "-lc"
+          ]
+        }
+      },
+      "command": "cd bootstrap/netboot/vm && source ./../.env; multipass delete; multipass purge; ./start.sh;",
+      "problemMatcher": []
+    }
+  ]
+}
