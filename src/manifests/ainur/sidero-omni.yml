@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sidero-omni
+  namespace: ainur
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: ainur
+  sources:
+    - repoURL: https://github.com/siderolabs/omni.git
+      targetRevision: v1.2.1
+      path: deploy/helm/omni
+      helm:
+        valueFiles:
+          - $values/src/manifests/ainur/sidero-omni/values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision:  main
+      path: src/manifests/ainur/sidero-omni
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision:  main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ainur-sidero-omni
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    managedNamespaceMetadata:
+      labels:
+        ainur.kidd.network/ca: inject
+    automated:
+      prune: true
+      selfHeal: true

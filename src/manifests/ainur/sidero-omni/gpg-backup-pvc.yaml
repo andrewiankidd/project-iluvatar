@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: omni-gpg-backup
+  namespace: ainur-sidero-omni
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+  labels:
+    ainur.kidd.network/workload: sidero-omni
+    ainur.kidd.network/volume: gpg-backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn-replicated-ext4-immediate
+  resources:
+    requests:
+      storage: 16Mi

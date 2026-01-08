@@ -1,0 +1,203 @@
+#cloud-config
+resize_rootfs: false
+
+write_files:
+  # Journald: per-boot (volatile) logs so journalctl works even with tmpfs /var/log
+  - path: /etc/systemd/journald.conf.d/10-volatile.conf
+    permissions: '0644'
+    content: |
+      [Journal]
+      Storage=volatile
+      RuntimeMaxUse=64M
+      Compress=yes
+      SystemMaxFileSize=16M
+
+  # k3s tmpfs mounts preparation script
+  - path: /usr/local/bin/k3s-00-prepare-mounts.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      echo "[prepare] ensuring tmpfs mounts and fstab entries"
+      mkdir -p /var/lib/rancher/k3s /var/lib/kubelet /var/lib/containerd /var/log
+      add_fstab_once() {
+        local line="$1"
+        local mountpoint="$2"
+        if ! grep -qE "^tmpfs[[:space:]]+${mountpoint}[[:space:]]+tmpfs" /etc/fstab; then
+          echo "$line" >> /etc/fstab
+        fi
+      }
+      add_fstab_once 'tmpfs /var/lib/rancher/k3s tmpfs defaults,size=60%,mode=0755 0 0' '/var/lib/rancher/k3s'
+      add_fstab_once 'tmpfs /var/lib/kubelet tmpfs defaults,size=10% 0 0' '/var/lib/kubelet'
+      add_fstab_once 'tmpfs /var/log tmpfs defaults,size=1% 0 0' '/var/log'
+      mount -a || true
+      echo "[mounts] after mount -a:"; findmnt -t tmpfs | sed 's/^/[mounts] /'
+
+  # # Netboot-specific systemd drop-in to add ordering/requirements to k3s-bootstrap
+  # - path: /usr/local/bin/k3s-02-netboot-unit-dropin.sh
+  #   permissions: '0755'
+  #   content: |
+  #     #!/bin/bash
+  #     set -euo pipefail
+  #     echo "[netboot] installing k3s-bootstrap.service drop-in for remote-fs/home ordering"
+  #     dir="/etc/systemd/system/k3s-bootstrap.service.d"
+  #     mkdir -p "$dir"
+  #     cat >"$dir/10-netboot.conf" <<'EOF'
+  #     [Unit]
+  #     After=network-online.target remote-fs.target home.mount
+  #     RequiresMountsFor=/home/ubuntu
+
+  #     [Service]
+  #     Environment=SKIP_NETWORK_WAITS=0
+  #     EOF
+  #     systemctl daemon-reload
+
+  # # Netboot waits: ensure network/NFS/home mounts are ready before leader election
+  # - path: /usr/local/bin/k3s-05-netboot-waits.sh
+  #   permissions: '0755'
+  #   content: |
+  #     #!/bin/bash
+  #     set -euo pipefail
+  #     echo "[waits] ensuring network/NFS/home mounts are ready"
+  #     echo "[env] SKIP_NETWORK_WAITS=${SKIP_NETWORK_WAITS:-} NFS_WAIT_MAX=${NFS_WAIT_MAX:-}"
+  #     U=$(awk -F: '$3>=1000 && $1!="nobody"{print $1; exit}')
+  #     HOME_DIR=$(eval echo "~$U")
+  #     if [ "${SKIP_NETWORK_WAITS:-0}" != "1" ]; then
+  #       NFS_WAIT_MAX="${NFS_WAIT_MAX:-120}"
+  #       for i in $(seq 1 "$NFS_WAIT_MAX"); do
+  #         if mountpoint -q /mnt/nfsshare || mountpoint -q /users || mountpoint -q "$HOME_DIR"; then break; fi
+  #         sleep 1
+  #       done
+  #     else
+  #       echo "[k3s] skipping NFS wait (SKIP_NETWORK_WAITS=1)"
+  #     fi
+  #     echo "[mounts] summary:"; findmnt -rn -o TARGET,SOURCE,FSTYPE | sed 's/^/[mounts] /'
+
+  # Netboot arg overlays for k3s install
+  - path: /usr/local/bin/k3s-15-netboot-arguments.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      echo "[args] staging netboot-specific K3S_* argument overlays"
+      ARGS_DIR="/run/k3s-bootstrap"
+      mkdir -p "$ARGS_DIR"
+      # Common args suited for netboot/ephemeral filesystems
+      cat >"$ARGS_DIR/K3S_COMMON_ARGS" <<'EOF'
+      --snapshotter=fuse-overlayfs --kubelet-arg=eviction-hard=nodefs.available<0%,imagefs.available<0%,containerfs.available<0% --kubelet-arg=image-gc-high-threshold=70 --kubelet-arg=image-gc-low-threshold=50 --kubelet-arg=eviction-pressure-transition-period=5m --kubelet-arg=serialize-image-pulls=true --kubelet-arg=container-log-max-size=5Mi --kubelet-arg=container-log-max-files=2
+      EOF
+      # Server args overlay
+      echo "--etcd-disable-snapshots --disable=local-storage" >"$ARGS_DIR/K3S_SERVER_ARGS"
+      # Agent args overlay
+      echo "--node-label=kidd.network/boot=netboot" >"$ARGS_DIR/K3S_AGENT_ARGS"
+
+  # SD card auto-flash: runs earliest; flashes /dev/mmcblk0 if image/hash differs, then reboots
+  - path: /usr/local/sbin/sd-flash.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      log() { echo "[sd-flash] $(date -Iseconds) $*"; }
+
+      IMG="${IMG_PATH:-/etc/sd.img}"
+      HASH_FILE="${IMG_HASH_PATH:-${IMG}.sha256}"
+
+      DEV="${SD_DEV:-/dev/mmcblk0}"
+      PART_BOOT="${DEV}p1"
+      MNT="/mnt/sd-boot"
+      STAMP=".sd-image.sha256"
+
+      # No SD device? nothing to do
+      if ! lsblk -ndo NAME,TYPE | grep -q "^$(basename "$DEV") disk$"; then
+        log "no SD device ($DEV); skipping"
+        exit 0
+      fi
+
+      # No image staged? nothing to do
+      if [ ! -f "$IMG" ]; then
+        log "no image at $IMG; skipping"
+        exit 0
+      fi
+
+      # Expected hash (prefer .sha256 file if present)
+      if [ -f "$HASH_FILE" ]; then
+        EXPECTED_HASH="$(cut -d' ' -f1 < "$HASH_FILE" | tr -d '\n')"
+      else
+        EXPECTED_HASH="$(sha256sum "$IMG" | awk '{print $1}')"
+      fi
+      log "expected hash: ${EXPECTED_HASH:0:12}…"
+
+      # Try fast path: read stamp from SD boot partition
+      mkdir -p "$MNT"
+      CURRENT_HASH=""
+      if mount -o ro "$PART_BOOT" "$MNT" 2>/dev/null; then
+        if [ -f "$MNT/$STAMP" ]; then
+          CURRENT_HASH="$(tr -d '\n' < "$MNT/$STAMP")"
+          log "found stamp on SD: ${CURRENT_HASH:0:12}…"
+        fi
+        umount "$MNT" || true
+      fi
+
+      # If no stamp, compute hash of current SD content up to image size
+      if [ -z "$CURRENT_HASH" ]; then
+        size_bytes=$(stat -c%s "$IMG")
+        if [ "$size_bytes" -gt 0 ] 2>/dev/null; then
+          log "computing SD hash over ${size_bytes} bytes"
+          CURRENT_HASH="$(head -c "$size_bytes" "$DEV" | sha256sum | awk '{print $1}')"
+        fi
+      fi
+
+      # Up-to-date? exit
+      if [ -n "$CURRENT_HASH" ] && [ "$CURRENT_HASH" = "$EXPECTED_HASH" ]; then
+        log "SD content matches image; nothing to do"
+        exit 0
+      fi
+
+      # Flash image to SD
+      log "flashing $IMG to $DEV"
+      dd if="$IMG" of="$DEV" bs=4M conv=fsync status=progress
+      sync
+
+      # Write stamp to boot partition for fast future comparisons
+      for i in {1..10}; do
+        if mount "$PART_BOOT" "$MNT" 2>/dev/null; then
+          echo "$EXPECTED_HASH" > "$MNT/$STAMP"
+          sync
+          umount "$MNT" || true
+          log "stamped SD with image hash"
+          break
+        fi
+        sleep 1
+      done
+
+      log "rebooting after SD flash"
+      /sbin/reboot
+
+  - path: /etc/systemd/system/sd-flash.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Detect and flash SD card if image version differs
+      Wants=local-fs.target
+      After=local-fs.target
+      # Ensure this runs before other provisioning units in this user-data
+      Before=k3s-bootstrap.service k3s-manifests.path k3s-manifests-install.service home-activate.service argocd-admin-password.service
+
+      [Service]
+      Type=oneshot
+      Environment=IMG_PATH=/etc/sd.img
+      # Environment=IMG_HASH_PATH=/etc/sd.img.zst.sha256
+      # Environment=SD_DEV=/dev/mmcblk0
+      ExecStart=/usr/local/sbin/sd-flash.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+# bootcmd:
+#   - [ bash, /usr/local/bin/k3s-02-netboot-unit-dropin.sh ]
+
+runcmd:
+  - [ systemctl, enable, --now, sd-flash.service ]
+
+final_message: "Cloud-init for valar-0 complete. k3s installed with tmpfs runtime."

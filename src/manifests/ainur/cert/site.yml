@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: site
+  namespace: ainur-cert
+data:
+  index.html: |
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>Lab Root CA</title>
+      <style>
+        body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;line-height:1.45;margin:2rem;max-width:900px}
+        code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+        h1{font-size:1.6rem;margin-bottom:.5rem}
+        h2{font-size:1.1rem;margin-top:1.5rem}
+        .card{border:1px solid #ddd;border-radius:8px;padding:1rem;margin:.75rem 0}
+        .muted{color:#666}
+        a.button{display:inline-block;background:#0b5cff;color:#fff;padding:.5rem .9rem;border-radius:6px;text-decoration:none}
+      </style>
+    </head>
+    <body>
+      <h1>Lab Root CA</h1>
+      <p>Install this local Certificate Authority to trust internal HTTPS endpoints like <code>dex.kidd.network</code>, <code>headlamp.kidd.network</code>, and <code>argocd.kidd.network</code>.</p>
+
+      <p>
+        <a class="button" href="/ca.crt" download>Download lab-root-ca.crt</a>
+        <span class="muted">(PEM/X.509)</span>
+      </p>
+
+      <div class="card">
+        <h2>macOS</h2>
+        <ol>
+          <li>Download the certificate above.</li>
+          <li>Open <b>Keychain Access</b> → <b>System</b> keychain.</li>
+          <li>File → Import Items… and select <code>lab-root-ca.crt</code>.</li>
+          <li>Double‑click the imported cert → expand <b>Trust</b> → set <b>When using this certificate</b> to <b>Always Trust</b>.</li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h2>Windows</h2>
+        <ol>
+          <li>Download the certificate above.</li>
+          <li>Press Win+R → <code>certmgr.msc</code>.</li>
+          <li>Open <b>Trusted Root Certification Authorities</b> → <b>Certificates</b>.</li>
+          <li>Right‑click → All Tasks → Import… → select <code>lab-root-ca.crt</code> → place in the Trusted Root store.</li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h2>Linux (Debian/Ubuntu)</h2>
+        <pre>sudo cp ~/Downloads/lab-root-ca.crt /usr/local/share/ca-certificates/
+        sudo update-ca-certificates</pre>
+        <p class="muted">For other distros, install into the OS trust store and restart your browser.</p>
+      </div>
+
+      <div class="card">
+        <h2>Verify</h2>
+        <p>After trusting the CA, visit:</p>
+        <ul>
+          <li><a href="https://dex.kidd.network/" target="_blank" rel="noreferrer">https://dex.kidd.network/</a></li>
+          <li><a href="https://headlamp.kidd.network/" target="_blank" rel="noreferrer">https://headlamp.kidd.network/</a></li>
+          <li><a href="https://argocd.kidd.network/" target="_blank" rel="noreferrer">https://argocd.kidd.network/</a></li>
+        </ul>
+      </div>
+
+      <p class="muted">Tip: You can verify the certificate fingerprint locally with <code>sha256sum lab-root-ca.crt</code>.</p>
+    </body>
+    </html>

@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: tftp
+spec:
+  selector:
+    matchLabels:
+      app: netboot
+      component: tftp
+  template:
+    metadata:
+      labels:
+        app: netboot
+        component: tftp
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: tftp
+          image: andrewkidd/tftp-server:v1.0.3
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HOSTNETWORK
+              value: "true"
+            - name: TFTPD_LISTEN
+              value: "true"
+            - name: TFTPD_ADDRESS
+              value: "0.0.0.0:69"
+            - name: TFTPD_DEBUG
+              value: "true"
+            - name: TFTPD_PORT_RANGE
+              value: "5000:5010"
+            - name: TFTPD_FOREGROUND
+              value: "true"
+            - name: TFTPD_VERBOSE_COUNT
+              value: "5"
+            - name: TFTPD_VERBOSITY
+              value: "8"
+            - name: TFTPD_SECURE_MODE
+              value: "true"
+            - name: TFTPD_DIRECTORIES
+              value: "/var/tftpboot"
+
+          ports:
+            - name: tftp
+              containerPort: 69
+              hostPort: 69
+              protocol: UDP
+            - name: tftp-data
+              containerPort: 5000
+              hostPort: 5000
+              protocol: UDP
+            - name: tftp-data2
+              containerPort: 5001
+              hostPort: 5001
+              protocol: UDP
+            - name: tftp-data3
+              containerPort: 5002
+              hostPort: 5002
+              protocol: UDP
+            - name: tftp-data4
+              containerPort: 5003
+              hostPort: 5003
+              protocol: UDP
+            - name: tftp-data5
+              containerPort: 5004
+              hostPort: 5004
+              protocol: UDP
+            - name: tftp-data6
+              containerPort: 5005
+              hostPort: 5005
+              protocol: UDP
+            - name: tftp-data7
+              containerPort: 5006
+              hostPort: 5006
+              protocol: UDP
+            - name: tftp-data8
+              containerPort: 5007
+              hostPort: 5007
+              protocol: UDP
+            - name: tftp-data9
+              containerPort: 5008
+              hostPort: 5008
+              protocol: UDP
+            - name: tftp-data10
+              containerPort: 5009
+              hostPort: 5009
+              protocol: UDP
+            - name: tftp-data11
+              containerPort: 5010
+              hostPort: 5010
+              protocol: UDP
+          volumeMounts:
+            - name: boot
+              mountPath: /var/tftpboot
+        # - name: dmesg-tailer
+        #   image: busybox
+        #   securityContext:
+        #     privileged: true
+        #   command: ["/bin/sh","-c"]
+        #   args:
+        #     - |
+        #       while true; do
+        #         dmesg -c
+        #         sleep 1
+        #       done
+
+        # - name: tcpdump
+        #   image: alpine
+        #   securityContext:
+        #     privileged: true
+        #   command: ["sh","-c"]
+        #   args: ["apk add --no-cache tcpdump && tcpdump -i eth0 -nn '(arp or udp port 69 or (udp portrange 5000-5010))'"]
+      volumes:
+        - name: boot
+          persistentVolumeClaim:
+            claimName: pi-netboot-boot
