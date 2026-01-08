@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pi-netboot-env
+data:
+  BOOTSTRAP_IP_ADDRESS: "SET_AUTOMATICALLY_VIA_HOSTIP"
+  COMPOSE_PROFILE: "debian-netboot"
+  ASSETS_DIR: "ubuntuserver"
+  DOWNLOAD_LINK: "https://cdimage.ubuntu.com/releases/24.04/release/ubuntu-24.04.3-preinstalled-server-arm64+raspi.img.xz"

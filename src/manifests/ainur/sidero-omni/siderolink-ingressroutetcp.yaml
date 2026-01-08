@@ -1,0 +1,15 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: omni-siderolink
+  namespace: ainur-sidero-omni
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: HostSNI(`omni.siderolink.kidd.network`)
+      services:
+        - name: internal
+          port: 8090
+  tls:
+    passthrough: true

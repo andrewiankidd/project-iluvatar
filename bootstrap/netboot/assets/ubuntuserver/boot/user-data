@@ -1,33 +1,961 @@
 #cloud-config
-hostname: valar-1
-manage_etc_hosts: true
 
-users:
-  - name: kidd
-    gecos: Kidd
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    groups: sudo, adm
-    shell: /bin/bash
-    lock_passwd: false
-    plain_text_passwd: "mellon"
-    #ssh_authorized_keys:
-    #  # optional: replace with your real SSH key
-    #  - ssh-ed25519 AAAA...yourpublickeyhere
+hostname: valar
+
+ssh_pwauth: true
 
 package_update: true
+
 package_upgrade: false
 
+users:
+  - name: ubuntu
+    plain_text_passwd: ubuntu
+    lock_passwd: false
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: sudo,adm
+
+chpasswd:
+  expire: false
+
+packages:
+  - zstd
+  - util-linux
+  - coreutils
+  - findutils
+  - openssl
+  - nfs-common
+  - open-iscsi
+  - xfsprogs
+  - gdisk
+  - parted
+
+write_files:
+  # Cloud-init: stop cloud-final on failure to allow emergency.target
+  - path: /etc/systemd/system/cloud-final.service.d/stop-on-fail.conf
+    permissions: '0644'
+    content: |
+      [Unit]
+      OnFailure=emergency.target
+
+  # Ensure TUN module is loaded
+  - path: /etc/modules-load.d/tun.conf
+    permissions: '0644'
+    owner: root:root
+    content: |
+      tun
+
+  # Deterministic hostname setter script (called from runcmd)
+  - path: /usr/local/sbin/set-hostname.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      base=$(hostname | cut -d'.' -f1)
+      ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+      if [ -n "$ip" ]; then
+        suf=${ip##*.}
+      else
+        mac=$(tr -d ':' </sys/class/net/eth0/address)
+        suf=${mac: -4}
+      fi
+      hn="${base}-${suf}"
+      hostnamectl set-hostname "$hn"
+      printf '%s\n' "$hn" > /etc/hostname
+      if grep -q '^127.0.1.1' /etc/hosts; then
+        sed -i "s/^127.0.1.1.*/127.0.1.1 $hn/" /etc/hosts
+      else
+        echo "127.0.1.1 $hn" >> /etc/hosts
+      fi
+
+      # No image staged? nothing to do
+      if [ ! -f "$IMG" ]; then
+        exit 0
+      fi
+
+      # Expected hash: prefer precomputed file; otherwise compute
+      if [ -f "$HASH_FILE" ]; then
+        EXPECTED_HASH="$(cut -d' ' -f1 < "$HASH_FILE" | tr -d '\n')"
+      else
+        if [[ "$IMG" == *.zst ]]; then
+          EXPECTED_HASH="$(zstd -dc "$IMG" | sha256sum | awk '{print $1}')"
+        else
+          EXPECTED_HASH="$(sha256sum "$IMG" | awk '{print $1}')"
+        fi
+      fi
+
+      CURRENT_HASH=""
+      mkdir -p "$MNT"
+      if mount -o ro "$PART_BOOT" "$MNT" 2>/dev/null; then
+        if [ -f "$MNT/$STAMP" ]; then
+          CURRENT_HASH="$(tr -d '\n' < "$MNT/$STAMP")"
+        fi
+        umount "$MNT" || true
+      fi
+
+      # Up-to-date? exit
+      if [ -n "$CURRENT_HASH" ] && [ "$CURRENT_HASH" = "$EXPECTED_HASH" ]; then
+        exit 0
+      fi
+
+      sync
+      if [[ "$IMG" == *.zst ]]; then
+        zstd -dc "$IMG" | dd of="$DEV" bs=4M conv=fsync status=progress
+      else
+        dd if="$IMG" of="$DEV" bs=4M conv=fsync status=progress
+      fi
+      sync
+
+      for i in {1..10}; do
+        if mount "$PART_BOOT" "$MNT" 2>/dev/null; then
+          echo "$EXPECTED_HASH" > "$MNT/$STAMP"
+          sync
+          umount "$MNT" || true
+          break
+        fi
+        sleep 1
+      done
+
+      /sbin/reboot
+
+  # Prepare SSH host keys and restart sshd
+  - path: /usr/local/sbin/ssh-prepare.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      echo "[prepare] generating SSH host keys and restarting sshd"
+      ssh-keygen -A || true
+      systemctl restart ssh || true
+
+  - path: /etc/systemd/system/ssh-prepare.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Prepare SSH host keys and restart sshd
+      Wants=local-fs.target
+      After=local-fs.target
+      Before=nvme-prepare.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/ssh-prepare.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Prepare NVMe disk for Longhorn data (idempotent: only formats uninitialized devices)
+  - path: /usr/local/sbin/nvme-prepare.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      log() { echo "[nvme-prepare] $(date -Iseconds) $*"; }
+      log "starting NVMe preparation"
+
+      DISK="${NVME_DISK:-}"
+      if [ -z "${DISK}" ]; then
+        DISK=$(lsblk -ndo NAME,TYPE | awk '$2=="disk" && $1 ~ /^nvme/ {print "/dev/"$1; exit}')
+        [ -n "${DISK:-}" ] && log "auto-detected NVMe disk: $DISK"
+      fi
+      # No NVMe disk present; nothing to do
+      if [ -z "${DISK:-}" ] || [ ! -b "$DISK" ]; then
+        log "no NVMe disk present; skipping"
+        exit 0
+      fi
+
+      PART="${DISK}p1"
+      # Create single GPT partition if none exists
+      if [ ! -b "$PART" ]; then
+        log "creating GPT partition on $DISK"
+        if command -v sgdisk >/dev/null 2>&1; then
+          sgdisk -Z "$DISK" || true
+          sgdisk -n1:0:0 -t1:8300 "$DISK"
+        else
+          parted -s "$DISK" mklabel gpt mkpart primary xfs 0% 100%
+        fi
+        partprobe "$DISK" || true
+        udevadm settle || true
+      else
+        log "found existing partition: $PART"
+      fi
+
+      DEV="$PART"
+      # Format XFS only if no filesystem is present
+      FSTYPE=$(blkid -o value -s TYPE "$DEV" || true)
+      if [ -z "${FSTYPE:-}" ]; then
+        log "formatting $DEV as XFS"
+        mkfs.xfs -f "$DEV"
+      else
+        log "existing filesystem detected on $DEV: $FSTYPE"
+      fi
+
+      UUID=$(blkid -s UUID -o value "$DEV")
+      MNT="${LONGHORN_MNT:-/var/lib/longhorn/disks/nvme1}"
+      mkdir -p "$MNT"
+      if ! grep -q "$UUID" /etc/fstab; then
+        echo "UUID=$UUID $MNT xfs noatime,nodiratime,discard 0 2" >> /etc/fstab
+        log "added fstab entry for $UUID -> $MNT"
+      else
+        log "fstab entry already present for $UUID"
+      fi
+      # Mount if not already mounted
+      if ! mountpoint -q "$MNT"; then
+        log "mounting $MNT"
+        mount "$MNT" || mount -a || true
+      else
+        log "$MNT already mounted"
+      fi
+      # Enable periodic trim
+      systemctl enable --now fstrim.timer >/dev/null 2>&1 || true
+      log "completed NVMe preparation"
+
+  - path: /etc/systemd/system/nvme-prepare.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Prepare NVMe disk for Longhorn data
+      Wants=local-fs.target
+      After=local-fs.target
+      Before=k3s-bootstrap.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/nvme-prepare.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Generate a local CA, install cert-manager/trust-manager resources, and enable API OIDC
+  - path: /usr/local/sbin/gen-lab-certs.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      # Keep logs in journald via systemd; avoid tee to remove a potential early dependency.
+      KUBECTL=/usr/local/bin/kubectl
+      OPENSSL=/usr/bin/openssl
+      mkdir -p /etc/rancher/k3s/oidc /etc/k3s-certs
+      # Ensure kubectl is available even if k3s hasn't placed a kubectl shim yet (avoid mktemp/install deps)
+      if [ ! -x "$KUBECTL" ] && [ -x /usr/local/bin/k3s ]; then
+        printf '%s\n' '#!/bin/sh' 'exec /usr/local/bin/k3s kubectl "$@"' > "$KUBECTL"
+        chmod 0755 "$KUBECTL"
+      fi
+      # Create a local root CA once and persist on the host; use for API OIDC and cert-manager CA Issuer
+      CA_CRT=/etc/rancher/k3s/oidc/lab-ca.crt
+      CA_KEY=/etc/k3s-certs/lab-ca.key
+      if [ ! -s "$CA_CRT" ] || [ ! -s "$CA_KEY" ]; then
+        umask 077
+        "$OPENSSL" genrsa -out "$CA_KEY" 4096
+        "$OPENSSL" req -x509 -new -nodes -key "$CA_KEY" -sha256 -days 3650 \
+          -subj "/CN=Lab Root CA" -addext "basicConstraints=critical,CA:true" -out "$CA_CRT"
+      fi
+
+      # Namespaces are created by ArgoCD/Helm (CreateNamespace=true)
+
+      # Install/refresh cert-manager CA Secret for ClusterIssuer
+      if [ -s "$CA_CRT" ] && [ -s "$CA_KEY" ]; then
+        "$KUBECTL" get ns cert-manager >/dev/null 2>&1 || "$KUBECTL" create ns cert-manager
+        "$KUBECTL" -n cert-manager create secret tls cluster-root-ca \
+          --cert="$CA_CRT" --key="$CA_KEY" -o yaml --dry-run=client | "$KUBECTL" apply -f -
+        # Wait for CRDs to be installed before applying CRs from files
+        for i in $(seq 1 120); do
+          CI_CRD=$($KUBECTL get crd clusterissuers.cert-manager.io >/dev/null 2>&1 && echo ok || true)
+          TM_CRD=$($KUBECTL get crd bundles.trust.cert-manager.io >/dev/null 2>&1 && echo ok || true)
+          [ "$CI_CRD" = ok ] && [ "$TM_CRD" = ok ] && break
+          sleep 2
+        done
+        # Apply static manifests if present (idempotent)
+        [ -f /etc/k3s-manifests/clusterissuer-local-ca.yaml ] && "$KUBECTL" apply -f /etc/k3s-manifests/clusterissuer-local-ca.yaml || true
+        [ -f /etc/k3s-manifests/trust-bundle.yaml ] && "$KUBECTL" apply -f /etc/k3s-manifests/trust-bundle.yaml || true
+      fi
+
+      # trust-manager will inject a ConfigMap named "lab-ca" into labeled namespaces
+      # (ainur.kidd.network/ca=inject). Argo CD and other apps mount this for outbound TLS trust.
+
+      # Expose CA for browser download + fingerprint (optional, only if namespace exists)
+      if [ -s "$CA_CRT" ] && "$KUBECTL" get ns ainur-cert >/dev/null 2>&1; then
+        TMP_SHA=$(mktemp)
+        sha256sum "$CA_CRT" | awk '{print $1}' > "$TMP_SHA"
+        "$KUBECTL" -n ainur-cert create configmap lab-ca \
+          --from-file=ca.crt="$CA_CRT" \
+          --from-file=ca.sha256="$TMP_SHA" \
+          -o yaml --dry-run=client | "$KUBECTL" apply -f - || true
+        rm -f "$TMP_SHA"
+      fi
+
+      # Headlamp will consume the trust-manager managed ConfigMap "lab-ca"; no manual ConfigMap needed
+
+      # Ensure k3s apiserver OIDC config points to HTTPS issuer and CA
+      CFG=/etc/rancher/k3s/config.yaml
+      mkdir -p /etc/rancher/k3s
+      if ! grep -q "oidc-issuer-url" "$CFG" 2>/dev/null; then
+        if [ -s "$CA_CRT" ]; then
+          printf "\nkube-apiserver-arg:\n  - oidc-issuer-url=https://dex.kidd.network\n  - oidc-client-id=headlamp\n  - oidc-username-claim=email\n  - oidc-groups-claim=groups\n  - oidc-ca-file=%s\n" "$CA_CRT" >> "$CFG"
+        else
+          echo "[tls-bootstrap] WARNING: CA file $CA_CRT not present; skipping OIDC api-server args for now"
+        fi
+      fi
+      # Nothing else to wait for here; cert-manager and trust-manager reconcile after Helm installs
+
+  - path: /etc/systemd/system/tls-bootstrap.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Generate lab TLS certs and configure OIDC
+      # Ensure k3s is up and staged manifests are installed first
+      After=k3s.service k3s-manifests-install.service
+      Wants=k3s.service k3s-manifests-install.service
+
+      [Service]
+      Type=oneshot
+      Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      Environment=KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+      StandardOutput=journal
+      StandardError=journal
+      Restart=on-failure
+      RestartSec=15s
+      ExecStart=/usr/local/sbin/gen-lab-certs.sh
+      # Restart k3s once to apply kube-apiserver OIDC flags after the CA and configs are in place,
+      # then wait until the API is responsive to avoid a window where controllers can’t read resources.
+      ExecStartPost=/usr/local/sbin/restart-and-wait-k3s.sh
+      RemainAfterExit=yes
+
+  - path: /usr/local/sbin/restart-and-wait-k3s.sh
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      set -eu
+      systemctl restart k3s || true
+      # Prefer k3s kubectl shim if present
+      KUBECTL="/usr/local/bin/kubectl"
+      K3S_BIN="/usr/local/bin/k3s"
+      if [ ! -x "$KUBECTL" ] && [ -x "$K3S_BIN" ]; then
+        USE_K3S=1
+      else
+        USE_K3S=0
+      fi
+      # Wait up to 5 minutes for API server to become ready
+      for i in $(seq 1 150); do
+        if [ "$USE_K3S" -eq 1 ]; then
+          if "$K3S_BIN" kubectl --request-timeout=5s get --raw=/readyz 2>/dev/null | grep -q 'ok'; then
+            exit 0
+          fi
+        else
+          if "$KUBECTL" --request-timeout=5s get --raw=/readyz 2>/dev/null | grep -q 'ok'; then
+            exit 0
+          fi
+        fi
+        sleep 2
+      done
+      # Fallback check
+      if [ "$USE_K3S" -eq 1 ]; then
+        "$K3S_BIN" kubectl get nodes || true
+      else
+        "$KUBECTL" get nodes || true
+      fi
+      exit 0
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Install and configure k3s bootstrap orchestrator
+  - path: /usr/local/bin/k3s-bootstrap.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      # Basic error trap
+      trap 'echo "[k3s-bootstrap] ERROR at line ${LINENO}"' ERR
+      # Extra verbosity for troubleshooting
+      echo "==== k3s-bootstrap: start $(date -Is) ===="
+      echo "[sys] uname: $(uname -a)"
+      echo "[net] hostname: $(hostname)"
+      ip -brief addr || true
+      ip route || true
+
+      # Orchestrate: discover and run k3s-<nn>-*.sh in order
+      shopt -s nullglob
+      scripts=(/usr/local/bin/k3s-[0-9][0-9]-*.sh)
+      if [ ${#scripts[@]} -eq 0 ]; then
+        echo "[k3s-bootstrap] no k3s-<nn>-*.sh scripts found in /usr/local/bin"
+      else
+        # Natural sort by version-like numbers in names
+        mapfile -t scripts < <(printf '%s\n' "${scripts[@]}" | sort -V)
+        for s in "${scripts[@]}"; do
+          echo "[k3s-bootstrap] running $s"
+          bash "$s"
+        done
+      fi
+      echo "==== k3s-bootstrap: end $(date -Is) ===="
+      exit 0
+
+  - path: /usr/local/bin/k3s-10-leader-election.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      echo "[leader] starting leader election"
+      U=$(awk -F: '$3>=1000 && $1!="nobody"{print $1; exit}' /etc/passwd)
+      K3S_STATE_DIR="${K3S_STATE_DIR:-/tmp/k3s}"
+      mkdir -p "$K3S_STATE_DIR"
+      LEADER_PATH="/tmp/k3s/k3s-leader"
+      TOKEN_PATH="/tmp/k3s/k3s-token"
+      AGENT_TOKEN_PATH="/tmp/k3s/k3s-agent-token"
+      CLOUD_INIT_BASE_URL="${CLOUD_INIT_BASE_URL:-http://bootstrap.kidd.network}"
+      LEADER_URL="${CLOUD_INIT_BASE_URL%/}/k3s/k3s-leader"
+      AGENT_TOKEN_URL="${CLOUD_INIT_BASE_URL%/}/k3s/k3s-agent-token"
+      echo "[paths] USER=$U"
+      echo "[paths] LEADER_FILE=$LEADER_PATH TOKEN_PATH=$TOKEN_PATH AGENT_TOKEN_PATH=$AGENT_TOKEN_PATH"
+      echo "[http] LEADER_URL=$LEADER_URL AGENT_TOKEN_URL=$AGENT_TOKEN_URL"
+      if REMOTE_LEADER=$(curl -sfL --connect-timeout 3 --max-time 5 "$LEADER_URL" | head -n1); then
+        if [ -n "$REMOTE_LEADER" ]; then
+          echo "[leader] remote leader found: $REMOTE_LEADER"
+          printf '%s\n' "$REMOTE_LEADER" > "$LEADER_PATH" || true
+        fi
+      else
+        echo "[leader] remote leader not found at $LEADER_URL"
+      fi
+      if REMOTE_AGENT_TOKEN=$(curl -sfL --connect-timeout 3 --max-time 5 "$AGENT_TOKEN_URL" | head -n1); then
+        if [ -n "$REMOTE_AGENT_TOKEN" ]; then
+          echo "[token] remote agent token found; syncing to $AGENT_TOKEN_PATH"
+          printf '%s\n' "$REMOTE_AGENT_TOKEN" > "$AGENT_TOKEN_PATH" || true
+        fi
+      else
+        echo "[token] remote agent token not found at $AGENT_TOKEN_URL"
+      fi
+      if [ -f "$LEADER_PATH" ]; then
+        echo "[leader] existing file detected"; ls -l "$LEADER_PATH" || true; echo "[leader] content: $(head -n1 "$LEADER_PATH" 2>/dev/null || true)"
+      else
+        echo "[leader] no existing leader file"
+      fi
+      MY_IP=$(hostname -I | awk '{print $1}')
+      echo "[k3s] this node IP: $MY_IP"
+      K3S_ROLE="server"
+      LEADER_IP=""
+      if [ ! -f "$LEADER_PATH" ]; then
+        echo "[k3s] no leader file; trying to become leader"
+        if ( set -o noclobber; printf '%s\n' "$MY_IP" > "$LEADER_PATH" ) 2>/dev/null; then
+          echo "[k3s] elected leader: $MY_IP"
+          K3S_ROLE="server"
+        else
+          echo "[k3s] leader file created by another node"
+        fi
+      fi
+      if [ -f "$LEADER_PATH" ]; then
+        LEADER_IP=$(head -n1 "$LEADER_PATH" 2>/dev/null || true)
+        echo "[leader] file read: '${LEADER_IP:-}'"
+        if [ -n "${LEADER_IP:-}" ] && [ "$LEADER_IP" = "$MY_IP" ]; then
+          echo "[k3s] this node is leader ($LEADER_IP); proceeding as server"
+          K3S_ROLE="server"
+        elif [ -n "${LEADER_IP:-}" ]; then
+          echo "[k3s] leader $LEADER_IP declared; joining as agent (skipping ping/backoff)"
+          K3S_ROLE="agent"
+        else
+          echo "[k3s] leader file empty; claiming leadership as $MY_IP"
+          printf '%s\n' "$MY_IP" > "$LEADER_PATH"
+          K3S_ROLE="server"
+        fi
+      fi
+      echo "[k3s] selected role: $K3S_ROLE"
+      mkdir -p /run/k3s-bootstrap
+      {
+        echo "USER_NAME=$U"
+        echo "K3S_STATE_DIR=$K3S_STATE_DIR"
+        echo "LEADER_FILE=$LEADER_PATH"
+        echo "TOKEN_PATH=$TOKEN_PATH"
+        echo "AGENT_TOKEN_PATH=$AGENT_TOKEN_PATH"
+        echo "K3S_ROLE=$K3S_ROLE"
+        echo "LEADER_IP=$LEADER_IP"
+      } > /run/k3s-bootstrap/env
+
+  - path: /usr/local/bin/k3s-20-install.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      # Default tokens can be overridden via environment before invoking this script;
+      # prefer file-based tokens if present for both server and agent.
+      K3S_TOKEN="${K3S_TOKEN:-}"
+      K3S_AGENT_TOKEN="${K3S_AGENT_TOKEN:-}"
+      INSTALL_K3S_VERSION="v1.33.6+k3s1"
+      echo "[install] starting k3s install"
+      STATE="/run/k3s-bootstrap/env"
+      if [ -f "$STATE" ]; then
+        # shellcheck disable=SC1090
+        . "$STATE"
+      else
+        echo "[install] WARNING: state file missing; recomputing basics"
+        USER_NAME=$(awk -F: '$3>=1000 && $1!="nobody"{print $1; exit}' /etc/passwd)
+        TOKEN_PATH="/tmp/k3s/k3s-token"
+        AGENT_TOKEN_PATH="/tmp/k3s/k3s-agent-token"
+        K3S_ROLE="server"
+      fi
+      # Ensure state dir exists (for cases sourced from env file too)
+      if [ -n "${K3S_STATE_DIR:-}" ]; then mkdir -p "$K3S_STATE_DIR"; fi
+      if [ -z "${K3S_TOKEN:-}" ] && [ -f "$TOKEN_PATH" ]; then
+        K3S_TOKEN="$(tr -d '\n' < "$TOKEN_PATH")"
+        echo "[token] using server token from $TOKEN_PATH"
+      fi
+      if [ -z "${K3S_AGENT_TOKEN:-}" ] && [ -f "$AGENT_TOKEN_PATH" ]; then
+        K3S_AGENT_TOKEN="$(tr -d '\n' < "$AGENT_TOKEN_PATH")"
+        echo "[token] using agent token from $AGENT_TOKEN_PATH"
+      fi
+      # Final defaults if nothing on disk or env
+      : "${K3S_TOKEN:=my-cluster-token}"
+      : "${K3S_AGENT_TOKEN:=my-agent-token}"
+      # Base args kept minimal; netboot overlays (if any) appended below
+      K3S_COMMON_ARGS=""
+      # Keep non-netboot defaults; netboot-specific adds (e.g., --etcd-disable-snapshots) come via overlays
+      K3S_SERVER_ARGS=" --cluster-init --node-label=kidd.network/role=control-plane --token ${K3S_TOKEN}" # --disable=servicelb
+      K3S_AGENT_ARGS=" --node-label=kidd.network/role=worker --token ${K3S_AGENT_TOKEN}"
+      # Append any staged overlays from previous steps (e.g., netboot args)
+      ARGS_DIR="/run/k3s-bootstrap"
+      if [ -f "$ARGS_DIR/K3S_COMMON_ARGS" ]; then
+        K3S_COMMON_ARGS="$K3S_COMMON_ARGS $(tr '\n' ' ' < "$ARGS_DIR/K3S_COMMON_ARGS")"
+      fi
+      if [ -f "$ARGS_DIR/K3S_SERVER_ARGS" ]; then
+        K3S_SERVER_ARGS="$K3S_SERVER_ARGS $(tr '\n' ' ' < "$ARGS_DIR/K3S_SERVER_ARGS")"
+      fi
+      if [ -f "$ARGS_DIR/K3S_AGENT_ARGS" ]; then
+        K3S_AGENT_ARGS="$K3S_AGENT_ARGS $(tr '\n' ' ' < "$ARGS_DIR/K3S_AGENT_ARGS")"
+      fi
+      if [ -n "${AGENT_TOKEN_PATH:-}" ]; then
+        echo "[token] ensuring agent token file at $AGENT_TOKEN_PATH"
+        printf '%s\n' "$K3S_AGENT_TOKEN" > "$AGENT_TOKEN_PATH"
+      else
+        echo "[token] WARNING: AGENT_TOKEN_PATH unset; skipping agent token file creation"
+      fi
+      if [ "$K3S_ROLE" = "server" ]; then
+        if [ -f "${TOKEN_PATH:-}" ]; then
+          echo "[token] token present at $TOKEN_PATH (size $(stat -c%s "$TOKEN_PATH" 2>/dev/null || echo -n 0))"
+        else
+          echo "[token] token MISSING at ${TOKEN_PATH:-'(unset)'}"
+        fi
+        curl -sfL --retry 5 --retry-connrefused --connect-timeout 5 --max-time 120 https://get.k3s.io | \
+          K3S_TOKEN="$K3S_TOKEN" K3S_AGENT_TOKEN="$K3S_AGENT_TOKEN" \
+          INSTALL_K3S_EXEC=" $K3S_COMMON_ARGS $K3S_SERVER_ARGS" \
+          sh -s -
+        if [ -f /var/lib/rancher/k3s/server/node-token ]; then
+          cp /var/lib/rancher/k3s/server/node-token "$TOKEN_PATH" || true
+          chown "${USER_NAME:-root}":"${USER_NAME:-root}" "$TOKEN_PATH" 2>/dev/null || true
+          echo "[token] published server node-token to $TOKEN_PATH"
+          if [ -n "${AGENT_TOKEN_PATH:-}" ]; then
+            if [ -f /var/lib/rancher/k3s/server/agent-token ]; then
+              cp /var/lib/rancher/k3s/server/agent-token "$AGENT_TOKEN_PATH" || true
+            else
+              cp /var/lib/rancher/k3s/server/node-token "$AGENT_TOKEN_PATH" || true
+            fi
+          fi
+        fi
+      else
+        echo "[token] using agent token from K3S_AGENT_TOKEN variable"
+        if [ -n "${LEADER_IP:-}" ]; then
+          echo "[agent] using leader $LEADER_IP"
+          curl -sfL --retry 5 --retry-connrefused --connect-timeout 5 --max-time 120 https://get.k3s.io | \
+            K3S_URL="https://$LEADER_IP:6443" K3S_TOKEN="$K3S_AGENT_TOKEN" \
+            INSTALL_K3S_EXEC=" $K3S_COMMON_ARGS $K3S_AGENT_ARGS" \
+            sh -s -
+        else
+          echo "[k3s] WARNING: leader missing; deferring agent install"
+        fi
+      fi
+
+  - path: /etc/systemd/system/k3s-bootstrap.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=K3s Bootstrap (leader election)
+      Wants=network-online.target
+      After=network-online.target remote-fs.target
+      # After=network-online.target remote-fs.target home.mount
+      # Ensure the shared home (where k3s-leader/k3s-token live) is mounted
+      # before running the bootstrap logic to avoid race conditions.
+      # RequiresMountsFor=/home/ubuntu
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/k3s-bootstrap.sh
+      Restart=on-failure
+      RestartSec=10s
+      Environment=SKIP_NETWORK_WAITS=0
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Install cert-manager via k3s HelmChart
+  - path: /etc/k3s-manifests/00-cert-manager.helm.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: cert-manager
+        namespace: kube-system
+      spec:
+        chart: cert-manager
+        repo: https://charts.jetstack.io
+        targetNamespace: cert-manager
+        createNamespace: true
+        valuesContent: |
+          installCRDs: true
+          replicaCount: 1
+
+  # Install trust-manager to distribute CA bundles
+  - path: /etc/k3s-manifests/01-trust-manager.helm.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: trust-manager
+        namespace: kube-system
+      spec:
+        chart: trust-manager
+        repo: https://charts.jetstack.io
+        targetNamespace: cert-manager
+        createNamespace: true
+
+  - path: /etc/k3s-manifests/03-clusterissuer-local-ca.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        name: local-ca
+      spec:
+        ca:
+          # Secret is created at runtime by gen-lab-certs.sh
+          secretName: cluster-root-ca
+
+  - path: /etc/k3s-manifests/05-trust-bundle-namespaced.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: trust.cert-manager.io/v1alpha1
+      kind: Bundle
+      metadata:
+        # Name this Bundle to match the desired ConfigMap name in target namespaces.
+        # Some trust-manager versions default the ConfigMap name to the Bundle name.
+        name: lab-ca
+      spec:
+        sources:
+          - secret:
+              name: cluster-root-ca
+              key: tls.crt
+              namespace: cert-manager
+        target:
+          configMap:
+            key: ca.crt
+          namespaceSelector:
+            matchLabels:
+              ainur.kidd.network/ca: "inject"
+
+  # - path: /etc/k3s-manifests/06-traefik-config.helm.yaml
+  #   permissions: '0644'
+  #   content: |
+  #     ---
+  #     apiVersion: helm.cattle.io/v1
+  #     kind: HelmChartConfig
+  #     metadata:
+  #       name: traefik
+  #       namespace: kube-system
+  #     spec:
+  #       valuesContent: |
+  #         service:
+  #           type: ClusterIP
+  #         ports:
+  #           web:
+  #             port: 80
+  #             hostPort: 80
+  #           websecure:
+  #             port: 443
+  #             hostPort: 443
+
+    # Install Argo CD via k3s HelmChart with OIDC and lab CA trust
+  - path: /etc/k3s-manifests/21-argocd.helm.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: argocd
+        labels:
+          ainur.kidd.network/ca: inject
+      ---
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: argocd
+        namespace: kube-system
+      spec:
+        chart: argo-cd
+        repo: https://argoproj.github.io/argo-helm
+        targetNamespace: argocd
+        createNamespace: true
+        # version: 9.0.5
+        valuesContent: |
+          global:
+            domain: argocd.kidd.network
+            priorityClassName: system-cluster-critical
+          dex:
+            enabled: false
+          server:
+            autoscaling:
+              enabled: false
+              minReplicas: 1
+            extraArgs:
+              - --insecure
+            service:
+              type: ClusterIP
+            # Trust the lab CA for outbound TLS (e.g., Dex, Git/Helm behind internal CA)
+            env:
+              - name: SSL_CERT_DIR
+                value: /etc/ssl/local-ca
+            volumes:
+              - name: lab-ca
+                configMap:
+                  name: lab-ca
+                  optional: true
+            volumeMounts:
+              - name: lab-ca
+                mountPath: /etc/ssl/local-ca
+                readOnly: true
+          repoServer:
+            autoscaling:
+              enabled: true
+              minReplicas: 1
+            # Trust the lab CA for outbound TLS (e.g., Helm chart repos, Git)
+            env:
+              - name: SSL_CERT_DIR
+                value: /etc/ssl/local-ca
+            volumes:
+              - name: lab-ca
+                configMap:
+                  name: lab-ca
+                  optional: true
+            volumeMounts:
+              - name: lab-ca
+                mountPath: /etc/ssl/local-ca
+                readOnly: true
+          applicationSet:
+            replicas: 1
+          notifications:
+            enabled: false
+          configs:
+            params:
+              application.namespaces: "*"
+            cm:
+              oidc.config: |
+                name: Dex
+                issuer: https://dex.kidd.network
+                clientID: argocd
+                clientSecret: $oidc.dex.clientSecret
+                usernameClaim: email
+                groupsClaim: groups
+                requestedScopes:
+                  - openid
+                  - profile
+                  - email
+            rbac:
+              policy.csv: |
+                g, admin@kidd.network, role:admin
+              scopes: '[groups, email]'
+            secret:
+              # Additional keys to inject into argocd-secret
+              extra:
+                # Argo CD Dex OIDC client secret (must match Dex staticClients[].secret)
+                oidc.dex.clientSecret: dex-oidc-secret
+
+  - path: /etc/k3s-manifests/22-argocd-apps.helm.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: argocd-apps
+        namespace: kube-system
+      spec:
+        chart: argocd-apps
+        repo: https://argoproj.github.io/argo-helm
+        targetNamespace: argocd
+        createNamespace: true
+        # version: 2.0.2
+        valuesContent: |
+          applications:
+            ainur:
+              namespace: argocd
+              finalizers:
+                - resources-finalizer.argocd.argoproj.io
+              project: "ainur"
+              sources:
+                - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+                  path: src/manifests/ainur
+                  targetRevision:  main
+              destination:
+                server: https://kubernetes.default.svc
+                namespace: ainur
+              syncPolicy:
+                syncOptions:
+                  - CreateNamespace=true
+                automated:
+                  prune: true
+                  selfHeal: true
+
+            system-addons:
+              namespace: argocd
+              project: "system-addons"
+              sources:
+                - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+                  path: src/manifests/system-addons
+                  targetRevision:  main
+              destination:
+                server: https://kubernetes.default.svc
+                namespace: argocd
+              syncPolicy:
+                automated:
+                  prune: true
+                  selfHeal: true
+
+          projects:
+            ainur:
+              namespace: argocd
+              description: "Project for managing Important applications"
+              sourceRepos:
+                - "https://github.com/andrewiankidd/project-iluvatar.git"
+                - "*"
+              sourceNamespaces:
+                - ainur
+                - argocd
+              destinations:
+                - namespace: ainur
+                  server: "https://kubernetes.default.svc"
+                - namespace: ainur-*
+                  server: "https://kubernetes.default.svc"
+              clusterResourceWhitelist:
+                - group: "*"
+                  kind: "*"
+              orphanedResources:
+                warn: true
+
+            system-addons:
+              namespace: argocd
+              description: "System add-ons (cluster-wide agents)"
+              sourceRepos:
+                - "https://github.com/andrewiankidd/project-iluvatar.git"
+              sourceNamespaces:
+                - argocd
+              destinations:
+                - namespace: kube-system
+                  server: "https://kubernetes.default.svc"
+                - namespace: argocd
+                  server: "https://kubernetes.default.svc"
+
+  - path: /etc/k3s-manifests/23-argocd-ingress.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: argocd-ingress
+        namespace: argocd
+        annotations:
+          traefik.ingress.kubernetes.io/router.tls: "true"
+          kubernetes.io/ingress.class: traefik
+      spec:
+        ingressClassName: traefik
+        rules:
+          - host: argocd.kidd.network
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: argocd-server
+                      port:
+                        number: 80
+
+  # Generic k3s manifests installer: copies all /etc/k3s-manifests/*.y*ml into k3s manifests once available
+  - path: /usr/local/sbin/k3s-install-manifests.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      src="/etc/k3s-manifests"
+      dst="/var/lib/rancher/k3s/server/manifests"
+      shopt -s nullglob
+      for f in "$src"/*.yaml "$src"/*.yml; do
+        b=$(basename "$f")
+        install -D -m0644 "$f" "$dst/$b"
+      done
+
+  - path: /etc/systemd/system/k3s-manifests-install.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Install all staged k3s manifests
+      Wants=k3s.service
+      After=k3s.service
+      ConditionPathExists=/var/lib/rancher/k3s/server/manifests
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/k3s-install-manifests.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/k3s-ready-dispatch.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Dispatch post-k3s setup when ready
+      After=k3s.service
+      StartLimitIntervalSec=0
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/sh -c 'systemctl start k3s-manifests-install.service tls-bootstrap.service || true'
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/k3s-ready.path
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Trigger post-k3s setup when k3s is ready
+
+      [Path]
+      PathExists=/etc/rancher/k3s/k3s.yaml
+      PathExists=/var/lib/rancher/k3s/server/manifests
+      Unit=k3s-ready-dispatch.service
+
+      [Install]
+      WantedBy=multi-user.target
+
 runcmd:
-  # ensure networking is up
-  - systemctl is-active --quiet systemd-networkd || sleep 10
+  - 'modprobe tun || true'
+  - [ mkdir, -p, /run/log/journal ]
+  - [ systemctl, restart, systemd-journald ]
+  - [ bash, /usr/local/sbin/set-hostname.sh ]
+  - [ systemctl, daemon-reload ]
+  - [ systemctl, enable, --now, ssh-prepare.service ]
+  - [ systemctl, enable, --now, nvme-prepare.service ]
+  - [ systemctl, enable, --now, k3s-bootstrap.service, k3s-ready.path ]
 
-  # install k3s (primary server, bootstrap)
-  - curl -sfL https://get.k3s.io | sh -s - server --cluster-init --disable traefik
+final_message: "Cloud-init for valar-0 complete."
 
-  # ensure k3s starts on boot
-  - systemctl enable k3s
-
-  # simple marker file for debugging
-  - echo "Bootstrap complete for $(hostname)" > /var/log/bootstrap-complete.log
-
-final_message: "Cloud-init for valar-1 complete. k3s installed."
+output:
+  all: '| tee -a /var/log/cloud-init-output.log >/dev/console'

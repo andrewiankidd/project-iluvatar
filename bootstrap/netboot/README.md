@@ -7,11 +7,12 @@ Additionally, it includes optional 'builder' services to generate the necessary 
 ## Components
 The compose is made up of four containers with three different configurations
 
-| Container       | raspios | ubuntuserver  | nobuild |                   ?                    |
-|-----------------|---------|-------------- |---------|----------------------------------------|
-| TFTP Server     |   ✅    |       ✅       |   ✅   |   Used to host boot files for Pi        |
-| NFS Server      |   ✅    |       ✅       |   ✅   |   Used to host root filesystem for Pi   |
-| Debian Builder  |   ✅    |       ✅       |   ❌   |   Used to download, extract, patch and export a Debian based Pi OS image onto the server volumes  |
+| Container       | raspios | ubuntuserver  | nobuild |                   ?                                                                              |
+|-----------------|---------|-------------- |---------|--------------------------------------------------------------------------------------------------|
+| TFTP Server     |   ✅    |       ✅     |   ✅   |   Used to host boot files for Pi                                                                  |
+| NFS Server      |   ✅    |       ✅     |   ✅   |   Used to host root filesystem for Pi                                                             |
+| HTTP Server     |   ✅    |       ✅     |   ✅   |   Used to host cloud-init configuration for ubuntu boots                                          |
+| Debian Builder  |   ✅    |       ✅     |   ❌   |   Used to download, extract, patch and export a Debian based Pi OS image onto the server volumes  |
 
 
 ## Running
@@ -29,18 +30,18 @@ See [vm/README.md](vm/README.md)
 To run the services natively on your system, simply use Docker Compose:
 
 ```sh
-sudo docker compose --profile debian up
+sudo docker compose --profile debian-netboot up
 ```
 
 ## Directory Structure
 
 - **assets/**: Files that will be utilized during building of boot files
-  - **raspios/**: Used during `build-debian.sh`
+  - **raspios/**: Used during `pi-netboot-builder.sh`
     - Contains an RaspiOS configuration script (`apply-config.sh`) and example configuration file that is copied to the root filesystem on the NFS server.
-  - **ubuntuserver/**: Used during `build-debian.sh`
+  - **ubuntuserver/**: Used during `pi-netboot-builder.sh`
     - Contains Ubuntu cloud-config files, copied to the boot partition during image extraction
 - **scripts/**: Contains scripts for building and preparing images.
-  - `build-debian.sh`: Script to download, extract, and prepare Debian based OS images for netboot.
+  - `pi-netboot-builder.sh`: Script to download, extract, and prepare Debian based OS images for netboot.
 - **vm/**: Contains scripts and configurations for setting up a virtual machine using Multipass.
   - `init/`: Initialization scripts for the VM.
     - `docker.sh`: Installs Docker and Docker Compose, and sets up the environment.

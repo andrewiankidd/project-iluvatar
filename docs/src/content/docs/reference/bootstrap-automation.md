@@ -1,6 +1,8 @@
 ---
 title: '[WIP] Bootstrap Automation'
+slug: reference/bootstrap-automation
 description: TODO
+draft: true
 ---
 
 ## About
@@ -17,7 +19,7 @@ To avoid Platform issues, I'd recommend just using the VM for bootstrapping - bu
 :::caution[Manual Action]
 This is a per device manual action, cannot be automated :(
 
-[Before you continue, make sure you have updated your Pi's boot order to enable netboot](../../guides/netboot/1-pi-prep)
+[Before you continue, make sure you have updated your Pi's boot order to enable netboot](../../guides/netbooting-raspberry-pi/1-pi-prep)
 :::
 
 ## Automation options
@@ -56,13 +58,13 @@ new device added:
 <details>
 <summary>Using VM (Recommended)</summary>
 
-1. Pick an unused IP in your network (ie `192.168.0.66`)
+1. Pick an unused IP in your network (ie `192.168.1.66`)
 2. Set the 'Option 66' config on your DHCP server to the selected IP
 3. Update `bootstrap\netboot\.env`
-   1. Set the `IP_ADDRESS` to the selected IP
+   1. Set the `BOOTSTRAP_IP_ADDRESS` to the selected IP
    2. Set the `COMPOSE_PROFILE` to the desired value (`raspios`|`ubuntuserver`|`nobuild`)
 4. Open a CLI and CD to `bootstrap\netboot`
-5. Follow the 'Running' steps in [`vm/README.md`](https://github.com/andrewiankidd/project-iluvatar/blob/master/src/bootstrap/netboot/vm/README.md)
+5. Follow the 'Running' steps in [`vm/README.md`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/bootstrap/netboot/vm/README.md)
 </details>
 
 <details>
@@ -70,14 +72,14 @@ new device added:
 
 1. Don't be on Windows
 2. Have Docker installed
-3. Get your local network IP (ie `192.168.0.66`)
+3. Get your local network IP (ie `192.168.1.66`)
 4. Set the 'Option 66' config on your DHCP server to the selected IP
 5. Update `bootstrap\netboot\.env`
-   1. Set the `IP_ADDRESS` to the selected IP
+   1. Set the `BOOTSTRAP_IP_ADDRESS` to the selected IP
    2. Set the `COMPOSE_PROFILE` to the desired value (`raspios`|`nixos`|`nobuild`)
 6. Open a CLI and CD to `bootstrap\netboot`
 7. Run
-    ```
+    ``` bash
     source .env
     docker compose --profile $COMPOSE_PROFILE up
     ```
