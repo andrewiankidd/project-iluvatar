@@ -612,14 +612,19 @@ write_files:
       ---
       apiVersion: helm.cattle.io/v1
       kind: HelmChart
-      metadata:
-        name: trust-manager
-        namespace: kube-system
-      spec:
-        chart: trust-manager
-        repo: https://charts.jetstack.io
-        targetNamespace: cert-manager
-        createNamespace: true
+        metadata:
+          name: trust-manager
+          namespace: kube-system
+        spec:
+          chart: trust-manager
+          repo: https://charts.jetstack.io
+          targetNamespace: cert-manager
+          createNamespace: true
+          valuesContent: |
+            secretTargets:
+              enabled: true
+              authorizedSecrets:
+                - lab-ca-secret
 
   - path: /etc/k3s-manifests/03-clusterissuer-local-ca.yaml
     permissions: '0644'
