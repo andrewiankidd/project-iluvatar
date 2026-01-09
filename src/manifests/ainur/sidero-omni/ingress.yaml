@@ -16,58 +16,40 @@ spec:
   selector:
     app.kubernetes.io/component: omni
 ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
 metadata:
   name: omni
   namespace: ainur-sidero-omni
-  annotations:
-    cert-manager.io/cluster-issuer: local-ca
-    kubernetes.io/ingress.class: traefik
-    traefik.ingress.kubernetes.io/service.serversscheme: https
-    traefik.ingress.kubernetes.io/service.serverstransport: omni-https@kubernetescrd
 spec:
-  ingressClassName: traefik
-  rules:
-    - host: omni.kidd.network
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: omni-frontend
-                port:
-                  number: 80
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`omni.kidd.network`)
+      kind: Rule
+      services:
+        - name: omni-frontend
+          port: 80
+          scheme: https
+          serversTransport: omni-https
   tls:
-    - secretName: omni-tls
-      hosts:
-        - omni.kidd.network
+    secretName: omni-tls
 ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
 metadata:
   name: omni-kubernetes-proxy
   namespace: ainur-sidero-omni
-  annotations:
-    cert-manager.io/cluster-issuer: local-ca
-    kubernetes.io/ingress.class: traefik
-    traefik.ingress.kubernetes.io/service.serversscheme: https
-    traefik.ingress.kubernetes.io/service.serverstransport: omni-https@kubernetescrd
 spec:
-  ingressClassName: traefik
-  rules:
-    - host: omni.kubernetes.kidd.network
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: internal
-                port:
-                  number: 8095
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`omni.kubernetes.kidd.network`)
+      kind: Rule
+      services:
+        - name: internal
+          port: 8095
+          scheme: https
+          serversTransport: omni-https
   tls:
-    - secretName: omni-tls
-      hosts:
-        - omni.kubernetes.kidd.network
+    secretName: omni-tls
