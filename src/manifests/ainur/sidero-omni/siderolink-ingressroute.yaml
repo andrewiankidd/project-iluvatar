@@ -5,7 +5,7 @@ metadata:
   namespace: ainur-sidero-omni
 spec:
   entryPoints:
-    - websecure
+    - web
   routes:
     - match: Host(`omni.siderolink.kidd.network`)
       kind: Rule
@@ -13,5 +13,3 @@ spec:
         - name: internal
           port: 8090
           scheme: h2c
-  tls:
-    secretName: omni-tls
