@@ -27,6 +27,8 @@ spec:
             - |
               set -eu
               apk add --no-cache ca-certificates curl git gettext
+              # trust lab CA for omnictl grpc/http calls
+              cat /etc/omni/lab-root-ca.crt >> /etc/ssl/certs/ca-certificates.crt
               curl -fsSL -L "$OMNICTL_URL" -o /usr/local/bin/omnictl
               chmod +x /usr/local/bin/omnictl
 
@@ -43,11 +45,18 @@ spec:
               LAB_ROOT_CA_INDENTED="$(sed 's/^/        /' /etc/omni/lab-root-ca.crt)"
               envsubst < "$TEMPLATE_PATH" > /tmp/omni-cluster-template.rendered.yaml
 
-              omnictl --omniconfig /etc/omnictl/omniconfig.yaml cluster template sync \
+              omnictl \
+                --omniconfig /etc/omnictl/omniconfig.yaml \
+                --identity /etc/omnictl/identity.pgp \
+                cluster template sync \
                 -f /tmp/omni-cluster-template.rendered.yaml
           volumeMounts:
             - name: omnictl-config
               mountPath: /etc/omnictl
+              readOnly: true
+            - name: omnictl-identity
+              mountPath: /etc/omnictl/identity.pgp
+              subPath: identity.pgp
               readOnly: true
             - name: lab-root-ca
               mountPath: /etc/omni/lab-root-ca.crt
@@ -57,6 +66,9 @@ spec:
         - name: omnictl-config
           secret:
             secretName: omnictl-config
+        - name: omnictl-identity
+          secret:
+            secretName: omnictl-identity
         - name: lab-root-ca
           configMap:
             name: lab-ca
