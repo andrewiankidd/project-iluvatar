@@ -43,7 +43,7 @@ spec:
               LAB_ROOT_CA_INDENTED="$(sed 's/^/        /' /etc/omni/lab-root-ca.crt)"
               envsubst < "$TEMPLATE_PATH" > /tmp/omni-cluster-template.rendered.yaml
 
-              omnictl --config-file /etc/omnictl/omniconfig.yaml cluster template sync \
+              omnictl --omniconfig /etc/omnictl/omniconfig.yaml cluster template sync \
                 -f /tmp/omni-cluster-template.rendered.yaml
           volumeMounts:
             - name: omnictl-config
