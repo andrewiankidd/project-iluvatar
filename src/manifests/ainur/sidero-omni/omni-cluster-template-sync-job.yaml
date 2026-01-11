@@ -18,7 +18,7 @@ spec:
             - name: REPO_REF
               value: main
             - name: TEMPLATE_PATH
-              value: src/manifests/ainur/sidero-omni/omni-cluster-template.yaml
+              value: src/manifests/ainur/sidero-omni/omni-config/omni-cluster-template.yaml
             - name: OMNICTL_URL
               value: https://github.com/siderolabs/omni/releases/latest/download/omnictl-linux-amd64
           command:
