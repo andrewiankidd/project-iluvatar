@@ -1,0 +1,30 @@
+kind: Cluster
+name: talos-default
+kubernetes:
+  version: v1.34.2
+talos:
+  version: v1.11.5
+patches:
+  - name: lab-root-ca
+    inline:
+      apiVersion: v1alpha1
+      kind: TrustedRootsConfig
+      name: lab-root-ca
+      certificates: |
+        ${LAB_ROOT_CA_INDENTED}
+  - name: install-nvme-128gb
+    inline:
+      machine:
+        install:
+          diskSelector:
+            size: 128GB
+---
+kind: ControlPlane
+machineClass:
+  name: available
+  size: 1
+---
+kind: Workers
+machineClass:
+  name: available
+  size: 3

@@ -1,0 +1,62 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: omni-cluster-template-sync
+  namespace: ainur-sidero-omni
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: sync-template
+          image: alpine:3.20
+          env:
+            - name: REPO_URL
+              value: https://github.com/andrewiankidd/project-iluvatar
+            - name: REPO_REF
+              value: main
+            - name: TEMPLATE_PATH
+              value: src/manifests/ainur/sidero-omni/omni-cluster-template.yaml
+            - name: OMNICTL_URL
+              value: https://github.com/siderolabs/omni/releases/latest/download/omnictl-linux-amd64
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              apk add --no-cache ca-certificates curl git gettext
+              curl -fsSL "$OMNICTL_URL" -o /usr/local/bin/omnictl
+              chmod +x /usr/local/bin/omnictl
+
+              workdir="$(mktemp -d)"
+              cd "$workdir"
+              git init -q
+              git remote add origin "$REPO_URL"
+              git config core.sparseCheckout true
+              echo "$TEMPLATE_PATH" > .git/info/sparse-checkout
+              git fetch -q --depth 1 origin "$REPO_REF"
+              git checkout -q FETCH_HEAD
+
+              export LAB_ROOT_CA_INDENTED
+              LAB_ROOT_CA_INDENTED="$(sed 's/^/        /' /etc/omni/lab-root-ca.crt)"
+              envsubst < "$TEMPLATE_PATH" > /tmp/omni-cluster-template.rendered.yaml
+
+              omnictl --config /etc/omnictl/omniconfig.yaml cluster template sync \
+                -f /tmp/omni-cluster-template.rendered.yaml
+          volumeMounts:
+            - name: omnictl-config
+              mountPath: /etc/omnictl
+              readOnly: true
+            - name: lab-root-ca
+              mountPath: /etc/omni/lab-root-ca.crt
+              subPath: ca.crt
+              readOnly: true
+      volumes:
+        - name: omnictl-config
+          secret:
+            secretName: omnictl-config
+        - name: lab-root-ca
+          configMap:
+            name: lab-ca
