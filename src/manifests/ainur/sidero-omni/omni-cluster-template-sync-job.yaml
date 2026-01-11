@@ -20,14 +20,14 @@ spec:
             - name: TEMPLATE_PATH
               value: src/manifests/ainur/sidero-omni/omni-config/omni-cluster-template.yaml
             - name: OMNICTL_URL
-              value: https://github.com/siderolabs/omni/releases/latest/download/omnictl-linux-amd64
+              value: https://github.com/siderolabs/omni/releases/latest/download/omnictl-linux-arm64
           command:
             - sh
             - -c
             - |
               set -eu
               apk add --no-cache ca-certificates curl git gettext
-              curl -fsSL "$OMNICTL_URL" -o /usr/local/bin/omnictl
+              curl -fsSL -L "$OMNICTL_URL" -o /usr/local/bin/omnictl
               chmod +x /usr/local/bin/omnictl
 
               workdir="$(mktemp -d)"
