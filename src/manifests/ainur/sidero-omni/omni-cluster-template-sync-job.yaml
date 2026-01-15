@@ -33,7 +33,7 @@ spec:
               chmod +x /usr/local/bin/omnictl
 
               mkdir -p /root/.talos/keys
-              cp /etc/omni/omni.asc /root/.talos/keys/default-omni@local.pgp
+              cp /etc/omni/omni.asc /root/.talos/keys/default-omni-sync@local.pgp
 
               workdir="$(mktemp -d)"
               cd "$workdir"

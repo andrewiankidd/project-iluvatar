@@ -76,17 +76,17 @@ spec:
               Subkey-Length: 3072
               Subkey-Usage: encrypt
               Name-Real: Omni
-              Name-Email: omni@local
+              Name-Email: omni-sync@local
               Expire-Date: 0
               %commit
               EOF
               gpg --batch --gen-key /work/gen-batch
               # Set a short expiry after creation; batch file doesn't accept hours.
-              fpr="$(gpg --list-keys --with-colons omni@local | awk -F: '$1=="fpr"{print $10; exit}')"
+              fpr="$(gpg --list-keys --with-colons omni-sync@local | awk -F: '$1=="fpr"{print $10; exit}')"
               exp_abs="$(date -u -d '+1 hour' +%Y%m%dT%H%M%S)"
               gpg --batch --pinentry-mode loopback --passphrase "" \
                 --quick-set-expire "$fpr" "$exp_abs"
-              gpg --batch --pinentry-mode loopback --passphrase "" --export-secret-keys --armor omni@local > /work/omni.asc
+              gpg --batch --pinentry-mode loopback --passphrase "" --export-secret-keys --armor omni-sync@local > /work/omni.asc
               # Backup into Longhorn PVC (don't overwrite if already present)
               [ -s /backup/omni.asc ] || cp /work/omni.asc /backup/omni.asc
           volumeMounts:

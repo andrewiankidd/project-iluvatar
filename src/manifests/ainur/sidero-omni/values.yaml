@@ -15,6 +15,7 @@ name: "Omni"
 initialUsers:
   - admin@kidd.network
   - omni@local
+  - omni-sync@local
 
 includeGenericDevicePlugin: false
 
