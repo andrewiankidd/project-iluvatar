@@ -77,7 +77,7 @@ spec:
               Subkey-Usage: encrypt
               Name-Real: Omni
               Name-Email: omni@local
-              Expire-Date: 1y
+              Expire-Date: 30d
               %commit
               EOF
               gpg --batch --gen-key /work/gen-batch
