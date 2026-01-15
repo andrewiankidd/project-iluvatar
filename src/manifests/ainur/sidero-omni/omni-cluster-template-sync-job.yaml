@@ -26,14 +26,15 @@ spec:
             - -c
             - |
               set -eu
-              apk add --no-cache ca-certificates curl git gettext
+              apk add --no-cache ca-certificates curl git gettext gnupg
               # trust lab CA for omnictl grpc/http calls
               cat /etc/omni/lab-root-ca.crt >> /etc/ssl/certs/ca-certificates.crt
               curl -fsSL -L "$OMNICTL_URL" -o /usr/local/bin/omnictl
               chmod +x /usr/local/bin/omnictl
 
               mkdir -p /root/.talos/keys
-              cp /etc/omni/omni.asc /root/.talos/keys/default-omni@local.pgp
+              gpg --dearmor -o /root/.talos/keys/default-omni@local.pgp /etc/omni/omni.asc
+              gpg --show-keys --with-colons /root/.talos/keys/default-omni@local.pgp | grep -E '^(pub|uid|fpr)' || true
 
               workdir="$(mktemp -d)"
               cd "$workdir"
