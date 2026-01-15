@@ -32,6 +32,9 @@ spec:
               curl -fsSL -L "$OMNICTL_URL" -o /usr/local/bin/omnictl
               chmod +x /usr/local/bin/omnictl
 
+              mkdir -p /root/.talos/keys
+              cp /etc/omni/omni.asc /root/.talos/keys/default-omni@local.pgp
+
               workdir="$(mktemp -d)"
               cd "$workdir"
               git init -q
@@ -54,8 +57,11 @@ spec:
               mountPath: /etc/omnictl
               readOnly: true
             - name: omni-gpg
-              mountPath: /root/.talos/keys
+              mountPath: /etc/omni/omni.asc
+              subPath: omni.asc
               readOnly: true
+            - name: omnictl-keys
+              mountPath: /root/.talos/keys
             - name: lab-root-ca
               mountPath: /etc/omni/lab-root-ca.crt
               subPath: ca.crt
@@ -67,9 +73,8 @@ spec:
         - name: omni-gpg
           secret:
             secretName: omni-gpg
-            items:
-              - key: omni.asc
-                path: omni@local.pgp
+        - name: omnictl-keys
+          emptyDir: {}
         - name: lab-root-ca
           configMap:
             name: lab-ca
