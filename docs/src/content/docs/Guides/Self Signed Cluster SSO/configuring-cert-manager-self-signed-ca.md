@@ -53,7 +53,6 @@ spec:
     - secret:
         name: cluster-root-ca
         key: tls.crt
-        namespace: cert-manager
   target:
     configMap:
       key: ca.crt

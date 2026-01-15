@@ -7,7 +7,6 @@ spec:
     - secret:
         name: cluster-root-ca
         key: tls.crt
-        namespace: cert-manager
   target:
     secret:
       key: ca.crt
