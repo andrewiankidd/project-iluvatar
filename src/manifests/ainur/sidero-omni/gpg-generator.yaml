@@ -83,7 +83,7 @@ spec:
               gpg --batch --gen-key /work/gen-batch
               # Set a short expiry after creation; batch file doesn't accept hours.
               fpr="$(gpg --list-keys --with-colons omni-sync@local | awk -F: '$1=="fpr"{print $10; exit}')"
-              exp_abs="$(date -u -d '+1 hour' +%Y%m%dT%H%M%S)"
+              exp_abs="$(/usr/bin/date -u -d '+1 hour' +%Y%m%dT%H%M%S)"
               gpg --batch --pinentry-mode loopback --passphrase "" \
                 --quick-set-expire "$fpr" "$exp_abs"
               gpg --batch --pinentry-mode loopback --passphrase "" --export-secret-keys --armor omni-sync@local > /work/omni.asc
