@@ -65,7 +65,7 @@ spec:
           command: ["/bin/sh","-ec"]
           args:
             - |
-              if [ -n "$(apk info -e gnupg 2>/dev/null)" ]; then :; else apk add --no-cache gnupg; fi
+              if [ -n "$(apk info -e gnupg 2>/dev/null)" ] && [ -n "$(apk info -e coreutils 2>/dev/null)" ]; then :; else apk add --no-cache gnupg coreutils; fi
               cat >/work/gen-batch <<'EOF'
               %no-protection
               Key-Type: RSA
