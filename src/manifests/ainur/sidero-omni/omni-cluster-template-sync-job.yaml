@@ -47,7 +47,6 @@ spec:
 
               omnictl \
                 --omniconfig /etc/omnictl/omniconfig.yaml \
-                --identity /etc/omni/omni.asc \
                 cluster template sync \
                 -f /tmp/omni-cluster-template.rendered.yaml
           volumeMounts:
@@ -55,8 +54,7 @@ spec:
               mountPath: /etc/omnictl
               readOnly: true
             - name: omni-gpg
-              mountPath: /etc/omni/omni.asc
-              subPath: omni.asc
+              mountPath: /root/.talos/keys
               readOnly: true
             - name: lab-root-ca
               mountPath: /etc/omni/lab-root-ca.crt
@@ -69,6 +67,9 @@ spec:
         - name: omni-gpg
           secret:
             secretName: omni-gpg
+            items:
+              - key: omni.asc
+                path: omni@local.pgp
         - name: lab-root-ca
           configMap:
             name: lab-ca
