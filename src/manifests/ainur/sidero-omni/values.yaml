@@ -1,40 +1,58 @@
-domainName: omni.kidd.network
-accountUuid: "8a6f8e9c-9d2a-4f8e-8c6e-9f01d3b7a4c1"
-privateKeySource: "file:///omni.asc"
+# ---------------------------------------------------------------------------
+# Omni Helm chart values — for the v2 chart (siderolabs/omni @ v1.7.2)
+#
+# Migration note: this file replaces the previous v1-chart values.yaml.
+# The v1 chart is unmaintained and the v2 chart explicitly does not support
+# in-place upgrade. This is a fresh-install configuration.
+#
+# Architectural change that motivated this migration:
+#   omni in v2 serves the Web UI + gRPC + SideroLink API all over h2c on
+#   one internal port (8080) and one siderolink port (8090), and demuxes
+#   by Content-Type. The ingress terminates TLS once per host; Traefik talks
+#   h2c to the backend via the service annotation set by the chart default.
+#   The v1 "siderolink TLS on separate port with custom Traefik ServersTransport"
+#   dance is no longer needed.
+#
+# What this chart does NOT solve (and cannot):
+#   - Talos machines trusting the self-signed lab CA when connecting back to
+#     siderolink after their first reboot. Omni v2 has no first-class admin
+#     mechanism to inject a custom CA into machine join configs (confirmed by
+#     reading the source: every caller of RenderJoinConfig passes zero extra
+#     documents). The supported workaround is the TrustedRootsConfig patch
+#     in the cluster template (see omni-config/omni-cluster-template.yaml).
+#   - Image generation. Image Factory and the Talos image schematic live
+#     outside the chart. If the cluster-template patch turns out not to
+#     persist trust roots correctly across reboots, the fallback is to bake
+#     the lab CA into the Talos image at factory build time.
+# ---------------------------------------------------------------------------
 
-deployment:
-  image: ghcr.io/siderolabs/omni
-  tag: "latest"
-  replicaCount: 1
-  imagePullPolicy: IfNotPresent
-  # nodeSelector:
-  #   kidd.network/role: "worker"
+fullnameOverride: omni
 
-name: "Omni"
+image:
+  repository: ghcr.io/siderolabs/omni
+  pullPolicy: IfNotPresent
+  tag: ""   # use chart appVersion (v1.7.2)
 
-initialUsers:
-  - admin@kidd.network
-  - omni@local
-  - omni-sync@local
+replicaCount: 1
 
-includeGenericDevicePlugin: false
+# --- Persistence -----------------------------------------------------------
+# The chart auto-creates a single PVC at /data that holds etcd, sqlite,
+# generated machine configs, and etcd backups. Sized up from the chart
+# default (16Gi) only if you want headroom.
+persistence:
+  enabled: true
+  storageClassName: longhorn-replicated-xfs-immediate
+  accessModes:
+    - ReadWriteOnce
+  size: 20Gi
 
-auth:
-  auth0:
-    enabled: false
-  saml:
-    enabled: false
+# --- etcd encryption key ---------------------------------------------------
+# The omni-gpg Secret is created by gpg-generator.yaml (a Job that runs
+# pre-sync). We just point the chart at it.
+etcdEncryptionKey:
+  existingSecret: omni-gpg
 
-service:
-  type: ClusterIP
-  siderolink:
-    domainName: omni.siderolink.kidd.network
-    wireguard:
-      address: ""  # optional; set if using host address for WireGuard
-      port: 30180
-  k8sProxy:
-    domainName: omni.kubernetes.kidd.network
-
+# --- Resources -------------------------------------------------------------
 resources:
   requests:
     cpu: 100m
@@ -43,42 +61,165 @@ resources:
     cpu: 200m
     memory: 256Mi
 
-extraArgs:
-  - --auth-oidc-enabled=true
-  - --auth-oidc-provider-url=https://dex.kidd.network
-  - --auth-oidc-client-id=omni
-  - --auth-oidc-client-secret=dex-oidc-secret
-  - --auth-oidc-scopes=openid
-  - --auth-oidc-scopes=profile
-  - --auth-oidc-scopes=email
-
-volumeMounts:
-  tls:
-    mountPath: "/etc/omni/tls"
-    readOnly: true
-  omniAsc:
-    mountPath: "/omni.asc"
-    subPath: "omni.asc"
-    readOnly: true
-
-volumes:
-  etcd:
-    persistentVolumeClaimName: omni-pvc
-  tls:
-    secretName: omni-tls
-  gpg:
-    secretName: omni-gpg  # created automatically by pre-sync hook if absent
-
-customVolumes:
+# --- Lab CA trust for outbound TLS -----------------------------------------
+# Omni makes outbound calls to Dex (OIDC) and possibly to internal Helm/Git
+# endpoints, all signed by the lab CA. Mount the lab-ca ConfigMap (published
+# by trust-manager via the cluster-wide Bundle) over the system trust store.
+extraVolumes:
   - name: lab-ca
     configMap:
       name: lab-ca
       optional: true
 
-customVolumeMounts:
-  # Omni image bundles certs via siderolabs/ca-certificates and FHS.
-  # That stack uses the Debian-style bundle path below; one mount is sufficient.
+extraVolumeMounts:
   - name: lab-ca
     mountPath: /etc/ssl/certs/ca-certificates.crt
     subPath: ca.crt
     readOnly: true
+
+# --- Services --------------------------------------------------------------
+# main: omni Web UI + gRPC + siderolink API (h2c, ClusterIP)
+# k8sProxy: Kubernetes API proxy (HTTPS, separate service because it does not
+#   support h2c).
+# wireguard: SideroLink WireGuard tunnel (UDP NodePort). The chart default of
+#   30180 is fine; advertise it via the node IP below.
+#
+# NOTE: do NOT override service.main.annotations here. The chart default
+# (traefik.ingress.kubernetes.io/service.serversscheme: h2c) is required for
+# Traefik to talk h2c to the backend.
+service:
+  main:
+    type: ClusterIP
+  k8sProxy:
+    type: ClusterIP
+  wireguard:
+    type: NodePort
+    nodePort: 30180
+    port: 50180
+
+# --- Ingress ---------------------------------------------------------------
+# Three Ingresses, all terminated at Traefik. All three reference the SAME
+# TLS secret (omni-tls) which is provisioned once by cert-manager from the
+# multi-SAN Certificate declared in extraObjects below.
+#
+# Why one Certificate instead of three ingress-shim auto-issued ones: three
+# separate Certificates with separate Secrets would race on issuance and
+# renewal. One Certificate, one Secret, three Ingresses referencing it is
+# the same pattern v1 used and matches the chart README's worked example.
+#
+# Validation note: the chart enforces that ingress.X.host MUST match the host
+# in config.services.X.advertisedURL below, and that TLS presence matches
+# the https:// scheme. Keep them in lockstep.
+ingress:
+  main:
+    enabled: true
+    className: traefik
+    host: omni.kidd.network
+    tls:
+      - secretName: omni-tls
+        hosts:
+          - omni.kidd.network
+  kubernetesProxy:
+    enabled: true
+    className: traefik
+    host: omni.kubernetes.kidd.network
+    tls:
+      - secretName: omni-tls
+        hosts:
+          - omni.kubernetes.kidd.network
+  siderolinkApi:
+    enabled: true
+    className: traefik
+    host: omni.siderolink.kidd.network
+    tls:
+      - secretName: omni-tls
+        hosts:
+          - omni.siderolink.kidd.network
+
+# --- Extra objects deployed by the chart -----------------------------------
+# Single multi-SAN Certificate for all three Omni ingresses. cert-manager
+# materialises this into the `omni-tls` Secret which the three Ingresses
+# above share.
+extraObjects:
+  - apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: omni
+    spec:
+      secretName: omni-tls
+      issuerRef:
+        kind: ClusterIssuer
+        name: local-ca
+      dnsNames:
+        - omni.kidd.network
+        - omni.kubernetes.kidd.network
+        - omni.siderolink.kidd.network
+
+# --- Omni config -----------------------------------------------------------
+# This block gets rendered into a Secret and mounted at /config/config.yaml.
+# The omni binary reads it via --config-path.
+config:
+  account:
+    # UUID, must not change across the lifetime of the install.
+    id: "8a6f8e9c-9d2a-4f8e-8c6e-9f01d3b7a4c1"
+    name: "Omni"
+
+  services:
+    api:
+      advertisedURL: https://omni.kidd.network
+    kubernetesProxy:
+      advertisedURL: https://omni.kubernetes.kidd.network
+    machineAPI:
+      advertisedURL: https://omni.siderolink.kidd.network
+    siderolink:
+      joinTokensMode: strict
+      eventSinkPort: 8091
+      wireGuard:
+        # MUST be IP:PORT format. Set to a LAN-reachable node IP that exposes
+        # service.wireguard.nodePort. For a stable endpoint later, front this
+        # with a kube-vip Service (similar to how pi-netboot does it) and
+        # advertise the VIP instead.
+        advertisedEndpoint: "192.168.1.50:30180"
+    workloadProxy:
+      enabled: false
+
+  auth:
+    # Auth0 default is enabled: true in the chart; explicitly disable it so
+    # Omni doesn't try to use Auth0 alongside our Dex OIDC client.
+    auth0:
+      enabled: false
+    saml:
+      enabled: false
+    oidc:
+      enabled: true
+      providerURL: https://dex.kidd.network
+      clientID: omni
+      # Plaintext for now — same secret used by Headlamp and Argo CD as the
+      # Dex static client secret. See BACKLOG Tier 1 "SOPS for secrets":
+      # this should move to additionalConfigSources + a SOPS-encrypted Secret
+      # before the next public-repo commit if the value rotates.
+      clientSecret: dex-oidc-secret
+      scopes:
+        - openid
+        - profile
+        - email
+
+    # Bootstrap admins. These are seeded on first run.
+    initialUsers:
+      - admin@kidd.network
+      - omni@local
+      - omni-sync@local
+
+  etcdBackup:
+    localPath: /data/etcd-backup
+    s3Enabled: false
+
+  storage:
+    default:
+      kind: etcd
+      etcd:
+        embedded: true
+        embeddedDBPath: /data/etcd/
+        privateKeySource: file:///omni.asc
+    sqlite:
+      path: /data/secondary-storage/sqlite.db

@@ -161,17 +161,36 @@ The first time a workload silently OOM-loops without you noticing for a week, th
 - lab-ca custom volume mount.
 - Argo CD multi-source Application structure.
 
-### Open question
+### Source-code findings (researched 2026-05-12)
 
-The v2 chart README documents Auth0 as the worked example for `config.auth`. OIDC is listed as supported but the config schema isn't shown in the README. **Find the v2 OIDC values shape** (likely from `values.yaml` in the chart source) before drafting the new values file.
+After reading the v1.7.2 Omni source end-to-end:
 
-### Suggested migration sequence (when ready)
+- **OIDC config schema is `config.auth.oidc.{enabled, providerURL, clientID, clientSecret, scopes, logoutURL, allowUnverifiedEmail}`.** Confirmed from `deploy/helm/omni/values.yaml` and the chart's config schema. Used in our `values.yaml`.
+- **Omni v2 has NO first-class admin mechanism to inject a custom CA into machine join configs.** `client/pkg/siderolink/siderolink.go:RenderJoinConfig(extraDocuments ...config.Document)` accepts extras, but every caller in the codebase (`MachineJoinConfigController`, `ProviderJoinConfigController`, gRPC `GetMachineJoinConfig` handler, `clusterimport`) passes zero. Grep for `TrustedRoots` / `extraCa` / `extraTrusted` returns only test code and unrelated cluster-secret rotation.
+- **The supported approach IS the cluster-template `TrustedRootsConfig` patch.** That's already in `omni-config/omni-cluster-template.yaml`.
+- **The `inline:` field in cluster-template patches supports three input forms** (`client/pkg/template/internal/models/inline.go`): single mapping (our current usage), sequence of mappings, or raw YAML literal block scalar. Single-mapping is canonical for one document. The chart validates patches via `omni.ValidateConfigPatch` — if the structure were wrong, sync would fail loudly. So the patch is structurally fine.
+- **Image Factory now has its own Helm chart** at `siderolabs/image-factory:deploy/helm/image-factory` (added late 2025). Self-hosting it cluster-internally is the realistic fallback path for the offline-image-with-baked-CA story, and it stays consistent with the project's offline ethos.
 
-1. **Research**: pull the v2 chart source, find the OIDC config schema, draft a new `values.yaml`.
-2. **Parallel install**: deploy v2 in `ainur-sidero-omni-v2` namespace, leave v1 untouched.
-3. **Smoke test**: verify Dex login works, verify a test Talos node can join via the new siderolink endpoint.
-4. **Cut over**: switch DNS for `omni.kidd.network` → v2; archive v1 manifests in git history.
-5. **Docs**: write the `bootstrap-arda` and Talos-architecture docs against the v2 setup (they're currently drafted as TODO stubs, which is the right state for not-yet-real things).
+### Suggested test sequence (when you rebootstrap)
+
+The v1 chart's bolted-on workarounds (custom Traefik IngressRoute for siderolink h2c, ServersTransport for backend HTTPS, multi-SAN cert juggling) are *all gone* in v2. The remaining TLS bootstrap question — does the `TrustedRootsConfig` patch from the cluster template actually land in the rendered ClusterMachineConfig — is now the cleanest it's ever been to test, because there's nothing else in the way.
+
+Treat this as the trial run, not a separate migration:
+
+1. **Pi side first**: re-bootstrap ARM cluster from the bootstrap VM. Argo CD syncs everything in `ainur` including the new v2 sidero-omni app. **No Talos machines involved yet.**
+2. **Smoke-test Omni itself**: three ingresses up with lab-CA certs, Dex login works at `https://omni.kidd.network/`, cluster-template sync job completes. If anything's broken here, fix before introducing x86 hardware.
+3. **One x86 machine, kernel-cmdline + image-time TLS injection** (the existing working first-boot path). Let it register.
+4. **Let it auto-assign** via cluster template `machineClass: available`. Watch the lifecycle through registration → cluster config push → reboot.
+5. **Decision point**: does the machine reconnect to Omni after the reboot?
+   - **Yes**: solved. The v2 architecture cleanup unblocked something v1 was breaking. Document the working path in `bootstrap-arda` docs.
+   - **No**: diagnose. Run `omnictl get clustermachineconfig <id> -o yaml | grep TrustedRoots`. Patch-lands-or-not determines whether to escalate to Option 4 (`talos.config=<internal-URL>`) or Option 2 (Image Factory schematic).
+6. **Hard test**: power-cycle the machine. If it reconnects without manual intervention, the persisted config holds together and the bootstrap loop is closed.
+
+### Fallbacks (only if step 5 says "no")
+
+- **Option 4**: extend `bootstrap-http` to serve a `/talos/initial-config.yaml` containing `TrustedRootsConfig` + siderolink config, then bake `talos.config=http://bootstrap.kidd.network/talos/initial-config.yaml` as a kernel arg via Image Factory schematic. Loads trust before siderolink dials, every boot.
+- **Option 2**: find or write a Talos system extension that injects the lab CA into the trust store at boot time. Investigate `siderolabs/extensions` repo and Talos 1.12+ for new mechanisms.
+- **Option 3 (Let's Encrypt)**: ruled out by the offline / post-apocalypse design constraint. See [project-offline-constraint] memory.
 
 ### Why this is ahead of Tier 1 security work
 
