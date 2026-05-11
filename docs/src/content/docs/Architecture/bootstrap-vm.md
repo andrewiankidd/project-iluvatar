@@ -11,7 +11,10 @@ draft: false
 > Gaze upon it's majesty
 
 #### About
-I want to be able to provision and rebuild my cluster automatically with zero touch configuration. To do this I can use some of the very same technology I intend on using inside the cluster (TFTP/NFS Netboot, HTTP Cloud Init).
+
+In the project's Tolkien framing, this VM is the **Music of the Ainur** — the song that calls Arda into being. The cluster (the Ainur) cannot sing themselves into existence; something has to start the song. Conveniently, the song is a bash script.
+
+I want to be able to provision and rebuild my cluster automatically with zero touch configuration. To do this I can use some of the very same technology I intend on using inside the cluster (TFTP/NFS Netboot, HTTP Cloud Init) — which is half the point of this VM: every component it runs has an in-cluster twin once Arda is up.
 
 However this can be challenge as there are a lot of moving pieces, and I don't want to end up in a position where my cluster relies on a bunch of manual configuration ahead of time.
 

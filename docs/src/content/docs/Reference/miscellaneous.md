@@ -74,7 +74,7 @@ Linux valar-0 6.8.0-1031-raspi #35-Ubuntu SMP PREEMPT_DYNAMIC Thu Jul  3 15:00:2
 
 **Key Capabilities**
 - Netbooted, diskless Raspberry Pis using NFS/TFTP + cloud-init.
-- Offline-capable K3s cluster with no external dependencies beyond your CA.
+- Self-contained control plane: no public CA or IdP required (cluster still pulls k3s + upstream charts from the internet at build/boot time).
 - GitOps with Argo CD (Dex OIDC SSO) and Headlamp (Dex OIDC SSO).
 - Consistent self-signed TLS trust via ConfigMap mount + `SSL_CERT_DIR`.
 - Deterministic bootstrap using k3s HelmChart CRs and repo-driven manifests.
@@ -82,9 +82,12 @@ Linux valar-0 6.8.0-1031-raspi #35-Ubuntu SMP PREEMPT_DYNAMIC Thu Jul  3 15:00:2
 
 **Why It’s Notable**
 - Diskless nodes and ephemeral rootfs keep hardware cheap and swappable.
-- Fully self-contained (no public CA or IdP) yet secure: your CA and Dex.
+- Self-contained trust story (your own CA and Dex, no external dependencies for identity once running).
 - Single command to go from clean host to full cluster with identity and UI.
 - Troubleshooting and reprovisioning are fast because everything is code.
+
+**Security Posture (be honest)**
+- TFTP, NFS, and the `bootstrap-http` endpoint (which serves the **k3s agent join token** unauthenticated) all assume a trusted L2 segment. Anyone on the LAN can pull the join token and become a cluster member. Run this on a private VLAN; the design is "single-site, LAN-trusted", not "internet-facing".
 
 **Architecture Highlights**
 - Boot: cloud-init seeds K3s and manifests; systemd copies staged YAML into K3s.

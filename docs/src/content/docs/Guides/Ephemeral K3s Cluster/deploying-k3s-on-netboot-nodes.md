@@ -194,6 +194,10 @@ runcmd:
 
 Rather than keep the old hello-world app, use a tiny HTTP service that serves `k3s-leader` and `k3s-agent-token`. That way, nodes that boot early can still fetch the leader IP and token over HTTP.
 
+:::caution[Security note]
+This deployment serves the **k3s agent join token** unauthenticated over plain HTTP. Anyone on the LAN can `curl http://bootstrap.kidd.network/k3s/k3s-agent-token` and join the cluster as an agent. That's by design for the trusted-LAN single-site use case the rest of this guide assumes, but be honest about it: the VLAN is the only authentication layer. If you take this design to a less-trusted network, this endpoint is the first thing to put behind mTLS or replace with a pull mechanism the joining node authenticates against.
+:::
+
 ```yaml
 # /etc/k3s-manifests/bootstrap-http.yaml
 ---
