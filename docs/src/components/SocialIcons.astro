@@ -1,0 +1,50 @@
+---
+// Override of Starlight's SocialIcons so we can add a custom link to
+// andrewkidd.co.uk alongside the built-in social icons. Starlight's `social`
+// config only accepts its built-in icon set, so a custom brand logo has to be
+// added here as a component override.
+//
+// Renders the default social icons first (GitHub etc.), then appends the
+// personal-site link. The inline SVG is the andrewkidd.co.uk logo adapted to
+// use `currentColor` so it inherits the same accent colour and hover treatment
+// as the GitHub icon next to it.
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+---
+
+<Default><slot /></Default>
+
+<a
+	href="https://andrewkidd.co.uk"
+	rel="me"
+	class="sl-flex site-logo-link"
+	aria-label="andrewkidd.co.uk"
+>
+	<span class="sr-only">andrewkidd.co.uk</span>
+	<svg viewBox="0 0 200 200" fill="none" stroke="currentColor" aria-hidden="true">
+		<circle cx="100" cy="100" r="90" stroke-width="8" />
+		<g stroke-width="6.4" stroke-linecap="round">
+			<line x1="163.6" y1="36.4" x2="36.4" y2="163.6" />
+			<line x1="36.4" y1="163.6" x2="100" y2="10" />
+			<line x1="100" y1="100" x2="163.6" y2="163.6" />
+			<line x1="100" y1="10" x2="100" y2="190" />
+		</g>
+	</svg>
+</a>
+
+<style>
+	@layer starlight.core {
+		.site-logo-link {
+			color: var(--sl-color-text-accent);
+			padding: 0.5em;
+			margin: -0.5em;
+			align-items: center;
+		}
+		.site-logo-link:hover {
+			opacity: 0.66;
+		}
+		.site-logo-link svg {
+			width: 1em;
+			height: 1em;
+		}
+	}
+</style>

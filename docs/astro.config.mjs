@@ -16,6 +16,11 @@ export default defineConfig({
     }),
 		starlight({
 			title: 'project-iluvatar',
+				components: {
+					// Custom SocialIcons override adds the andrewkidd.co.uk link
+					// alongside the built-in GitHub icon.
+					SocialIcons: './src/components/SocialIcons.astro',
+				},
 				social: [
 					{label: 'GitHub', href: 'https://github.com/andrewiankidd/project-iluvatar', icon: 'github' },
 				],
