@@ -7,8 +7,9 @@ it over RCON on localhost, so the RCON password never leaves the pod:
   map       from squaremap: the overworld, its spawn, and the tile zooms
 
 The world map is rendered in full when much of the world has no map tile
-yet (a seeded or upgraded world); after that squaremap keeps it current as
-chunks change. The server's /data is mounted read-only to count both.
+yet (a seeded or upgraded world), and counts as drawn once that render stops
+adding tiles; after that squaremap keeps it current as chunks change. The
+server's /data is mounted read-only to count both.
 """
 
 import glob
@@ -34,6 +35,7 @@ DRAWN_ENOUGH = 0.9         # below this share of regions with a tile, render in 
 
 state = {"updated": None, "versions": None, "map": None}
 render_requested = set()
+last_drawn = {}
 
 
 def rcon(command):
@@ -97,10 +99,16 @@ def map_info():
     zoom = settings["zoom"]["max"]
     drawn, regions = coverage(world["name"], zoom)
     complete = regions == 0 or drawn >= DRAWN_ENOUGH * regions
-    if not complete and world["name"] not in render_requested:
-        print(f"{drawn}/{regions} regions drawn; rendering in full", flush=True)
-        print(rcon(f"squaremap fullrender {world['display_name']}").strip(), flush=True)
-        render_requested.add(world["name"])
+    if not complete:
+        if world["name"] not in render_requested:
+            print(f"{drawn}/{regions} regions drawn; rendering in full", flush=True)
+            rcon(f"squaremap fullrender {world['display_name']}")
+            render_requested.add(world["name"])
+        elif last_drawn.get(world["name"]) == drawn:
+            # The render has stopped adding tiles: what is left are regions
+            # squaremap does not draw (empty files, partly generated chunks).
+            complete = True
+    last_drawn[world["name"]] = drawn
     return {"world": world["name"], "spawn": settings["spawn"],
             "zoom": {"max": zoom, "default": settings["zoom"]["def"]},
             "tile_blocks": TILE_BLOCKS, "regions": regions, "regions_drawn": drawn, "drawn": complete}
@@ -114,7 +122,8 @@ def refresh():
             except Exception as e:      # the server may still be starting
                 print(f"{key}: {e}", flush=True)
         state["updated"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        time.sleep(INTERVAL if state["versions"] and state["map"] else 30)
+        settled = state["versions"] and state["map"] and state["map"]["drawn"]
+        time.sleep(INTERVAL if settled else 30)
 
 
 class Handler(BaseHTTPRequestHandler):
