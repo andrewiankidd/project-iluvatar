@@ -127,7 +127,9 @@ def describe(svc):
     if "minecraft" in ports:
         entry["java"] = {"port": ports["minecraft"]}
         try:
-            entry["java"].update(up=True, **java_status(internal, ports["minecraft"]))
+            started = time.monotonic()
+            status = java_status(internal, ports["minecraft"])
+            entry["java"].update(up=True, latency_ms=round((time.monotonic() - started) * 1000), **status)
         except Exception as e:
             entry["java"].update(up=False, error=str(e))
     if "bedrock" in ports:
