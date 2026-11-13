@@ -38,6 +38,13 @@
   a.map { display: inline-block; margin-top: 14px; color: var(--accent); font-weight: 600; text-decoration: none; }
   a.map:hover { text-decoration: underline; }
   .players { font-size: .85rem; color: var(--muted); margin-top: 8px; }
+  .spawn { position: relative; display: block; height: 220px; margin: -20px -20px 16px;
+           border-radius: 12px 12px 0 0; overflow: hidden; background: var(--chip); }
+  .spawn img { position: absolute; width: 512px; height: 512px; image-rendering: pixelated; }
+  .spawn .pin { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px;
+                border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px #000a; }
+  .spawn .note { position: absolute; left: 10px; bottom: 8px; font-size: .75rem; color: #fff;
+                 background: #0009; padding: 2px 8px; border-radius: 4px; }
   footer { margin-top: 32px; font-size: .85rem; color: var(--muted); }
   .empty { color: var(--muted); }
 </style>
@@ -64,7 +71,39 @@ function copyButton(value) {
   return b;
 }
 
-function editionRow(label, edition, host, defaultPort) {
+// The versions a client may run: "26.3", or "26.40 – 26.63" for a range.
+function accepts(range) {
+  if (!range) return null;
+  return range.min === range.max ? range.min : `${range.min} – ${range.max}`;
+}
+
+// A view of spawn assembled from the server's squaremap tiles at full zoom
+// (one block per pixel), centred on spawn and linking to the map there.
+function spawnView(s) {
+  const m = s.spawn_map;
+  if (!m || !s.map) return null;
+  const a = el("a", "spawn");
+  a.href = `${s.map}/?world=${encodeURIComponent(m.world)}&zoom=${m.zoom.max}&x=${m.spawn.x}&z=${m.spawn.z}`;
+  a.title = `Spawn at ${m.spawn.x}, ${m.spawn.z}: open the live map`;
+  const size = m.tile_blocks, reachX = 700, reachZ = 160;
+  for (let tx = Math.floor((m.spawn.x - reachX) / size); tx <= Math.floor((m.spawn.x + reachX) / size); tx++) {
+    for (let tz = Math.floor((m.spawn.z - reachZ) / size); tz <= Math.floor((m.spawn.z + reachZ) / size); tz++) {
+      const img = el("img");
+      img.alt = "";
+      img.loading = "lazy";
+      img.style.left = `calc(50% + ${tx * size - m.spawn.x}px)`;
+      img.style.top = `calc(50% + ${tz * size - m.spawn.z}px)`;
+      img.onerror = () => img.remove();          // undrawn tiles come back empty
+      img.src = `${s.map}/tiles/${m.world}/${m.zoom.max}/${tx}_${tz}.png`;
+      a.append(img);
+    }
+  }
+  a.append(el("span", "pin"));
+  a.append(el("span", "note", m.drawn ? `Spawn · ${m.spawn.x}, ${m.spawn.z}` : "The map is still being drawn"));
+  return a;
+}
+
+function editionRow(label, edition, host, defaultPort, versions) {
   const row = el("div", "row");
   row.append(el("span", "label", label));
   const where = el("div");
@@ -76,8 +115,9 @@ function editionRow(label, edition, host, defaultPort) {
     code.append(part);
   });
   where.append(code);
+  const runs = accepts(versions) || edition.version || "";
   const meta = edition.up
-    ? `port ${edition.port} · ${edition.version ?? ""} · ${edition.online ?? 0}/${edition.max ?? "?"} online`
+    ? `port ${edition.port} · version ${runs} · ${edition.online ?? 0}/${edition.max ?? "?"} online`
     : `port ${edition.port} · not answering`;
   where.append(el("div", "meta", meta));
   row.append(where, copyButton(addr));
@@ -87,12 +127,15 @@ function editionRow(label, edition, host, defaultPort) {
 function card(s) {
   const c = el("article", "card");
   const up = (s.java && s.java.up) || (s.bedrock && s.bedrock.up);
+  const view = spawnView(s);
+  if (view) c.append(view);
   const top = el("div", "top");
   top.append(el("h2", null, s.title), el("span", "state " + (up ? "up" : "down"), up ? "Online" : "Offline"));
   c.append(top, el("p", "desc", s.description));
   const host = s.host || s.address || s.name;
-  if (s.java) c.append(editionRow("Java", s.java, host, 25565));
-  if (s.bedrock) c.append(editionRow("Bedrock", s.bedrock, host, 19132));
+  const v = s.versions || {};
+  if (s.java) c.append(editionRow("Java", s.java, host, 25565, v.java));
+  if (s.bedrock) c.append(editionRow("Bedrock", s.bedrock, host, 19132, v.bedrock));
   const names = s.java && s.java.players && s.java.players.filter(Boolean);
   if (names && names.length) c.append(el("div", "players", "Playing: " + names.join(", ")));
   if (s.map) { const a = el("a", "map", "Open the live map →"); a.href = s.map; c.append(a); }

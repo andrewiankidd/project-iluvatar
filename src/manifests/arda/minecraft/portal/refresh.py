@@ -136,6 +136,16 @@ def describe(svc):
             entry["bedrock"].update(up=True, **bedrock_status(internal, ports["bedrock"]))
         except Exception as e:
             entry["bedrock"].update(up=False, error=str(e))
+    # Versions and the spawn map, from the server's info sidecar.
+    try:
+        url = f"http://{meta['name']}-info.{NAMESPACE}.svc:8099/info.json"
+        with urllib.request.urlopen(url, timeout=TIMEOUT) as r:
+            info = json.load(r)
+        entry["versions"] = info.get("versions")
+        entry["spawn_map"] = info.get("map")
+    except Exception as e:
+        entry["versions"] = entry["spawn_map"] = None
+        print(f"{entry['name']}: no info ({e})", flush=True)
     return entry
 
 

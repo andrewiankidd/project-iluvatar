@@ -56,6 +56,31 @@ extraVolumes:
       - name: patches
         configMap:
           name: minecraft-patches   # from ../kustomization.yaml
+  - volumes:                        # mounted by the info sidecar only
+      - name: info
+        configMap:
+          name: minecraft-info      # from ../kustomization.yaml
+
+# Versions, spawn and map state for the portal, at :8099/info.json (the
+# "info" port the ApplicationSet adds). Asks the server over RCON on
+# localhost, so the password stays in the pod.
+sidecarContainers:
+  - name: info
+    image: python:3.14-alpine
+    command: ["python", "-I", "-u", "/app/info.py"]
+    env:
+      - name: RCON_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: '{{ template "minecraft.fullname" . }}-rcon'
+            key: rcon-password
+    volumeMounts:
+      - name: info
+        mountPath: /app
+        readOnly: true
+    resources:
+      requests: { cpu: 10m, memory: 24Mi }
+      limits: { memory: 64Mi }
 
 extraEnv:
   PATCH_DEFINITIONS: /patches

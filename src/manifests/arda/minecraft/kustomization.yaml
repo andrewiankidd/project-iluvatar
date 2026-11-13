@@ -14,3 +14,10 @@ configMapGenerator:
       - common/patches/geyser.json
     options:
       disableNameSuffixHash: true
+  # The info sidecar every server runs (common/values.yaml). Fixed name for
+  # the same reason; servers pick up a change on their next restart.
+  - name: minecraft-info
+    files:
+      - common/info/info.py
+    options:
+      disableNameSuffixHash: true
