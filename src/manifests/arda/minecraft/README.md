@@ -48,9 +48,10 @@ Not defined in this repo for arda yet:
 - MetalLB, with a pool for the game LoadBalancer IPs. Each Service mixes TCP
   and UDP ports on one IP.
 - Traefik as the `traefik` IngressClass.
-- cert-manager with the `local-ca` ClusterIssuer.
+- cert-manager, for the `letsencrypt` ClusterIssuer in `../cert-issuers.yml`.
 - A default StorageClass, or set `persistence.storageClass` in `common/values.yaml`.
-- The `cloudflare-api-token` Secret, see `../external-dns.yml`.
+- The `cloudflare-api-token` Secret in both `external-dns` and `cert-manager`;
+  see `../external-dns.yml` and `../cert-issuers/letsencrypt.yaml`.
 
 ## Moving the creative world in
 

@@ -1,0 +1,30 @@
+# Let's Encrypt, proving ownership with a DNS-01 TXT record in the
+# kidd.network zone on Cloudflare. Nothing has to reach the cluster from
+# outside, so it works for names that resolve to LAN addresses, wildcards
+# included.
+#
+# Ingresses ask for it with:  cert-manager.io/cluster-issuer: letsencrypt
+#
+# Needs the Cloudflare API token (Zone:DNS:Edit) as the Secret
+# cloudflare-api-token, key api-token, in the cert-manager namespace. It is
+# not kept in this public repo.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    # Production. A cluster that is rebuilt often can point this at
+    # https://acme-staging-v02.api.letsencrypt.org/directory while it settles.
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-account-key
+    solvers:
+      - selector:
+          dnsZones:
+            - kidd.network
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token

@@ -7,7 +7,7 @@ kind: Ingress
 metadata:
   name: portal
   annotations:
-    cert-manager.io/cluster-issuer: local-ca
+    cert-manager.io/cluster-issuer: letsencrypt
 spec:
   ingressClassName: traefik
   tls:

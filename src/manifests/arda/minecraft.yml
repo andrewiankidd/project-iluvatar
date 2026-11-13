@@ -93,7 +93,7 @@ spec:
                       enabled: true
                       ingressClassName: traefik
                       annotations:
-                        cert-manager.io/cluster-issuer: local-ca
+                        cert-manager.io/cluster-issuer: letsencrypt
                       hosts:
                         - name: 'map.{{ .path.basename }}.minecraft.kidd.network'
                           path: /
