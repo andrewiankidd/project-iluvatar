@@ -78,6 +78,9 @@ sidecarContainers:
       - name: info
         mountPath: /app
         readOnly: true
+      - name: datadir       # the chart's world volume, to compare map and world
+        mountPath: /data
+        readOnly: true
     resources:
       requests: { cpu: 10m, memory: 24Mi }
       limits: { memory: 64Mi }

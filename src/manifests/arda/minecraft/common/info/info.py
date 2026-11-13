@@ -6,10 +6,12 @@ it over RCON on localhost, so the RCON password never leaves the pod:
   versions  from Geyser: the Java version and the Bedrock range it accepts
   map       from squaremap: the overworld, its spawn, and the tile zooms
 
-The world map is rendered in full once if its spawn has never been drawn;
-after that squaremap keeps it current as chunks change.
+The world map is rendered in full when much of the world has no map tile
+yet (a seeded or upgraded world); after that squaremap keeps it current as
+chunks change. The server's /data is mounted read-only to count both.
 """
 
+import glob
 import json
 import os
 import re
@@ -25,7 +27,10 @@ RCON_PASSWORD = os.environ["RCON_PASSWORD"]
 MAP = os.environ.get("MAP_URL", "http://127.0.0.1:8080")
 PORT = int(os.environ.get("PORT", "8099"))
 INTERVAL = int(os.environ.get("INTERVAL", "300"))
-TILE_BLOCKS = 512          # squaremap: one tile is 512 px, 1 block per px at max zoom
+DATA = os.environ.get("DATA", "/data")
+TILE_BLOCKS = 512          # squaremap: one tile is 512 px, 1 block per px at max zoom,
+                           # so one tile per 512-block region file
+DRAWN_ENOUGH = 0.9         # below this share of regions with a tile, render in full
 
 state = {"updated": None, "versions": None, "map": None}
 render_requested = set()
@@ -75,24 +80,30 @@ def get_json(path):
         return json.load(r)
 
 
-def tile_drawn(world, zoom, x, z):
-    url = f"{MAP}/tiles/{world}/{zoom}/{x}_{z}.png"
-    with urllib.request.urlopen(url, timeout=10) as r:
-        return len(r.read()) > 0      # squaremap answers undrawn tiles with an empty 200
+def coverage(world, zoom):
+    """(regions with a drawn tile, regions in the overworld)."""
+    regions = (glob.glob(f"{DATA}/world/dimensions/minecraft/overworld/region/r.*.mca")   # 26.x layout
+               or glob.glob(f"{DATA}/world/region/r.*.mca"))
+    tiles = {os.path.basename(p)[:-4] for p in glob.glob(f"{DATA}/plugins/squaremap/web/tiles/{world}/{zoom}/*.png")
+             if os.path.getsize(p) > 0}
+    names = {".".join(os.path.basename(p).split(".")[1:3]).replace(".", "_") for p in regions}
+    return len(names & tiles), len(names)
 
 
 def map_info():
     worlds = get_json("/tiles/settings.json")["worlds"]
     world = next(w for w in worlds if w["type"] == "normal")
     settings = get_json(f"/tiles/{world['name']}/settings.json")
-    spawn = settings["spawn"]
     zoom = settings["zoom"]["max"]
-    drawn = tile_drawn(world["name"], zoom, spawn["x"] // TILE_BLOCKS, spawn["z"] // TILE_BLOCKS)
-    if not drawn and world["name"] not in render_requested:
+    drawn, regions = coverage(world["name"], zoom)
+    complete = regions == 0 or drawn >= DRAWN_ENOUGH * regions
+    if not complete and world["name"] not in render_requested:
+        print(f"{drawn}/{regions} regions drawn; rendering in full", flush=True)
         print(rcon(f"squaremap fullrender {world['display_name']}").strip(), flush=True)
         render_requested.add(world["name"])
-    return {"world": world["name"], "spawn": spawn, "zoom": {"max": zoom, "default": settings["zoom"]["def"]},
-            "tile_blocks": TILE_BLOCKS, "drawn": drawn}
+    return {"world": world["name"], "spawn": settings["spawn"],
+            "zoom": {"max": zoom, "default": settings["zoom"]["def"]},
+            "tile_blocks": TILE_BLOCKS, "regions": regions, "regions_drawn": drawn, "drawn": complete}
 
 
 def refresh():
