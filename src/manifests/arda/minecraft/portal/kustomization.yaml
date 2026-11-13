@@ -7,10 +7,13 @@ resources:
   - service.yaml
   - ingress.yaml
 configMapGenerator:
-  # Hashed names: editing either file rolls the Deployment.
+  # Hashed names: editing any of these rolls the Deployment.
   - name: portal-web
     files:
       - index.html
   - name: portal-refresher
     files:
       - refresh.py
+  - name: portal-snapshot
+    files:
+      - snapshot.py

@@ -42,8 +42,14 @@
           padding: 4px; display: flex; flex-direction: column; gap: 2px; min-height: 120px; }
   .empty { color: var(--muted); text-align: center; padding: 40px 0; }
 
-  .row { display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: start;
-         padding: 4px; border: 2px solid transparent; cursor: pointer; outline: none; }
+  .row { display: grid; grid-template-columns: 160px 1fr auto; gap: 12px; align-items: start;
+         padding: 6px; border: 2px solid transparent; cursor: pointer; outline: none; }
+  .title { font-size: 20px; }
+  @media (max-width: 620px) {
+    .row { grid-template-columns: 112px 1fr; }
+    .row .side { grid-column: 2; flex-direction: row; justify-content: flex-start; gap: 12px; }
+    .icon { width: 112px; height: 63px; }
+  }
   .row:hover { background: #ffffff0d; }
   .row[aria-selected="true"] { border-color: var(--select); background: #00000055; }
   .row:focus-visible { border-color: var(--accent); }
@@ -60,16 +66,14 @@
   .bars i.on { background: var(--up); }
   .x { color: var(--down); font-weight: 600; font-size: 16px; }
 
-  .view { position: relative; overflow: hidden; background: #0005; }
-  .view img { position: absolute; image-rendering: pixelated; }
-  .icon { width: 64px; height: 64px; }
-  .view .pin { position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px;
-               background: #fff; box-shadow: 0 0 0 2px #000c; }
-  .icon .pin { width: 4px; height: 4px; margin: -2px 0 0 -2px; box-shadow: 0 0 0 1px #000c; }
+  .view { position: relative; overflow: hidden; background: #0005; display: block; }
+  .view img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .view .none { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font-size: 13px; }
+  .icon { width: 160px; height: 90px; }
 
   .detail { margin-top: 10px; background: var(--panel); border: 2px solid #000a; display: none; }
   .detail.open { display: block; }
-  .banner { height: 200px; }
+  .banner { aspect-ratio: 16 / 9; max-height: 360px; width: 100%; }
   .banner .note { position: absolute; left: 8px; bottom: 6px; font-size: 14px; background: #000a; padding: 2px 8px; }
   .facts { display: flex; flex-wrap: wrap; gap: 4px 18px; padding: 8px 10px; font-size: 15px; color: var(--muted); }
   .facts b { color: var(--ink); font-weight: 400; }
@@ -118,27 +122,28 @@ function address(s, edition, defaultPort) {
 }
 const range = (r) => !r ? null : r.min === r.max ? r.min : `${r.min} – ${r.max}`;
 
-// The area around spawn from the server's map tiles. scale is pixels per
-// block; the tiles are 1 block per pixel, tile_blocks wide.
-function spawnView(s, cls, width, height, scale) {
+// What a player sees standing at spawn: the portal photographs it from the
+// server's 3D map every hour (snapshot.py).
+function spawnView(s, cls) {
   const box = el("div", "view " + cls);
-  const m = s.spawn_map;
-  if (!m || !s.map) return box;
-  const size = m.tile_blocks, rx = width / scale / 2, rz = height / scale / 2;
-  for (let tx = Math.floor((m.spawn.x - rx) / size); tx <= Math.floor((m.spawn.x + rx) / size); tx++) {
-    for (let tz = Math.floor((m.spawn.z - rz) / size); tz <= Math.floor((m.spawn.z + rz) / size); tz++) {
-      const img = el("img");
-      img.alt = "";
-      img.style.width = img.style.height = `${size * scale}px`;
-      img.style.left = `calc(50% + ${(tx * size - m.spawn.x) * scale}px)`;
-      img.style.top = `calc(50% + ${(tz * size - m.spawn.z) * scale}px)`;
-      img.onerror = () => img.remove();            // undrawn tiles come back empty
-      img.src = `${s.map}/tiles/${m.world}/${m.zoom.max}/${tx}_${tz}.png`;
-      box.append(img);
-    }
+  if (s.shot) {
+    const img = el("img");
+    img.alt = `${s.title}: the view from spawn`;
+    img.src = s.shot;
+    box.append(img);
+  } else {
+    box.append(el("span", "none", s.java && s.java.up ? "No view yet" : ""));
   }
-  box.append(el("span", "pin"));
   return box;
+}
+
+// BlueMap's 3D view, looking down on spawn from above and behind.
+function mapLink(s) {
+  if (!s.map) return null;
+  const sp = s.spawn, id = s.bluemap && s.bluemap.id;
+  if (!sp || !id) return s.map;
+  const rotation = ((sp.yaw || 0) - 180) * Math.PI / 180;
+  return `${s.map}/#${id}:${sp.x}:${sp.y}:${sp.z}:120:${rotation.toFixed(2)}:0.9:0:0:perspective`;
 }
 
 function bars(j) {
@@ -172,7 +177,7 @@ function row(s) {
   side.append(count);
   const v = s.versions && s.versions.java ? range(s.versions.java) : (up && s.java.version) || "";
   if (v) side.append(el("div", null, v));
-  r.append(spawnView(s, "icon", 64, 64, 0.125), mid, side);
+  r.append(spawnView(s, "icon"), mid, side);
   r.addEventListener("click", () => select(s.name));
   r.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(s.name); }
@@ -201,10 +206,9 @@ function select(name) {
   detail.classList.toggle("open", !!s);
   if (!s) { ["copy", "bedrock", "map"].forEach((id) => setButton(id, false)); return; }
 
-  if (s.spawn_map) {
-    const banner = spawnView(s, "banner", 720, 200, 1);
-    const m = s.spawn_map;
-    banner.append(el("span", "note", m.drawn ? `Spawn · ${m.spawn.x}, ${m.spawn.z}` : "The map is still being drawn"));
+  if (s.shot) {
+    const banner = spawnView(s, "banner");
+    if (s.spawn) banner.append(el("span", "note", `Spawn · ${s.spawn.x}, ${s.spawn.y}, ${s.spawn.z}`));
     detail.append(banner);
   }
   const facts = el("div", "facts");
@@ -219,9 +223,7 @@ function select(name) {
   const bedrockAddr = `${s.host || s.address}:${s.bedrock ? s.bedrock.port : 19132}`;
   setButton("copy", true);
   setButton("bedrock", bedrock, `minecraft://?addExternalServer=${encodeURIComponent(`KiddCo ${s.title}`)}|${bedrockAddr}`);
-  setButton("map", !!s.map, s.map && s.spawn_map
-    ? `${s.map}/?world=${encodeURIComponent(s.spawn_map.world)}&zoom=${s.spawn_map.zoom.max}&x=${s.spawn_map.spawn.x}&z=${s.spawn_map.spawn.z}`
-    : s.map);
+  setButton("map", !!s.map, mapLink(s));
 }
 
 function say(text) { $("status").textContent = text; }

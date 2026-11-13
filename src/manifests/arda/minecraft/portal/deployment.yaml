@@ -54,6 +54,28 @@ spec:
           resources:
             requests: { cpu: 10m, memory: 24Mi }
             limits: { memory: 64Mi }
+        # Spawn views for the server list, from each server's BlueMap in
+        # headless Chromium (software WebGL), once an hour.
+        - name: snapshot
+          image: mcr.microsoft.com/playwright/python:v1.65.1-noble
+          command:
+            - sh
+            - -c
+            - >-
+              pip install --quiet --break-system-packages playwright==1.65.1 &&
+              exec python -I -u /app/snapshot.py
+          env:
+            - name: DATA
+              value: /data
+          volumeMounts:
+            - name: snapshot
+              mountPath: /app
+              readOnly: true
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1536Mi }
       volumes:
         - name: web
           configMap:
@@ -61,6 +83,9 @@ spec:
         - name: refresher
           configMap:
             name: portal-refresher
+        - name: snapshot
+          configMap:
+            name: portal-snapshot
         - name: data
           emptyDir:
-            sizeLimit: 1Mi
+            sizeLimit: 64Mi
