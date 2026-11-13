@@ -1,0 +1,63 @@
+# Interim host for the KiddCo creative server until arda is up.
+#
+# Mirrors values.yaml in this folder: same image, same Paper build, same
+# plugins. Change both together. On arda the chart runs the same container
+# against a PVC instead of the named volume below.
+#
+#   docker compose up -d
+#   docker compose logs -f
+#   docker compose exec mc rcon-cli          # server console
+#
+# Chunks from the old 1.16.5 world upgrade as they are first loaded; Paper
+# 26.x refuses --forceUpgrade.
+
+name: kiddco-minecraft
+
+services:
+  mc:
+    image: itzg/minecraft-server:2026.11.0-java25
+    restart: unless-stopped
+    tty: true
+    stdin_open: true
+    ports:
+      - "25565:25565"   # game
+      - "8080:8080"     # squaremap web map
+    environment:
+      EULA: "TRUE"
+      TZ: Europe/London
+      TYPE: PAPER
+      VERSION: "26.3"
+      PAPER_BUILD: "249"
+      MEMORY: 6G
+      USE_AIKAR_FLAGS: "true"
+
+      # server.properties
+      SERVER_PORT: "25565"
+      MOTD: mcc.kidd.network
+      MODE: creative
+      FORCE_GAMEMODE: "true"
+      DIFFICULTY: easy
+      VIEW_DISTANCE: "16"
+      SIMULATION_DISTANCE: "10"
+      SPAWN_PROTECTION: "0"   # WorldGuard owns protection
+      ENABLE_WHITELIST: "true"
+      ENFORCE_WHITELIST: "true"
+      # whitelist.json / ops.json live on the volume, not in this public repo
+
+      # Plugins: jars are fetched at start from these pins; only their
+      # config and data folders live on the volume.
+      MODRINTH_PROJECTS: |
+        worldedit:YFnqiUlL
+        worldguard:fiHLM6oY
+        luckperms:b0mk8uS6
+        craftbook:6kl3GQSJ
+        squaremap:6wmZVQBO
+      PLUGINS: |
+        https://ci.citizensnpcs.co/job/Citizens2/4269/artifact/dist/target/Citizens-2.0.44-b4269.jar
+        https://ci.citizensnpcs.co/job/Denizen_Developmental/7314/artifact/target/Denizen-1.3.4-b7314-DEV.jar
+    volumes:
+      - data:/data
+
+volumes:
+  data:
+    name: kiddco-mc-data
