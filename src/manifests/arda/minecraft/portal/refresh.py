@@ -118,7 +118,7 @@ def describe(svc):
         "title": ann.get(ANN + "title", meta["labels"][LABEL]),
         "description": ann.get(ANN + "description", ""),
         "order": ann.get(ANN + "order", "99"),
-        "host": ann.get("external-dns.alpha.kubernetes.io/hostname"),
+        "host": ann.get("external-dns.kubernetes.io/hostname"),
         "address": ingress.get("ip") or ingress.get("hostname"),
         "map": ann.get(ANN + "map"),
         "java": None,

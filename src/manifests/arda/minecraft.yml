@@ -47,7 +47,7 @@ spec:
               serviceLabels:
                 minecraft.kidd.network/server: '{{ .path.basename }}'
               serviceAnnotations:
-                external-dns.alpha.kubernetes.io/hostname: '{{ .path.basename }}.minecraft.kidd.network'
+                external-dns.kubernetes.io/hostname: '{{ .path.basename }}.minecraft.kidd.network'
                 minecraft.kidd.network/title: '{{ .title }}'
                 minecraft.kidd.network/description: '{{ .description }}'
                 minecraft.kidd.network/order: '{{ .order }}'

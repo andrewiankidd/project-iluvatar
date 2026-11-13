@@ -14,10 +14,12 @@ sources:
   - service
   - ingress
 
-# Only names under these are managed; the rest of kidd.network is left alone.
-# Widen this list as more of arda moves behind external-dns.
+# The Cloudflare zone. It has to be the zone itself: a subdomain here
+# filters the zone out and nothing is published. What gets published is
+# arda's Ingress hosts and Services with an external-dns.kubernetes.io/hostname
+# annotation; records anyone else made in the zone are never touched (below).
 domainFilters:
-  - minecraft.kidd.network
+  - kidd.network
 
 # Deletes the records it created when their Service or Ingress goes away,
 # and never touches records it did not create (owned through TXT records).
