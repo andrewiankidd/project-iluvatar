@@ -1,18 +1,15 @@
 """Per-server facts for the portal, served at :8099/info.json.
 
-Runs beside each server (sidecarContainers in common/values.yaml) and asks
-it over RCON on localhost, so the RCON password never leaves the pod:
+Runs beside each server (sidecarContainers in common/values.yaml):
 
-  versions  from Geyser: the Java version and the Bedrock range it accepts
-  map       from squaremap: the overworld, its spawn, and the tile zooms
-
-The world map is rendered in full when much of the world has no map tile
-yet (a seeded or upgraded world), and counts as drawn once that render stops
-adding tiles; after that squaremap keeps it current as chunks change. The
-server's /data is mounted read-only to count both.
+  versions  asked of Geyser over RCON on localhost, so the RCON password
+            never leaves the pod: the Java version and the Bedrock range
+  spawn     read from the world's level.dat (mounted read-only): where a
+            new player appears and which way they face
+  map       the BlueMap map that shows that world
 """
 
-import glob
+import gzip
 import json
 import os
 import re
@@ -25,18 +22,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 RCON_PORT = int(os.environ.get("RCON_PORT", "25575"))
 RCON_PASSWORD = os.environ["RCON_PASSWORD"]
-MAP = os.environ.get("MAP_URL", "http://127.0.0.1:8080")
+MAP = os.environ.get("MAP_URL", "http://127.0.0.1:8100")
+DATA = os.environ.get("DATA", "/data")
+LEVEL = os.environ.get("LEVEL", "world")
 PORT = int(os.environ.get("PORT", "8099"))
 INTERVAL = int(os.environ.get("INTERVAL", "300"))
-DATA = os.environ.get("DATA", "/data")
-TILE_BLOCKS = 512          # squaremap: one tile is 512 px, 1 block per px at max zoom,
-                           # so one tile per 512-block region file
-DRAWN_ENOUGH = 0.9         # below this share of regions with a tile, render in full
 
-state = {"updated": None, "versions": None, "map": None}
-render_requested = set()
-last_drawn = {}
+state = {"updated": None, "versions": None, "spawn": None, "map": None}
 
+
+# --- RCON ------------------------------------------------------------------
 
 def rcon(command):
     with socket.create_connection(("127.0.0.1", RCON_PORT), timeout=10) as s:
@@ -47,7 +42,7 @@ def rcon(command):
         def recv():
             size = struct.unpack("<i", _exact(s, 4))[0]
             data = _exact(s, size)
-            req_id, kind = struct.unpack("<ii", data[:8])
+            req_id, _ = struct.unpack("<ii", data[:8])
             return req_id, data[8:-2].decode("utf-8", "replace")
 
         send(1, 3, RCON_PASSWORD)
@@ -77,53 +72,82 @@ def versions():
             "bedrock": {"min": bedrock[0], "max": bedrock[-1]}}
 
 
-def get_json(path):
-    with urllib.request.urlopen(MAP + path, timeout=10) as r:
-        return json.load(r)
+# --- level.dat (gzipped NBT) -----------------------------------------------
+
+class _Nbt:
+    def __init__(self, data):
+        self.d, self.i = data, 0
+
+    def take(self, fmt):
+        v = struct.unpack_from(fmt, self.d, self.i)
+        self.i += struct.calcsize(fmt)
+        return v[0]
+
+    def string(self):
+        n = self.take(">H")
+        s = self.d[self.i:self.i + n].decode("utf-8", "replace")
+        self.i += n
+        return s
+
+    def payload(self, tag):
+        if tag == 1: return self.take(">b")
+        if tag == 2: return self.take(">h")
+        if tag == 3: return self.take(">i")
+        if tag == 4: return self.take(">q")
+        if tag == 5: return self.take(">f")
+        if tag == 6: return self.take(">d")
+        if tag == 7: n = self.take(">i"); self.i += n; return None
+        if tag == 8: return self.string()
+        if tag == 9:
+            inner, n = self.take(">b"), self.take(">i")
+            return [self.payload(inner) for _ in range(n)]
+        if tag == 10:
+            out = {}
+            while (t := self.take(">b")) != 0:
+                name = self.string()
+                out[name] = self.payload(t)
+            return out
+        if tag == 11: n = self.take(">i"); return [self.take(">i") for _ in range(n)]
+        if tag == 12: n = self.take(">i"); return [self.take(">q") for _ in range(n)]
+        raise ValueError(f"NBT tag {tag}")
+
+    def root(self):
+        tag = self.take(">b")
+        self.string()
+        return self.payload(tag)
 
 
-def coverage(world, zoom):
-    """(regions with a drawn tile, regions in the overworld)."""
-    regions = (glob.glob(f"{DATA}/world/dimensions/minecraft/overworld/region/r.*.mca")   # 26.x layout
-               or glob.glob(f"{DATA}/world/region/r.*.mca"))
-    tiles = {os.path.basename(p)[:-4] for p in glob.glob(f"{DATA}/plugins/squaremap/web/tiles/{world}/{zoom}/*.png")
-             if os.path.getsize(p) > 0}
-    names = {".".join(os.path.basename(p).split(".")[1:3]).replace(".", "_") for p in regions}
-    return len(names & tiles), len(names)
+def spawn():
+    with gzip.open(f"{DATA}/{LEVEL}/level.dat") as f:
+        data = _Nbt(f.read()).root()["Data"]
+    if isinstance(data.get("spawn"), dict):                 # 1.21.9 and later
+        s = data["spawn"]
+        x, y, z = s["pos"]
+        return {"x": x, "y": y, "z": z, "yaw": s.get("yaw", 0.0), "pitch": s.get("pitch", 0.0)}
+    return {"x": data["SpawnX"], "y": data["SpawnY"], "z": data["SpawnZ"],
+            "yaw": data.get("SpawnAngle", 0.0), "pitch": 0.0}
 
 
-def map_info():
-    worlds = get_json("/tiles/settings.json")["worlds"]
-    world = next(w for w in worlds if w["type"] == "normal")
-    settings = get_json(f"/tiles/{world['name']}/settings.json")
-    zoom = settings["zoom"]["max"]
-    drawn, regions = coverage(world["name"], zoom)
-    complete = regions == 0 or drawn >= DRAWN_ENOUGH * regions
-    if not complete:
-        if world["name"] not in render_requested:
-            print(f"{drawn}/{regions} regions drawn; rendering in full", flush=True)
-            rcon(f"squaremap fullrender {world['display_name']}")
-            render_requested.add(world["name"])
-        elif last_drawn.get(world["name"]) == drawn:
-            # The render has stopped adding tiles: what is left are regions
-            # squaremap does not draw (empty files, partly generated chunks).
-            complete = True
-    last_drawn[world["name"]] = drawn
-    return {"world": world["name"], "spawn": settings["spawn"],
-            "zoom": {"max": zoom, "default": settings["zoom"]["def"]},
-            "tile_blocks": TILE_BLOCKS, "regions": regions, "regions_drawn": drawn, "drawn": complete}
+# --- BlueMap ---------------------------------------------------------------
 
+def bluemap():
+    with urllib.request.urlopen(MAP + "/settings.json", timeout=10) as r:
+        maps = json.load(r)["maps"]
+    overworld = next((m for m in maps if m in ("world", "overworld")), maps[0])
+    return {"id": overworld}
+
+
+# --- serving ---------------------------------------------------------------
 
 def refresh():
     while True:
-        for key, fetch in (("versions", versions), ("map", map_info)):
+        for key, fetch in (("versions", versions), ("spawn", spawn), ("map", bluemap)):
             try:
                 state[key] = fetch()
             except Exception as e:      # the server may still be starting
                 print(f"{key}: {e}", flush=True)
         state["updated"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        settled = state["versions"] and state["map"] and state["map"]["drawn"]
-        time.sleep(INTERVAL if settled else 30)
+        time.sleep(INTERVAL if all(state[k] for k in ("versions", "spawn", "map")) else 30)
 
 
 class Handler(BaseHTTPRequestHandler):

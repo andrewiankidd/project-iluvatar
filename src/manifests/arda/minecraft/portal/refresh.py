@@ -138,16 +138,22 @@ def describe(svc):
             entry["bedrock"].update(up=True, **bedrock_status(internal, ports["bedrock"]))
         except Exception as e:
             entry["bedrock"].update(up=False, error=str(e))
-    # Versions and the spawn map, from the server's info sidecar.
+    # Versions, spawn and the BlueMap map id, from the server's info sidecar.
+    entry["versions"] = entry["spawn"] = entry["bluemap"] = None
     try:
         url = f"http://{meta['name']}-info.{NAMESPACE}.svc:8099/info.json"
         with urllib.request.urlopen(url, timeout=TIMEOUT) as r:
             info = json.load(r)
         entry["versions"] = info.get("versions")
-        entry["spawn_map"] = info.get("map")
+        entry["spawn"] = info.get("spawn")
+        entry["bluemap"] = info.get("map")
     except Exception as e:
-        entry["versions"] = entry["spawn_map"] = None
         print(f"{entry['name']}: no info ({e})", flush=True)
+    # The spawn view the snapshot container renders, if it has one yet.
+    shot = os.path.join(os.path.dirname(OUT), "shots", f"{entry['name']}.jpg")
+    entry["shot"] = (f"data/shots/{entry['name']}.jpg?v={int(os.path.getmtime(shot))}"
+                     if os.path.exists(shot) else None)
+    entry["map_internal"] = f"http://{meta['name']}-map.{NAMESPACE}.svc:{ports.get('map', 8100)}"
     return entry
 
 

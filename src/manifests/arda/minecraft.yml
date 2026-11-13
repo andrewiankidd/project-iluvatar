@@ -5,7 +5,7 @@
 # and values.yaml; nothing in this file changes. For a folder named <name>:
 #
 #   <name>.minecraft.kidd.network       Java (TCP 25565) and Bedrock (UDP 19132)
-#   map.<name>.minecraft.kidd.network   squaremap web map
+#   map.<name>.minecraft.kidd.network   BlueMap 3D web map
 #
 # The portal (minecraft.kidd.network and *.minecraft.kidd.network) finds the
 # servers from their Service labels at runtime; it holds no server list.
@@ -90,13 +90,13 @@ spec:
                       type: ClusterIP
                       port: 8099
                   - name: map
-                    containerPort: 8080
+                    containerPort: 8100
                     protocol: TCP
                     service:
                       enabled: true
                       embedded: false
                       type: ClusterIP
-                      port: 8080
+                      port: 8100
                     ingress:
                       enabled: true
                       ingressClassName: traefik

@@ -7,7 +7,7 @@ server's name, and everything else is derived from it:
 | Name | What |
 |---|---|
 | `<name>.minecraft.kidd.network` | the game: Java on TCP 25565, Bedrock on UDP 19132 |
-| `map.<name>.minecraft.kidd.network` | the squaremap web map |
+| `map.<name>.minecraft.kidd.network` | the BlueMap 3D web map |
 | `minecraft.kidd.network`, `*.minecraft.kidd.network` | the portal: every server, live status, map links |
 
 ## Pieces
