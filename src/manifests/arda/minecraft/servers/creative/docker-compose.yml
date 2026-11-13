@@ -1,8 +1,8 @@
-# Interim host for the KiddCo creative server until arda is up.
+# Interim host for the creative server until arda is up.
 #
-# Mirrors values.yaml in this folder: same image, same Paper build, same
-# plugins. Change both together. On arda the chart runs the same container
-# against a PVC instead of the named volume below.
+# Mirrors ../../common/values.yaml plus values.yaml in this folder: same
+# image, Paper build and plugins. Change them together. On arda the chart
+# runs the same container against a PVC instead of the named volume below.
 #
 #   docker compose up -d
 #   docker compose logs -f
@@ -20,8 +20,11 @@ services:
     tty: true
     stdin_open: true
     ports:
-      - "25565:25565"   # game
-      - "8080:8080"     # squaremap web map
+      - "25565:25565"       # Java
+      - "19132:19132/udp"   # Bedrock RakNet, through Geyser
+      - "19132:19132/tcp"   # Bedrock NetherNet signaling
+      - "19133:19133/udp"   # Bedrock NetherNet WebRTC
+      - "8080:8080"         # squaremap web map
     environment:
       EULA: "TRUE"
       TZ: Europe/London
@@ -33,7 +36,7 @@ services:
 
       # server.properties
       SERVER_PORT: "25565"
-      MOTD: mcc.kidd.network
+      MOTD: KiddCo Creative
       MODE: creative
       FORCE_GAMEMODE: "true"
       DIFFICULTY: easy
@@ -55,8 +58,15 @@ services:
       PLUGINS: |
         https://ci.citizensnpcs.co/job/Citizens2/4269/artifact/dist/target/Citizens-2.0.44-b4269.jar
         https://ci.citizensnpcs.co/job/Denizen_Developmental/7314/artifact/target/Denizen-1.3.4-b7314-DEV.jar
+        https://download.geysermc.org/v2/projects/geyser/versions/2.12.1/builds/1302/downloads/spigot
+        https://download.geysermc.org/v2/projects/floodgate/versions/2.2.5/builds/141/downloads/spigot
+
+      # Plugin config patches, shared with arda (common/patches).
+      PATCH_DEFINITIONS: /patches
+      CFG_BEDROCK_ADDRESS: creative.minecraft.kidd.network
     volumes:
       - data:/data
+      - ../../common/patches:/patches:ro
 
 volumes:
   data:

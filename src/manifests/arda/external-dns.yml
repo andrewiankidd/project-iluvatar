@@ -1,0 +1,36 @@
+# Publishes arda's Service and Ingress hostnames to the kidd.network zone on
+# Cloudflare. Records point at LAN addresses (MetalLB, Traefik), DNS only.
+#
+# Needs a Cloudflare API token (Zone:DNS:Edit on kidd.network) that is not
+# in this public repo; create it once per cluster:
+#   kubectl create namespace external-dns
+#   kubectl -n external-dns create secret generic cloudflare-api-token \
+#     --from-literal=api-token=<token>
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-dns
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://kubernetes-sigs.github.io/external-dns
+      chart: external-dns
+      targetRevision: 1.23.0
+      helm:
+        valueFiles:
+          - $values/src/manifests/arda/external-dns/values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-dns
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    automated:
+      prune: true
+      selfHeal: true

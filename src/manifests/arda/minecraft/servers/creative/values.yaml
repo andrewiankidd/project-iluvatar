@@ -1,0 +1,10 @@
+# Creative: the world carried over from the old 1.16.5 server.
+# Layered over ../../common/values.yaml.
+
+minecraftServer:
+  motd: KiddCo Creative
+  difficulty: easy
+
+extraEnv:
+  MODE: creative
+  FORCE_GAMEMODE: "true"

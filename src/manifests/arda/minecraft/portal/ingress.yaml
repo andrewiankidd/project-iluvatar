@@ -1,0 +1,38 @@
+# minecraft.kidd.network and every name under it that is not a server.
+# A server's own record (<name>.minecraft.kidd.network) and its map ingress
+# (map.<name>...) are more specific, so they win over the wildcard in both
+# DNS and Traefik.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: portal
+  annotations:
+    cert-manager.io/cluster-issuer: local-ca
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - minecraft.kidd.network
+        - "*.minecraft.kidd.network"
+      secretName: portal-tls
+  rules:
+    - host: minecraft.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: portal
+                port:
+                  name: http
+    - host: "*.minecraft.kidd.network"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: portal
+                port:
+                  name: http

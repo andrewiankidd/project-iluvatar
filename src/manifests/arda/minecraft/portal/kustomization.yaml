@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: minecraft
+resources:
+  - rbac.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+configMapGenerator:
+  # Hashed names: editing either file rolls the Deployment.
+  - name: portal-web
+    files:
+      - index.html
+  - name: portal-refresher
+    files:
+      - refresh.py

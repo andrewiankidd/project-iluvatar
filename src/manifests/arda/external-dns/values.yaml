@@ -1,0 +1,33 @@
+# external-dns chart 1.23.0, Cloudflare provider.
+
+provider:
+  name: cloudflare
+
+env:
+  - name: CF_API_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: cloudflare-api-token
+        key: api-token
+
+sources:
+  - service
+  - ingress
+
+# Only names under these are managed; the rest of kidd.network is left alone.
+# Widen this list as more of arda moves behind external-dns.
+domainFilters:
+  - minecraft.kidd.network
+
+# Deletes the records it created when their Service or Ingress goes away,
+# and never touches records it did not create (owned through TXT records).
+policy: sync
+registry: txt
+txtOwnerId: arda
+
+triggerLoopOnEvent: true
+
+extraArgs:
+  # The portal's *.minecraft.kidd.network needs a TXT owner record too, and
+  # "*" is not valid in its name.
+  - --txt-wildcard-replacement=wildcard

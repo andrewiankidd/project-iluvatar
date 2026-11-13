@@ -1,0 +1,16 @@
+# The minecraft-shared app (../minecraft.yml). Servers are not listed here:
+# the ApplicationSet deploys each folder under servers/ as its own app.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: minecraft
+resources:
+  - portal
+configMapGenerator:
+  # Mounted at /patches by every server (common/values.yaml). A fixed name,
+  # because the chart refers to it by name: servers pick up a change on
+  # their next restart.
+  - name: minecraft-patches
+    files:
+      - common/patches/geyser.json
+    options:
+      disableNameSuffixHash: true

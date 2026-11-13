@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KiddCo Minecraft</title>
+<style>
+  :root {
+    --bg: #f4f1ea; --card: #ffffff; --ink: #1f2420; --muted: #646b64;
+    --line: #dcd6c8; --accent: #3f7d3a; --down: #a8442e; --chip: #ece7da;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151816; --card: #1e2320; --ink: #e6e9e4; --muted: #9aa39a;
+      --line: #2e3530; --accent: #7cc36f; --down: #e07a5f; --chip: #262c28;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 40px 16px 64px; }
+  header h1 { margin: 0; font-size: 2rem; letter-spacing: -0.02em; }
+  header p { margin: 4px 0 32px; color: var(--muted); }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+  .top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .card h2 { margin: 0; font-size: 1.3rem; }
+  .state { font-size: .85rem; font-weight: 600; white-space: nowrap; }
+  .state.up { color: var(--accent); } .state.down { color: var(--down); }
+  .desc { color: var(--muted); margin: 6px 0 16px; }
+  .row { display: grid; grid-template-columns: 76px 1fr auto; align-items: center; gap: 8px;
+         padding: 8px 0; border-top: 1px solid var(--line); }
+  .label { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  code { font: .95rem ui-monospace, "Cascadia Mono", Consolas, monospace; }
+  .meta { font-size: .85rem; color: var(--muted); }
+  button { font: inherit; font-size: .8rem; border: 1px solid var(--line); background: var(--chip);
+           color: var(--ink); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  a.map { display: inline-block; margin-top: 14px; color: var(--accent); font-weight: 600; text-decoration: none; }
+  a.map:hover { text-decoration: underline; }
+  .players { font-size: .85rem; color: var(--muted); margin-top: 8px; }
+  footer { margin-top: 32px; font-size: .85rem; color: var(--muted); }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>KiddCo Minecraft</h1>
+    <p>Java and Bedrock both join on the same address. Bedrock uses the port shown.</p>
+  </header>
+  <section class="grid" id="servers"><p class="empty">Loading servers…</p></section>
+  <footer id="updated"></footer>
+</main>
+<script>
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+function copyButton(value) {
+  const b = el("button", null, "Copy");
+  b.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(value); b.textContent = "Copied"; }
+    catch { b.textContent = "Select it"; }
+    setTimeout(() => (b.textContent = "Copy"), 1500);
+  });
+  return b;
+}
+
+function editionRow(label, edition, host, defaultPort) {
+  const row = el("div", "row");
+  row.append(el("span", "label", label));
+  const where = el("div");
+  // Java takes host:port in one box; Bedrock asks for the port separately.
+  const addr = label === "Java" && edition.port !== defaultPort ? `${host}:${edition.port}` : host;
+  const code = el("code");
+  addr.split(".").forEach((part, i) => {   // wrap long hostnames only at the dots
+    if (i) code.append(".", document.createElement("wbr"));
+    code.append(part);
+  });
+  where.append(code);
+  const meta = edition.up
+    ? `port ${edition.port} · ${edition.version ?? ""} · ${edition.online ?? 0}/${edition.max ?? "?"} online`
+    : `port ${edition.port} · not answering`;
+  where.append(el("div", "meta", meta));
+  row.append(where, copyButton(addr));
+  return row;
+}
+
+function card(s) {
+  const c = el("article", "card");
+  const up = (s.java && s.java.up) || (s.bedrock && s.bedrock.up);
+  const top = el("div", "top");
+  top.append(el("h2", null, s.title), el("span", "state " + (up ? "up" : "down"), up ? "Online" : "Offline"));
+  c.append(top, el("p", "desc", s.description));
+  const host = s.host || s.address || s.name;
+  if (s.java) c.append(editionRow("Java", s.java, host, 25565));
+  if (s.bedrock) c.append(editionRow("Bedrock", s.bedrock, host, 19132));
+  const names = s.java && s.java.players && s.java.players.filter(Boolean);
+  if (names && names.length) c.append(el("div", "players", "Playing: " + names.join(", ")));
+  if (s.map) { const a = el("a", "map", "Open the live map →"); a.href = s.map; c.append(a); }
+  return c;
+}
+
+async function refresh() {
+  const list = document.getElementById("servers");
+  try {
+    const r = await fetch("data/servers.json", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    const doc = await r.json();
+    list.replaceChildren(...(doc.servers.length ? doc.servers.map(card) : [el("p", "empty", "No servers are running.")]));
+    document.getElementById("updated").textContent = "Status checked " + new Date(doc.updated).toLocaleTimeString();
+  } catch (e) {
+    if (!list.querySelector(".card")) list.replaceChildren(el("p", "empty", "Server status is not available yet."));
+  }
+}
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

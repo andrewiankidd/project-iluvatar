@@ -1,0 +1,140 @@
+# Minecraft on arda.
+#
+# Every folder under src/manifests/arda/minecraft/servers/ that holds a
+# server.yaml becomes a server. Adding one is a new folder with server.yaml
+# and values.yaml; nothing in this file changes. For a folder named <name>:
+#
+#   <name>.minecraft.kidd.network       Java (TCP 25565) and Bedrock (UDP 19132)
+#   map.<name>.minecraft.kidd.network   squaremap web map
+#
+# The portal (minecraft.kidd.network and *.minecraft.kidd.network) finds the
+# servers from their Service labels at runtime; it holds no server list.
+# external-dns (external-dns.yml) publishes every hostname.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: minecraft-servers
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - git:
+        repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+        revision: main
+        files:
+          - path: src/manifests/arda/minecraft/servers/*/server.yaml
+  syncPolicy:
+    # Removing a server folder must never take its world with it.
+    preserveResourcesOnDeletion: true
+  template:
+    metadata:
+      name: 'minecraft-{{ .path.basename }}'
+      namespace: argocd
+      labels:
+        minecraft.kidd.network/server: '{{ .path.basename }}'
+    spec:
+      project: default
+      sources:
+        - repoURL: https://itzg.github.io/minecraft-server-charts
+          chart: minecraft
+          targetRevision: 5.3.1
+          helm:
+            releaseName: '{{ .path.basename }}'
+            valueFiles:
+              - $values/src/manifests/arda/minecraft/common/values.yaml
+              - '$values/{{ .path.path }}/values.yaml'
+            valuesObject:
+              serviceLabels:
+                minecraft.kidd.network/server: '{{ .path.basename }}'
+              serviceAnnotations:
+                external-dns.alpha.kubernetes.io/hostname: '{{ .path.basename }}.minecraft.kidd.network'
+                minecraft.kidd.network/title: '{{ .title }}'
+                minecraft.kidd.network/description: '{{ .description }}'
+                minecraft.kidd.network/order: '{{ .order }}'
+                minecraft.kidd.network/map: 'https://map.{{ .path.basename }}.minecraft.kidd.network'
+              extraEnv:
+                # Geyser hands this to NetherNet clients (common/patches/geyser.json).
+                CFG_BEDROCK_ADDRESS: '{{ .path.basename }}.minecraft.kidd.network'
+              minecraftServer:
+                # Bedrock through Geyser, on the same LoadBalancer IP as Java:
+                # RakNet on UDP 19132, NetherNet signaling on TCP 19132 and
+                # its WebRTC on UDP 19133.
+                extraPorts:
+                  - name: bedrock
+                    containerPort: 19132
+                    protocol: UDP
+                    service:
+                      enabled: true
+                      embedded: true
+                      port: 19132
+                  - name: bedrock-signal
+                    containerPort: 19132
+                    protocol: TCP
+                    service:
+                      enabled: true
+                      embedded: true
+                      port: 19132
+                  - name: bedrock-rtc
+                    containerPort: 19133
+                    protocol: UDP
+                    service:
+                      enabled: true
+                      embedded: true
+                      port: 19133
+                  - name: map
+                    containerPort: 8080
+                    protocol: TCP
+                    service:
+                      enabled: true
+                      embedded: false
+                      type: ClusterIP
+                      port: 8080
+                    ingress:
+                      enabled: true
+                      ingressClassName: traefik
+                      annotations:
+                        cert-manager.io/cluster-issuer: local-ca
+                      hosts:
+                        - name: 'map.{{ .path.basename }}.minecraft.kidd.network'
+                          path: /
+                      tls:
+                        - secretName: '{{ .path.basename }}-map-tls'
+                          hosts:
+                            - 'map.{{ .path.basename }}.minecraft.kidd.network'
+        - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: minecraft
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+        automated:
+          prune: true
+          selfHeal: true
+---
+# What the servers share: the portal, and the plugin config patches they
+# mount (common/patches). See src/manifests/arda/minecraft/kustomization.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: minecraft-shared
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/minecraft
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: minecraft
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    automated:
+      prune: true
+      selfHeal: true
