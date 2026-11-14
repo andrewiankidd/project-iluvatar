@@ -1,7 +1,8 @@
 """Photographs each server's spawn as a player standing there sees it.
 
-Every INTERVAL seconds, for each server in servers.json (written by
-refresh.py) that knows its spawn and BlueMap map: open the server's BlueMap
+Every INTERVAL seconds, and within CHECK seconds of a server's spawn or its
+facing changing, for each server in servers.json (written by refresh.py)
+that knows its spawn and BlueMap map: open the server's BlueMap
 in headless Chromium, in free-flight mode at spawn's position, eye height
 and facing, hide BlueMap's controls, and save the view as
 shots/<server>.jpg beside servers.json, where the portal shows it.
@@ -17,6 +18,8 @@ from playwright.async_api import async_playwright
 
 DATA = os.environ.get("DATA", "/data")
 INTERVAL = int(os.environ.get("INTERVAL", "3600"))
+CHECK = int(os.environ.get("CHECK", "60"))
+shot_with = {}             # server -> (camera URL, time) of its last photo
 WIDTH, HEIGHT = 960, 540
 EYE = 1.62                 # a standing player's eyes, in blocks above their feet
 SETTLE_MS = 6000           # after the network quietens, for the last tiles to draw
@@ -43,6 +46,7 @@ async def shoot(browser, server, out):
         await page.wait_for_timeout(SETTLE_MS)
         await page.screenshot(path=out + ".tmp.jpg", type="jpeg", quality=82)
         os.replace(out + ".tmp.jpg", out)
+        shot_with[server["name"]] = (url, time.time())
         print(f"{server['name']}: {url}", flush=True)
     finally:
         await page.close()
@@ -55,7 +59,12 @@ async def round_():
     except (OSError, ValueError) as e:
         print(f"no server list yet ({e})", flush=True)
         return False
-    ready = [s for s in servers if s.get("spawn") and s.get("bluemap") and s.get("map_internal")]
+    def due(s):
+        url = f"{s['map_internal']}/#{s['bluemap']['id']}:{camera(s['spawn'])}"
+        last = shot_with.get(s["name"])
+        return (not last or last[0] != url or time.time() - last[1] >= INTERVAL
+                or not os.path.exists(f"{DATA}/shots/{s['name']}.jpg"))
+    ready = [s for s in servers if s.get("spawn") and s.get("bluemap") and s.get("map_internal") and due(s)]
     if not ready:
         return False
     os.makedirs(f"{DATA}/shots", exist_ok=True)
@@ -75,8 +84,8 @@ async def round_():
 
 async def main():
     while True:
-        done = await round_()
-        await asyncio.sleep(INTERVAL if done else 60)
+        await round_()
+        await asyncio.sleep(CHECK)
 
 
 if __name__ == "__main__":

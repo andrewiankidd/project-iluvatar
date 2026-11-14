@@ -26,7 +26,7 @@ MAP = os.environ.get("MAP_URL", "http://127.0.0.1:8100")
 DATA = os.environ.get("DATA", "/data")
 LEVEL = os.environ.get("LEVEL", "world")
 PORT = int(os.environ.get("PORT", "8099"))
-INTERVAL = int(os.environ.get("INTERVAL", "300"))
+INTERVAL = int(os.environ.get("INTERVAL", "60"))
 
 state = {"updated": None, "versions": None, "spawn": None, "map": None}
 
