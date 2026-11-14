@@ -30,3 +30,8 @@ registry: txt
 txtOwnerId: arda
 
 triggerLoopOnEvent: true
+
+extraArgs:
+  # A wildcard record's TXT owner record needs a name without "*"; this is
+  # also how it recognises the wildcard records it made before.
+  - --txt-wildcard-replacement=wildcard

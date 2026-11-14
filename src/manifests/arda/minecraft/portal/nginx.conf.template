@@ -5,6 +5,10 @@ server {
     listen 80;
     root /usr/share/nginx/html;
 
+    # Redirects without a scheme or host: nginx sees plain HTTP from the
+    # tunnel, and would otherwise send browsers to http://.
+    absolute_redirect off;
+
     # Map hosts are looked up per request, so a new server's map works at
     # once and a missing one is a 502 rather than a failed start.
     resolver ${NGINX_LOCAL_RESOLVERS} valid=30s ipv6=off;
