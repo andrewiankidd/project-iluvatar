@@ -26,7 +26,10 @@ SETTLE_MS = 6000           # after the network quietens, for the last tiles to d
 
 HIDE_UI = """
   #app > :not(#map-container), .zoom-buttons, .control-bar { display: none !important; }
+  .bm-marker-html, .bm-marker-player { display: none !important; }
 """
+# The second line hides markers, live players among them, so the photo
+# shows the place rather than who happened to be there.
 
 
 def camera(spawn):
