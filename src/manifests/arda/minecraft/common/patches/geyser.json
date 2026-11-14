@@ -5,6 +5,7 @@
     { "$set": { "path": "$.bedrock['webrtc-port']", "value": "19133", "value-type": "int" } },
     { "$put": { "path": "$.bedrock.signaling", "key": "advertise-addresses", "value": "${CFG_BEDROCK_ADDRESS}", "value-type": "list of auto" } },
     { "$set": { "path": "$.bedrock.signaling['stun-discovery']", "value": "false", "value-type": "bool" } },
-    { "$set": { "path": "$.java['auth-type']", "value": "floodgate" } }
+    { "$set": { "path": "$.java['auth-type']", "value": "floodgate" } },
+    { "$set": { "path": "$.advanced['resource-pack-urls']", "value": "https://github.com/Faithful-Resource-Pack/Faithful-32x-Bedrock/releases/download/september-2026-bedrock-hotfix/Faithful.32x.September.2026.Hotfix.mcpack", "value-type": "list of string" } }
   ]
 }

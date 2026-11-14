@@ -36,6 +36,8 @@ minecraftServer:
       - worldguard:fiHLM6oY
       - luckperms:b0mk8uS6
       - bluemap:uHQIrUdf      # 3D web map on :8100
+      - pocketmap:gMipoSQM    # minimap: a vanilla map in the offhand, Java and Bedrock
+      - forcepack:FMfWT1Xk    # sends Java players the packs in common/files/forcepack.yml
   pluginUrls:
     - https://ci.citizensnpcs.co/job/Citizens2/4269/artifact/dist/target/Citizens-2.0.44-b4269.jar
     - https://ci.citizensnpcs.co/job/Denizen_Developmental/7314/artifact/target/Denizen-1.3.4-b7314-DEV.jar
@@ -59,6 +61,15 @@ extraVolumes:
       - name: info
         configMap:
           name: minecraft-info      # from ../kustomization.yaml
+  - volumes:                        # mounted by the managed-files init container only
+      - name: files
+        configMap:
+          name: minecraft-files     # from ../kustomization.yaml
+          items:                    # key -> where it goes under /data/plugins
+            - key: forcepack.yml
+              path: ForcePack/config.yml
+            - key: pocketmap-default.dsc
+              path: Denizen/scripts/pocketmap-default.dsc
 
 # BlueMap renders only after accept-download is set: it then fetches the
 # Minecraft client's textures from Mojang, under the EULA accepted above.
@@ -79,6 +90,18 @@ initContainers:
           echo 'accept-download: true' > "$f"
         fi
     volumeMounts:
+      - name: datadir
+        mountPath: /data
+  # Plugin files owned by this repo (common/files/), laid over /data/plugins
+  # on every start: what is here wins over in-game edits.
+  - name: managed-files
+    image: alpine:3.22
+    # The glob skips the volume's own ..data entries.
+    command: ["sh", "-c", "for d in /files/*; do cp -RLv \"$d\" /data/plugins/; done"]
+    volumeMounts:
+      - name: files
+        mountPath: /files
+        readOnly: true
       - name: datadir
         mountPath: /data
 

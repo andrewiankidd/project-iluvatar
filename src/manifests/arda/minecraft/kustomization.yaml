@@ -21,3 +21,11 @@ configMapGenerator:
       - common/info/info.py
     options:
       disableNameSuffixHash: true
+  # Plugin files every server is given on each start, by the managed-files
+  # init container (common/values.yaml). Fixed name for the same reason.
+  - name: minecraft-files
+    files:
+      - common/files/forcepack.yml
+      - common/files/pocketmap-default.dsc
+    options:
+      disableNameSuffixHash: true
