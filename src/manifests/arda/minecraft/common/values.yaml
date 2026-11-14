@@ -70,6 +70,13 @@ extraVolumes:
               path: ForcePack/config.yml
             - key: pocketmap-default.dsc
               path: Denizen/scripts/pocketmap-default.dsc
+  - volumes:                        # mounted by the bedrock-packs init container only
+      - name: bedrock-packs
+        configMap:
+          name: minecraft-files
+          items:
+            - key: bedrock-packs.txt
+              path: bedrock-packs.txt
 
 # BlueMap renders only after accept-download is set: it then fetches the
 # Minecraft client's textures from Mojang, under the EULA accepted above.
@@ -101,6 +108,39 @@ initContainers:
     volumeMounts:
       - name: files
         mountPath: /files
+        readOnly: true
+      - name: datadir
+        mountPath: /data
+  # The Bedrock resource packs in common/files/bedrock-packs.txt, into Geyser's
+  # packs folder. A pack that cannot be fetched is skipped with a warning
+  # rather than holding the server down.
+  - name: bedrock-packs
+    image: alpine:3.22
+    command:
+      - sh
+      - -c
+      - |
+        dir=/data/plugins/Geyser-Spigot/packs
+        mkdir -p "$dir"
+        keep=" "
+        grep -Ev '^[[:space:]]*(#|$)' /packs/bedrock-packs.txt > /tmp/list
+        while read -r sha url; do
+          f="$dir/$sha.mcpack"
+          keep="$keep$f "
+          if [ -f "$f" ] && echo "$sha  $f" | sha256sum -cs; then
+            echo "have $url"
+          elif wget -qO "$f.part" "$url" && echo "$sha  $f.part" | sha256sum -cs; then
+            mv "$f.part" "$f" && echo "got $url"
+          else
+            rm -f "$f.part" && echo "WARNING: could not fetch $url, or its sha256 differs"
+          fi
+        done < /tmp/list
+        for f in "$dir"/*.mcpack; do
+          case "$keep" in *" $f "*) ;; *) [ -f "$f" ] && rm -f "$f" && echo "removed $f" ;; esac
+        done
+    volumeMounts:
+      - name: bedrock-packs
+        mountPath: /packs
         readOnly: true
       - name: datadir
         mountPath: /data

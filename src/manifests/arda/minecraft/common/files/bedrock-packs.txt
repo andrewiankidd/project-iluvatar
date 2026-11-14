@@ -1,0 +1,11 @@
+# Resource packs Geyser sends every Bedrock player, and makes them accept
+# (force-resource-packs). The bedrock-packs init container (../values.yaml)
+# fetches each into plugins/Geyser-Spigot/packs/ and checks it; packs no
+# longer listed are removed. One per line: <sha256> <url>.
+#
+# Geyser could fetch these from a URL itself (advanced.resource-pack-urls),
+# but Bedrock clients take only application/zip, and GitHub release downloads
+# are application/octet-stream.
+
+# Faithful 32x Bedrock, september-2026-bedrock-hotfix
+75fb2ff355a00d0d60a3deb4bbe42db9a5a65dd79ff9f03eb1b6edf9c57d1c26 https://github.com/Faithful-Resource-Pack/Faithful-32x-Bedrock/releases/download/september-2026-bedrock-hotfix/Faithful.32x.September.2026.Hotfix.mcpack

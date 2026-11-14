@@ -3,7 +3,7 @@
 # start, so this file wins over anything edited in game.
 #
 # Bedrock players are left to Geyser (geyser: true), which sends them the
-# Bedrock edition of the packs (../patches/geyser.json).
+# Bedrock edition of the packs (bedrock-packs.txt).
 #
 # Clients on 1.20.3 and later stack every pack listed, later ones on top.
 # Each pack is fetched by the client from its own Modrinth file: nothing is
