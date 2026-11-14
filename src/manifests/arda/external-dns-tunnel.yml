@@ -1,0 +1,35 @@
+# Publishes arda's Ingress hosts to the kidd.network zone on Cloudflare, as
+# proxied CNAMEs to arda's Cloudflare Tunnel (cloudflared.yml): a new Ingress
+# is reachable over HTTPS with nothing else to do. A second release of the
+# chart beside external-dns.yml, which publishes the Service records.
+#
+# Reads the same cloudflare-api-token Secret as external-dns.yml.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-dns-tunnel
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://kubernetes-sigs.github.io/external-dns
+      chart: external-dns
+      targetRevision: 1.23.0
+      helm:
+        releaseName: external-dns-tunnel
+        valueFiles:
+          - $values/src/manifests/arda/external-dns-tunnel/values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-dns
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    automated:
+      prune: true
+      selfHeal: true

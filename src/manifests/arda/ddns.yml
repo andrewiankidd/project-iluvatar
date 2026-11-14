@@ -1,0 +1,35 @@
+# home.kidd.network: this network's public IPv4 address, kept current.
+#
+# What cannot go through the Cloudflare Tunnel (cloudflared.yml) reaches arda
+# through the router's port forwards instead, at this address. Its records
+# are CNAMEs to home.kidd.network (the Minecraft servers' are set in
+# minecraft.yml), so a change of address is one update here.
+#
+# DNS only: proxying would hide the address the forwards need.
+#
+# Reads the cloudflare-api-token Secret, in this app's namespace:
+#   kubectl create namespace ddns
+#   kubectl -n ddns create secret generic cloudflare-api-token \
+#     --from-literal=api-token=<token>
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ddns
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/ddns
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ddns
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,5 +1,7 @@
-# Publishes arda's Service and Ingress hostnames to the kidd.network zone on
-# Cloudflare. Records point at LAN addresses (MetalLB, Traefik), DNS only.
+# Publishes arda's Service hostnames to the kidd.network zone on Cloudflare,
+# DNS only: what cannot go through the tunnel, such as Minecraft. A Service
+# says where its record points (external-dns.kubernetes.io/target), or gets
+# its LoadBalancer address. Ingress hosts are external-dns-tunnel.yml's.
 #
 # Needs a Cloudflare API token (Zone:DNS:Edit on kidd.network) that is not
 # in this public repo; create it once per cluster:

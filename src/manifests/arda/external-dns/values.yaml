@@ -1,4 +1,6 @@
-# external-dns chart 1.23.0, Cloudflare provider.
+# external-dns chart 1.23.0, Cloudflare provider: Service records.
+# Ingress hosts are published by the second instance in
+# ../external-dns-tunnel/values.yaml, to the tunnel instead.
 
 provider:
   name: cloudflare
@@ -12,24 +14,19 @@ env:
 
 sources:
   - service
-  - ingress
 
 # The Cloudflare zone. It has to be the zone itself: a subdomain here
 # filters the zone out and nothing is published. What gets published is
-# arda's Ingress hosts and Services with an external-dns.kubernetes.io/hostname
-# annotation; records anyone else made in the zone are never touched (below).
+# Services with an external-dns.kubernetes.io/hostname annotation, DNS only
+# (not proxied: Cloudflare's proxy carries only HTTP); records anyone else
+# made in the zone are never touched (below).
 domainFilters:
   - kidd.network
 
-# Deletes the records it created when their Service or Ingress goes away,
-# and never touches records it did not create (owned through TXT records).
+# Deletes the records it created when their Service goes away, and never
+# touches records it did not create (owned through TXT records).
 policy: sync
 registry: txt
 txtOwnerId: arda
 
 triggerLoopOnEvent: true
-
-extraArgs:
-  # The portal's *.minecraft.kidd.network needs a TXT owner record too, and
-  # "*" is not valid in its name.
-  - --txt-wildcard-replacement=wildcard

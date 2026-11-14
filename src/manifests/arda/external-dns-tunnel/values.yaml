@@ -1,0 +1,33 @@
+# external-dns chart 1.23.0, Cloudflare provider: Ingress hosts, each a
+# proxied CNAME to arda's Cloudflare Tunnel (cloudflared.yml). Service
+# records are the other instance's (../external-dns/values.yaml).
+
+provider:
+  name: cloudflare
+
+env:
+  - name: CF_API_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: cloudflare-api-token
+        key: api-token
+
+sources:
+  - ingress
+
+domainFilters:
+  - kidd.network
+
+# Its own TXT owner, so the two instances never claim each other's records.
+policy: sync
+registry: txt
+txtOwnerId: arda-tunnel
+
+triggerLoopOnEvent: true
+
+extraArgs:
+  # The tunnel named "arda", whatever the Ingress reports as its address.
+  - --default-targets=7d53b9b2-e0fd-451b-9126-70edf9c2bbe6.cfargotunnel.com
+  - --force-default-targets
+  # Through Cloudflare's proxy, which is what sends them into the tunnel.
+  - --cloudflare-proxied

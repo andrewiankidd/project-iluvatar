@@ -7,8 +7,15 @@ server's name, and everything else is derived from it:
 | Name | What |
 |---|---|
 | `<name>.minecraft.kidd.network` | the game: Java on TCP 25565, Bedrock on UDP 19132 |
-| `map.<name>.minecraft.kidd.network` | the BlueMap 3D web map |
-| `minecraft.kidd.network`, `*.minecraft.kidd.network` | the portal: every server, live status, map links |
+| `minecraft.kidd.network/map/<name>/` | the BlueMap 3D web map |
+| `minecraft.kidd.network` | the portal: every server, live status, map links |
+
+The portal and maps come in through the Cloudflare Tunnel (`../cloudflared.yml`),
+with Cloudflare's HTTPS. The game cannot: `<name>.minecraft.kidd.network` is a
+DNS-only CNAME to `home.kidd.network` (`../ddns.yml`), and the router forwards
+TCP 25565, UDP 19132, TCP 19132 and UDP 19133 to the server's LoadBalancer
+address. Maps are paths rather than hosts because Cloudflare's free
+certificate covers one level below `kidd.network` only.
 
 ## Pieces
 
@@ -22,10 +29,12 @@ server's name, and everything else is derived from it:
   advertises (`CFG_BEDROCK_ADDRESS`, set per server by the ApplicationSet).
 - `servers/<name>/server.yaml`: title, description and portal order.
 - `servers/<name>/values.yaml`: what differs for that server (mode, difficulty, motd).
-- `portal/`: nginx serving `index.html`, plus a refresher that lists the
+- `portal/`: nginx serving `index.html` and each server's map at
+  `/map/<name>/` (`nginx.conf.template`), plus a refresher that lists the
   Services labelled `minecraft.kidd.network/server` and pings each over the Java
   and Bedrock protocols every 30 seconds. It holds no server list of its own.
-- `../external-dns.yml`: publishes all of the names above to Cloudflare.
+- `../external-dns.yml`: publishes the servers' records;
+  `../external-dns-tunnel.yml` points the portal's at the tunnel.
 
 ## Adding a server
 
@@ -47,11 +56,13 @@ Not defined in this repo for arda yet:
 
 - MetalLB, with a pool for the game LoadBalancer IPs. Each Service mixes TCP
   and UDP ports on one IP.
-- Traefik as the `traefik` IngressClass.
-- cert-manager, for the `letsencrypt` ClusterIssuer in `../cert-issuers.yml`.
+- Traefik as the `traefik` IngressClass, as `traefik.kube-system`, where
+  cloudflared sends the tunnel's traffic.
 - A default StorageClass, or set `persistence.storageClass` in `common/values.yaml`.
-- The `cloudflare-api-token` Secret in both `external-dns` and `cert-manager`;
-  see `../external-dns.yml` and `../cert-issuers/letsencrypt.yaml`.
+- The `cloudflare-api-token` Secret in both `external-dns` and `ddns`, and the
+  `cloudflared-tunnel` Secret in `cloudflared`; see `../external-dns.yml`,
+  `../ddns.yml` and `../cloudflared.yml`.
+- The router's port forwards above, to the LoadBalancer address.
 
 ## Moving the creative world in
 

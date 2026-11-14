@@ -4,12 +4,18 @@
 # server.yaml becomes a server. Adding one is a new folder with server.yaml
 # and values.yaml; nothing in this file changes. For a folder named <name>:
 #
-#   <name>.minecraft.kidd.network       Java (TCP 25565) and Bedrock (UDP 19132)
-#   map.<name>.minecraft.kidd.network   BlueMap 3D web map
+#   <name>.minecraft.kidd.network         Java (TCP 25565) and Bedrock (UDP 19132)
+#   minecraft.kidd.network/map/<name>/    BlueMap 3D web map, through the portal
 #
-# The portal (minecraft.kidd.network and *.minecraft.kidd.network) finds the
-# servers from their Service labels at runtime; it holds no server list.
-# external-dns (external-dns.yml) publishes every hostname.
+# Game traffic cannot go through the Cloudflare Tunnel, so <name>'s record is
+# a DNS-only CNAME to home.kidd.network (ddns.yml) and reaches the server
+# through the router's port forwards: TCP 25565, UDP 19132, TCP 19132 and
+# UDP 19133, to the LoadBalancer address. Everything on the web goes through
+# the tunnel.
+#
+# The portal (minecraft.kidd.network) finds the servers from their Service
+# labels at runtime; it holds no server list, and serves each map by name.
+# external-dns (external-dns.yml) publishes the server records.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -48,10 +54,11 @@ spec:
                 minecraft.kidd.network/server: '{{ .path.basename }}'
               serviceAnnotations:
                 external-dns.kubernetes.io/hostname: '{{ .path.basename }}.minecraft.kidd.network'
+                external-dns.kubernetes.io/target: home.kidd.network
                 minecraft.kidd.network/title: '{{ .title }}'
                 minecraft.kidd.network/description: '{{ .description }}'
                 minecraft.kidd.network/order: '{{ .order }}'
-                minecraft.kidd.network/map: 'https://map.{{ .path.basename }}.minecraft.kidd.network'
+                minecraft.kidd.network/map: 'https://minecraft.kidd.network/map/{{ .path.basename }}'
               extraEnv:
                 # Geyser hands this to NetherNet clients (common/patches/geyser.json).
                 CFG_BEDROCK_ADDRESS: '{{ .path.basename }}.minecraft.kidd.network'
@@ -89,7 +96,7 @@ spec:
                       embedded: false
                       type: ClusterIP
                       port: 8099
-                  - name: map
+                  - name: map    # BlueMap; the portal serves it at /map/<name>/
                     containerPort: 8100
                     protocol: TCP
                     service:
@@ -97,18 +104,6 @@ spec:
                       embedded: false
                       type: ClusterIP
                       port: 8100
-                    ingress:
-                      enabled: true
-                      ingressClassName: traefik
-                      annotations:
-                        cert-manager.io/cluster-issuer: letsencrypt
-                      hosts:
-                        - name: 'map.{{ .path.basename }}.minecraft.kidd.network'
-                          path: /
-                      tls:
-                        - secretName: '{{ .path.basename }}-map-tls'
-                          hosts:
-                            - 'map.{{ .path.basename }}.minecraft.kidd.network'
         - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
           targetRevision: main
           ref: values

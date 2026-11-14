@@ -1,0 +1,37 @@
+# arda's web traffic comes in through a Cloudflare Tunnel: cloudflared dials
+# out to Cloudflare, and Cloudflare's edge serves HTTPS with its own
+# certificate. Nothing inbound is opened for the web, and no certificates are
+# issued here. Everything the tunnel receives goes to Traefik, which routes it
+# by host like any other request; external-dns-tunnel.yml points the Ingress
+# hosts at the tunnel.
+#
+# Cloudflare's free certificate covers kidd.network and *.kidd.network, one
+# level deep: an Ingress host such as a.b.kidd.network would not get HTTPS.
+#
+# Needs the tunnel's token, which is not in this public repo; create it once
+# per cluster (`cloudflared tunnel token arda` prints it):
+#   kubectl create namespace cloudflared
+#   kubectl -n cloudflared create secret generic cloudflared-tunnel \
+#     --from-literal=token=<token>
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudflared
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/cloudflared
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cloudflared
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    automated:
+      prune: true
+      selfHeal: true

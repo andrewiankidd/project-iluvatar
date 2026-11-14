@@ -1,0 +1,29 @@
+# The portal's nginx. The nginx image fills in ${NAMESPACE} and
+# ${NGINX_LOCAL_RESOLVERS} at start (deployment.yaml); other $ names are
+# nginx's own.
+server {
+    listen 80;
+    root /usr/share/nginx/html;
+
+    # Map hosts are looked up per request, so a new server's map works at
+    # once and a missing one is a 502 rather than a failed start.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=30s ipv6=off;
+
+    location / {
+        index index.html;
+    }
+
+    # Each server's BlueMap, by name: /map/<name>/ is the <name> server's
+    # map Service. BlueMap's web app asks for everything by relative path,
+    # so it works under the prefix as it is.
+    location = /map/ {
+        return 302 /;
+    }
+    location ~ ^/map/([a-z0-9-]+)$ {
+        return 301 /map/$1/;
+    }
+    location ~ ^/map/([a-z0-9-]+)/(.*)$ {
+        proxy_pass http://$1-minecraft-map.${NAMESPACE}.svc.cluster.local:8100/$2$is_args$args;
+        proxy_http_version 1.1;
+    }
+}

@@ -11,6 +11,7 @@ configMapGenerator:
   - name: portal-web
     files:
       - index.html
+      - nginx.conf.template
   - name: portal-refresher
     files:
       - refresh.py
