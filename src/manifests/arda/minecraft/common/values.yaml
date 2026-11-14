@@ -35,7 +35,6 @@ minecraftServer:
       - worldedit:YFnqiUlL
       - worldguard:fiHLM6oY
       - luckperms:b0mk8uS6
-      - craftbook:6kl3GQSJ
       - bluemap:uHQIrUdf      # 3D web map on :8100
   pluginUrls:
     - https://ci.citizensnpcs.co/job/Citizens2/4269/artifact/dist/target/Citizens-2.0.44-b4269.jar
