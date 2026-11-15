@@ -28,7 +28,13 @@ certificate covers one level below `kidd.network` only.
   `transport: both`, NetherNet's WebRTC port (UDP 19133) and the address it
   advertises (`CFG_BEDROCK_ADDRESS`, set per server by the ApplicationSet).
 - `servers/<name>/server.yaml`: title, description and portal order.
-- `servers/<name>/values.yaml`: what differs for that server (mode, difficulty, motd).
+- `servers/<name>/values.yaml`: what differs for that server (mode, difficulty,
+  motd), and its NPCs under `npcs:`.
+- `common/files/npcs.dsc`: the Denizen script that makes a server's NPCs match
+  its `npcs:` list: it creates and removes them, and moves each through its
+  daily schedule (shop, stand, sit, sleep, wander). Trading is open only at a
+  shop, in its hours. The list's format is described in
+  `servers/creative/values.yaml`; `/npcspot <name>` in game records a place.
 - `portal/`: nginx serving `index.html` and each server's map at
   `/map/<name>/` (`nginx.conf.template`), plus a refresher that lists the
   Services labelled `minecraft.kidd.network/server` and pings each over the Java
