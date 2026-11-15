@@ -8,3 +8,50 @@ minecraftServer:
 extraEnv:
   MODE: creative
   FORCE_GAMEMODE: "true"
+
+# NPCs (common/files/npcs.dsc). Changing this list restarts the server.
+#
+#   places:  name: "x y z [yaw [pitch [world]]]"   a spot, and which way to face
+#   areas:   name: "x1 y1 z1 x2 y2 z2 [world]"     a box to wander in
+#
+# In game, /npcspot <name> records where you stand, facing, for places:
+# (it saves to plugins/Denizen/data/npcspots.yml).
+#
+# Each of people: is
+#   name:     shown above the head; &-colour codes work
+#   skin:     a player name, or an https URL of a skin image
+#   lines:    what it says when clicked (one, at random)
+#   trades:   - sell: "8 iron_ingot"      what the player gets
+#               for: "2 emerald"          what they pay: one item, or a list of two
+#             Trading is open only at a shop: entry, once it is there.
+#   closed:   what a shopkeeper says out of hours (default: when it opens)
+#   schedule: from each time (0-23, or "7:30") until the next, one of
+#               shop: <place>    stand there, trading
+#               stand: <place>   stand there
+#               sit: <place>     sit there
+#               sleep: <place>   lie there, e.g. on a bed
+#               wander: <area>   stroll around the area
+#             It walks between them; the last entry runs past midnight.
+#
+# A place or area can also be written out in full instead of named.
+npcs:
+  # Daylight is locked on this world, so the NPCs keep real (UK) time.
+  clock: real
+  places: {}
+  areas: {}
+  people: {}
+  # people:
+  #   smith:
+  #     name: "&7Smith"
+  #     skin: https://example.org/smith.png
+  #     lines: ["Mind the sparks.", "Best iron this side of the river."]
+  #     trades:
+  #       - sell: "8 iron_ingot"
+  #         for: "2 emerald"
+  #     schedule:
+  #       - at: 7
+  #         shop: smith-stall
+  #       - at: 18
+  #         wander: market
+  #       - at: 22
+  #         sleep: smith-bed

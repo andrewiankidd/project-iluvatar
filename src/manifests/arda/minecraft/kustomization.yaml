@@ -27,6 +27,7 @@ configMapGenerator:
     files:
       - common/files/forcepack.yml
       - common/files/pocketmap-default.dsc
+      - common/files/npcs.dsc
       - common/files/bedrock-packs.txt
     options:
       disableNameSuffixHash: true

@@ -70,6 +70,8 @@ extraVolumes:
               path: ForcePack/config.yml
             - key: pocketmap-default.dsc
               path: Denizen/scripts/pocketmap-default.dsc
+            - key: npcs.dsc
+              path: Denizen/scripts/npcs.dsc
   - volumes:                        # mounted by the bedrock-packs init container only
       - name: bedrock-packs
         configMap:
@@ -109,6 +111,21 @@ initContainers:
       - name: files
         mountPath: /files
         readOnly: true
+      - name: datadir
+        mountPath: /data
+  # This server's NPCs (npcs: below, set in its values.yaml), for the NPC
+  # script (common/files/npcs.dsc). The list is part of the pod spec, so a
+  # change to it restarts the server.
+  - name: npcs
+    image: alpine:3.22
+    command:
+      - sh
+      - -c
+      - mkdir -p /data/plugins/Denizen/data && echo "$NPCS" | base64 -d > /data/plugins/Denizen/data/npcs.yml
+    env:
+      - name: NPCS
+        value: '{{ .Values.npcs | toJson | b64enc }}'
+    volumeMounts:
       - name: datadir
         mountPath: /data
   # The Bedrock resource packs in common/files/bedrock-packs.txt, into Geyser's
@@ -187,3 +204,7 @@ persistence:
     enabled: true
     Size: 20Gi
     # storageClass: longhorn   # decide once arda's storage exists
+
+# NPCs, declared per server in its values.yaml (see servers/creative/values.yaml
+# and common/files/npcs.dsc). None by default.
+npcs: {}
