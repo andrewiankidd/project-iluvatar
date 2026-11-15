@@ -195,6 +195,18 @@ extraEnv:
   SPAWN_PROTECTION: "0"   # WorldGuard owns protection
   ENABLE_WHITELIST: "true"
   ENFORCE_WHITELIST: "true"
+  # Who may join, by UUID; every start makes whitelist.json exactly this, so
+  # /whitelist add in game lasts only until the next restart. A Bedrock
+  # player's UUID is Floodgate's (00000000-0000-0000-0009-<XUID in hex>): it
+  # is in the "not whitelisted" log line, or `fwhitelist add <gamertag>`.
+  OVERRIDE_WHITELIST: "true"
+  # One per line, in order: the owner, two players, and
+  # the owner on Bedrock.
+  WHITELIST: >-
+    <uuid>
+    <uuid>
+    <uuid>
+    <uuid>
 
 persistence:
   annotations:
