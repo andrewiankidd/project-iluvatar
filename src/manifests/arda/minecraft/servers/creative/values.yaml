@@ -37,21 +37,187 @@ extraEnv:
 npcs:
   # Daylight is locked on this world, so the NPCs keep real (UK) time.
   clock: real
-  places: {}
-  areas: {}
-  people: {}
-  # people:
-  #   smith:
-  #     name: "&7Smith"
-  #     skin: https://example.org/smith.png
-  #     lines: ["Mind the sparks.", "Best iron this side of the river."]
-  #     trades:
-  #       - sell: "8 iron_ingot"
-  #         for: "2 emerald"
-  #     schedule:
-  #       - at: 7
-  #         shop: smith-stall
-  #       - at: 18
-  #         wander: market
-  #       - at: 22
-  #         sleep: smith-bed
+  places:
+    # The cloth market's stalls, recorded with /npcspot.
+    market-armor-stall: "661.5 65.9 587.7 358.8 -7.4"
+    market-cake-stall: "660.7 66 595.3 185.1 16.8"
+    market-food-stall: "666.6 66 595.9 264.8 9.4"
+    market-tool-stall: "677.2 66 603.3 177.5 1.8"
+    market-art-stall: "686.9 66 606.5 2.3 1.5"
+    market-plant-stall: "688.3 66 615.9 91.9 13.9"
+    market-cake1-stall: "688.2 66 623.7 181.6 22"
+    market-cake2-stall: "692.8 66 623.4 187.8 8.2"
+  areas:
+    # Around the stalls, for the evening stroll.
+    cloth-market: "655 63 582 698 72 629"
+  # The cloth market's stallholders: shop 8:00 to 18:00, stroll the market in
+  # the evening, and stand at their stalls overnight until they have beds.
+  people:
+    armourer:
+      name: "&7Bertram the Armourer"
+      lines:
+        - "Iron or nothing, I say."
+        - "That chestplate's seen three sieges. Well, two."
+      trades:
+        - sell: "iron_helmet"
+          for: "5 emerald"
+        - sell: "iron_chestplate"
+          for: "9 emerald"
+        - sell: "iron_leggings"
+          for: "7 emerald"
+        - sell: "iron_boots"
+          for: "4 emerald"
+        - sell: "chainmail_chestplate"
+          for: "6 emerald"
+      schedule:
+        - at: 8
+          shop: market-armor-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-armor-stall
+    baker:
+      name: "&6Mabel the Baker"
+      lines:
+        - "Fresh out the oven this morning."
+        - "Cake's for celebrating. Every day's worth celebrating."
+      trades:
+        - sell: "cake"
+          for: "3 emerald"
+        - sell: "6 bread"
+          for: "1 emerald"
+        - sell: "pumpkin_pie"
+          for: "1 emerald"
+      schedule:
+        - at: 8
+          shop: market-cake-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-cake-stall
+    grocer:
+      name: "&2Hugh the Grocer"
+      lines:
+        - "Straight from the farm up the road."
+        - "Apples! Carrots! Taters!"
+      trades:
+        - sell: "8 apple"
+          for: "1 emerald"
+        - sell: "8 carrot"
+          for: "1 emerald"
+        - sell: "8 baked_potato"
+          for: "1 emerald"
+        - sell: "4 cooked_beef"
+          for: "1 emerald"
+        - sell: "emerald"
+          for: ["16 wheat"]
+      schedule:
+        - at: 8
+          shop: market-food-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-food-stall
+    toolsmith:
+      name: "&8Edda the Toolsmith"
+      lines:
+        - "A good tool outlives its owner."
+        - "Shields are half price if you don't ask what they've stopped."
+      trades:
+        - sell: "iron_pickaxe"
+          for: "4 emerald"
+        - sell: "iron_axe"
+          for: "4 emerald"
+        - sell: "iron_shovel"
+          for: "2 emerald"
+        - sell: "iron_sword"
+          for: "5 emerald"
+        - sell: "shield"
+          for: "3 emerald"
+      schedule:
+        - at: 8
+          shop: market-tool-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-tool-stall
+    painter:
+      name: "&dPip the Painter"
+      lines:
+        - "Hold still... no, the other side."
+        - "Every wall deserves a picture."
+      trades:
+        - sell: "2 painting"
+          for: "1 emerald"
+        - sell: "4 item_frame"
+          for: "1 emerald"
+        - sell: "8 white_dye"
+          for: "1 emerald"
+        - sell: "8 blue_dye"
+          for: "1 emerald"
+        - sell: "8 red_dye"
+          for: "1 emerald"
+      schedule:
+        - at: 8
+          shop: market-art-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-art-stall
+    florist:
+      name: "&aRosie the Florist"
+      lines:
+        - "Mind the tulips, they bite. Not really."
+        - "Nothing brightens a house like flowers."
+      trades:
+        - sell: "4 poppy"
+          for: "1 emerald"
+        - sell: "4 dandelion"
+          for: "1 emerald"
+        - sell: "4 cornflower"
+          for: "1 emerald"
+        - sell: "2 rose_bush"
+          for: "1 emerald"
+        - sell: "4 oak_sapling"
+          for: "1 emerald"
+      schedule:
+        - at: 8
+          shop: market-plant-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-plant-stall
+    apprentice:
+      name: "&6Wren the Apprentice"
+      lines:
+        - "Mabel taught me everything. Well, most things."
+        - "Try the cookies, I made them myself!"
+      trades:
+        - sell: "8 cookie"
+          for: "1 emerald"
+        - sell: "cake"
+          for: "3 emerald"
+      schedule:
+        - at: 8
+          shop: market-cake1-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-cake1-stall
+    cupcake-kid:
+      name: "&eTilly"
+      lines:
+        - "Cupcakes! Cupcakes! Well, cookies."
+        - "Mum says I'm the best seller."
+      trades:
+        - sell: "4 cookie"
+          for: "1 emerald"
+        - sell: "2 sweet_berries"
+          for: "1 emerald"
+      schedule:
+        - at: 8
+          shop: market-cake2-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-cake2-stall
