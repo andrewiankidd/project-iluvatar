@@ -47,10 +47,16 @@ npcs:
     market-plant-stall: "688.3 66 615.9 91.9 13.9"
     market-cake1-stall: "688.2 66 623.7 181.6 22"
     market-cake2-stall: "692.8 66 623.4 187.8 8.2"
+    # The Lion's Throat: its guard posts and entrance desks.
+    lions-throat-palace-guard: "657.6 67 722.6 258.6 9.7"
+    lions-throat-city-guard: "675.6 67 698.4 294.4 11.7"
+    lions-throat-podium-guard: "670.1 69 711.1 314 16.5"
+    lions-throat-entrance-clerk1: "672.3 67 727.6 269 8.4"
+    lions-throat-entrance-clerk2: "686.1 67 713.7 0.5 11.7"
   areas:
     # Around the stalls, for the evening stroll.
     cloth-market: "655 63 582 698 72 629"
-  # The cloth market's stallholders: shop 8:00 to 18:00, stroll the market in
+  # The cloth market's stallholders (the Lion's Throat's staff follow them): shop 8:00 to 18:00, stroll the market in
   # the evening, and stand at their stalls overnight until they have beds.
   people:
     armourer:
@@ -221,3 +227,45 @@ npcs:
           wander: cloth-market
         - at: 22
           stand: market-cake2-stall
+    # The Lion's Throat. The guards hold their posts around the clock; the
+    # clerks keep their desks, and stay at them until they have homes.
+    palace-guard:
+      name: "&cPalace Guard"
+      lines:
+        - "Move along."
+        - "The palace is closed to visitors. It's always closed to visitors."
+      schedule:
+        - at: 0
+          stand: lions-throat-palace-guard
+    city-guard:
+      name: "&cCity Guard"
+      lines:
+        - "Keep your blade sheathed inside the walls."
+        - "Quiet night. I like quiet nights."
+      schedule:
+        - at: 0
+          stand: lions-throat-city-guard
+    podium-guard:
+      name: "&cPodium Guard"
+      lines:
+        - "No speeches without a permit."
+        - "I've heard every speech from that podium. Twice."
+      schedule:
+        - at: 0
+          stand: lions-throat-podium-guard
+    entrance-clerk1:
+      name: "&9Osric the Clerk"
+      lines:
+        - "Name? Business? Sign here, and here."
+        - "Welcome to the Lion's Throat. Mind the stairs."
+      schedule:
+        - at: 0
+          stand: lions-throat-entrance-clerk1
+    entrance-clerk2:
+      name: "&9Agnes the Clerk"
+      lines:
+        - "The other desk is for arrivals. This one is for complaints."
+        - "Lost something? Everyone has, in here."
+      schedule:
+        - at: 0
+          stand: lions-throat-entrance-clerk2
