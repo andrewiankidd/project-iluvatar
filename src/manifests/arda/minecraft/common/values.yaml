@@ -72,6 +72,8 @@ extraVolumes:
               path: Denizen/scripts/pocketmap-default.dsc
             - key: npcs.dsc
               path: Denizen/scripts/npcs.dsc
+            - key: protection.dsc
+              path: Denizen/scripts/protection.dsc
   - volumes:                        # mounted by the bedrock-packs init container only
       - name: bedrock-packs
         configMap:
@@ -113,18 +115,24 @@ initContainers:
         readOnly: true
       - name: datadir
         mountPath: /data
-  # This server's NPCs (npcs: below, set in its values.yaml), for the NPC
-  # script (common/files/npcs.dsc). The list is part of the pod spec, so a
-  # change to it restarts the server.
-  - name: npcs
+  # This server's npcs: and protection: lists (below, set in its values.yaml),
+  # for the scripts common/files/npcs.dsc and protection.dsc. The lists are
+  # part of the pod spec, so a change to either restarts the server.
+  - name: denizen-data
     image: alpine:3.22
     command:
       - sh
       - -c
-      - mkdir -p /data/plugins/Denizen/data && echo "$NPCS" | base64 -d > /data/plugins/Denizen/data/npcs.yml
+      - |
+        d=/data/plugins/Denizen/data
+        mkdir -p "$d"
+        echo "$NPCS" | base64 -d > "$d/npcs.yml"
+        echo "$PROTECTION" | base64 -d > "$d/protection.yml"
     env:
       - name: NPCS
         value: '{{ .Values.npcs | toJson | b64enc }}'
+      - name: PROTECTION
+        value: '{{ .Values.protection | toJson | b64enc }}'
     volumeMounts:
       - name: datadir
         mountPath: /data
@@ -220,3 +228,8 @@ persistence:
 # NPCs, declared per server in its values.yaml (see servers/creative/values.yaml
 # and common/files/npcs.dsc). None by default.
 npcs: {}
+
+# Who may change each world, through WorldGuard's __global__ region (see
+# servers/creative/values.yaml and common/files/protection.dsc). Unset by
+# default: the world's regions are left as they are.
+protection: {}

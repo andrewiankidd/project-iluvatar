@@ -35,6 +35,10 @@ certificate covers one level below `kidd.network` only.
   daily schedule (shop, stand, sit, sleep, wander). Trading is open only at a
   shop, in its hours. The list's format is described in
   `servers/creative/values.yaml`; `/npcspot <name>` in game records a place.
+- `common/files/protection.dsc`: sets WorldGuard's `__global__` region in each
+  world from a server's `protection:` list on every start: who may build, and
+  what everyone else may do. Creative is open to anyone this way, read-only
+  apart from switches and doors; survival is whitelisted.
 - `portal/`: nginx serving `index.html` and each server's map at
   `/map/<name>/` (`nginx.conf.template`), plus a refresher that lists the
   Services labelled `minecraft.kidd.network/server` and pings each over the Java
@@ -80,4 +84,6 @@ Not defined in this repo for arda yet:
 4. Delete the hand-made `creative.minecraft.kidd.network` record in Cloudflare.
    external-dns does not overwrite records it does not own.
 
-Bedrock players are whitelisted through Floodgate: `fwhitelist add <gamertag>`.
+The whitelist (`WHITELIST` in `common/values.yaml`) is by UUID; a Bedrock
+player's is Floodgate's, from the "not whitelisted" log line or
+`fwhitelist add <gamertag>`.

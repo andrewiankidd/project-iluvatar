@@ -8,6 +8,25 @@ minecraftServer:
 extraEnv:
   MODE: creative
   FORCE_GAMEMODE: "true"
+  # Open to anyone: visitors look around and work switches, but only the
+  # members under protection: below can change anything.
+  ENABLE_WHITELIST: "false"
+  ENFORCE_WHITELIST: "false"
+
+# WorldGuard's __global__ region in each world, set on every start
+# (common/files/protection.dsc). Members build; everyone else may only use
+# doors, buttons, levers, gates and pressure plates. A region inside a world
+# keeps its own members and flags. A flag set to "unset" is cleared.
+protection:
+  worlds: [world, world_nether, world_the_end]
+  members:
+    - <uuid>   # the owner
+    - <uuid>   # the owner on Bedrock
+    - g:trusted                              # LuckPerms group
+  flags:
+    passthrough: deny   # non-members: no building, chests or other use...
+    use: allow          # ...except doors, buttons, levers and the like
+    build: unset        # was deny in the nether and end, which barred members too
 
 # NPCs (common/files/npcs.dsc). Changing this list restarts the server.
 #
