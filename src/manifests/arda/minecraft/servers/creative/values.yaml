@@ -24,7 +24,6 @@ protection:
   members:
     - <uuid>   # the owner
     - <uuid>   # the owner on Bedrock
-    - g:trusted                              # LuckPerms group
   flags:
     passthrough: deny   # non-members: no building, chests or other use...
     use: allow          # ...except doors, buttons, levers and the like
