@@ -9,9 +9,11 @@ extraEnv:
   MODE: creative
   FORCE_GAMEMODE: "true"
   # Open to anyone: visitors look around and work switches, but only the
-  # members under protection: below can change anything.
+  # members under protection: below can change anything. The image turns the
+  # whitelist on whenever WHITELIST is set, so the shared one is blanked here.
   ENABLE_WHITELIST: "false"
   ENFORCE_WHITELIST: "false"
+  WHITELIST: ""
 
 # WorldGuard's __global__ region in each world, set on every start
 # (common/files/protection.dsc). Members build; everyone else may only use
