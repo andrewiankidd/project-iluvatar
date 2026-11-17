@@ -1,0 +1,44 @@
+# RuneScape: Dragonwilds dedicated server on arda.
+#
+#   dragonwilds.kidd.network   game on UDP 7777, world-settings beacon on UDP 8888
+#
+# Players find the world in the game's own browser (Worlds > Public, by the
+# world's exact name), not by address; the record is there so the server
+# has a name, and the router forwards UDP 7777 and 8888 to the
+# LoadBalancer address. Like the Minecraft servers, it is a DNS-only CNAME
+# to home.kidd.network (ddns.yml), published by external-dns.
+#
+# The world is the newest .sav in the data volume's
+# server-files/RSDragonwilds/Saved/SaveGames/, loaded at start; with none
+# there, the server makes a new world named DEFAULT_WORLD_NAME. To move a
+# world in, stop the server and copy its .sav there.
+#
+# Reads the dragonwilds Secret, in this app's namespace:
+#   kubectl create namespace dragonwilds
+#   kubectl -n dragonwilds create secret generic dragonwilds \
+#     --from-literal=admin-password=<password> \
+#     [--from-literal=world-password=<password>]
+# admin-password unlocks Server Management in the game's pause menu;
+# world-password, if set, is asked of everyone joining.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dragonwilds
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/dragonwilds
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dragonwilds
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    automated:
+      prune: true
+      selfHeal: true

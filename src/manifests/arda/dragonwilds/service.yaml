@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: dragonwilds
+  annotations:
+    external-dns.kubernetes.io/hostname: dragonwilds.kidd.network
+    external-dns.kubernetes.io/target: home.kidd.network
+spec:
+  type: LoadBalancer
+  selector:
+    app: dragonwilds
+  ports:
+    - name: game
+      port: 7777
+      targetPort: game
+      protocol: UDP
+    - name: beacon
+      port: 8888
+      targetPort: beacon
+      protocol: UDP

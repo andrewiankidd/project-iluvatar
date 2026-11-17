@@ -1,0 +1,83 @@
+# indifferentbroccoli/runescape-dragonwilds-server-docker: on each start it
+# installs or updates the official Linux server (Steam app 4019830) into
+# the volume, writes DedicatedServer.ini from the environment, and runs it.
+# Updating on start keeps the server on the clients' version, which joining
+# requires.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dragonwilds
+  labels:
+    app: dragonwilds
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per world
+  selector:
+    matchLabels:
+      app: dragonwilds
+  template:
+    metadata:
+      labels:
+        app: dragonwilds
+    spec:
+      # On SIGTERM the image asks the server to stop and waits up to 30s for
+      # it to save; leave room for that.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: dragonwilds
+          image: indifferentbroccoli/runescape-dragonwilds-server-docker:v1.0.3
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            # The owner's Player ID, from the bottom of the game's Settings
+            # menu: can ban and unban anyone. The server refuses to start
+            # without one.
+            - name: OWNER_ID
+              value: <player id>   # the owner
+            - name: SERVER_NAME
+              value: KiddCo Dragonwilds
+            # Only for a new world; a .sav in the volume is used as it is.
+            - name: DEFAULT_WORLD_NAME
+              value: CrackDen
+            - name: MAX_PLAYERS
+              value: "6"
+            - name: PLATFORM_POLICY
+              value: Crossplay
+            - name: DEFAULT_PORT
+              value: "7777"
+            - name: BEACON_PORT
+              value: "8888"
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dragonwilds
+                  key: admin-password
+            # Empty unless the Secret has one: the world's own password, if
+            # any, then applies.
+            - name: WORLD_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dragonwilds
+                  key: world-password
+                  optional: true
+          ports:
+            - name: game
+              containerPort: 7777
+              protocol: UDP
+            - name: beacon
+              containerPort: 8888
+              protocol: UDP
+          volumeMounts:
+            - name: data
+              mountPath: /home/steam/server-files
+          resources:
+            # 2 GB plus 1 GB a player, by Jagex's guide; six players is 8.
+            requests: { cpu: 500m, memory: 3Gi }
+            limits: { memory: 8Gi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: dragonwilds-data
