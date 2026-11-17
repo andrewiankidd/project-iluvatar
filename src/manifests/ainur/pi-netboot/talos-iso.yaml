@@ -1,0 +1,62 @@
+# Caches the Talos ISO that sidero-omni's talos-schematic Job built (lab CA
+# and Omni join config inside), for machines that boot from USB instead of
+# the network. bootstrap-http serves it as /talos-media/metal-amd64.iso.
+#
+# Waits for the talos-ipxe ConfigMap to exist. Argo CD re-runs it after the
+# TTL, and it only downloads when the schematic has changed.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: talos-media
+  labels:
+    ainur.kidd.network/workload: pi-netboot
+    ainur.kidd.network/volume: talos-media
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: longhorn-replicated-ext4-immediate
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: talos-iso
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: download
+          image: alpine:3.20
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              url="$(cat /talos/iso-url)"
+              cd /media
+              if [ "$(cat metal-amd64.iso.url 2>/dev/null)" = "$url" ]; then
+                echo "already have $url"
+                exit 0
+              fi
+              wget -q -O metal-amd64.iso.tmp "$url"
+              mv metal-amd64.iso.tmp metal-amd64.iso
+              echo "$url" > metal-amd64.iso.url
+              echo "cached $url"
+          volumeMounts:
+            - name: talos-ipxe
+              mountPath: /talos
+              readOnly: true
+            - name: media
+              mountPath: /media
+      volumes:
+        - name: talos-ipxe
+          configMap:
+            name: talos-ipxe
+        - name: media
+          persistentVolumeClaim:
+            claimName: talos-media

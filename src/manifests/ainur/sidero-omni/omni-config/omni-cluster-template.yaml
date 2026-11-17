@@ -15,12 +15,19 @@ patches:
       name: lab-root-ca
       certificates: |
         ${LAB_ROOT_CA_INDENTED}
-  - name: install-nvme-128gb
+  # The NVMe drive, whatever its size; the SATA SSD is Longhorn's.
+  - name: install-nvme
     inline:
       machine:
         install:
           diskSelector:
-            size: 128GB
+            type: nvme
+  # Workloads on the control plane too, so one machine is already a cluster
+  # and every node's SSD counts for Longhorn.
+  - name: schedule-on-control-plane
+    inline:
+      cluster:
+        allowSchedulingOnControlPlanes: true
   # Longhorn (src/manifests/arda/longhorn.yml) on each node's SATA SSD,
   # mounted at /var/mnt/longhorn and shared with the kubelet.
   - name: longhorn-disk
@@ -49,7 +56,8 @@ machineClass:
   name: available
   size: 1
 ---
+# Whatever else is switched on, so the cluster grows as machines join.
 kind: Workers
 machineClass:
   name: available
-  size: 3
+  size: unlimited

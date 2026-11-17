@@ -12,8 +12,9 @@ This directory is the in-repo source path for the [`sidero-omni` Argo CD Applica
 | `gpg-generator.yaml` | One-shot `Job` that generates a GPG private key and stores it as the `omni-gpg` Secret. The chart references this via `etcdEncryptionKey.existingSecret`. |
 | `gpg-backup-pvc.yaml` | Small PVC where the GPG key gets backed up so re-running the generator doesn't lose it. |
 | `omni-cluster-template-sync-job.yaml` | `Job` that runs `omnictl cluster template sync` after Omni is up, registering the cluster template defined below. |
-| `omni-config/omni-cluster-template.yaml` | The Talos cluster template: control plane + workers via `machineClass: available`, plus a `TrustedRootsConfig` patch with the lab CA. |
-| `talos-schematic-job.yaml` | `Job` that builds the Talos image the x86 machines PXE boot (lab CA + Omni join config embedded) and writes `boot.ipxe` for `ainur-netboot` to serve. |
+| `omni-config/machine-class.yaml` | The `available` machine class: every x86 (amd64) machine that joins Omni. Applied by the sync Job before the template. |
+| `omni-config/omni-cluster-template.yaml` | The Talos cluster template: one control plane, and every other machine as a worker (`size: unlimited`), so it starts with one machine and grows. Workloads run on the control plane too. Talos installs to the NVMe drive; the SATA SSD is Longhorn's. |
+| `talos-schematic-job.yaml` | `Job` that builds the Talos image the x86 machines boot (lab CA + Omni join config embedded) and writes `boot.ipxe` and the ISO's address for `ainur-netboot`, whose `talos-iso` Job caches the ISO for USB. |
 | `arda-bootstrap-job.yaml` | `Job` that installs Argo CD on the `talos-default` cluster once it is up, and points it at `src/manifests/arda`. |
 
 Both Jobs run `omnictl` as the `automation` service account, which Omni creates on its first start (`initialServiceAccount` in `values.yaml`) and whose key it writes to its own data volume. The Jobs mount that volume read-only, on Omni's node. Its key lasts a year, the most Omni allows; a cold rebuild makes a new one.
@@ -29,9 +30,9 @@ Argo CD reconciles this Application after the cert-manager and trust-manager sta
 3. **GPG generator Job** (sync-wave `-2`) runs, creates the `omni-gpg` Secret.
 4. **`omni` multi-SAN Certificate** is materialised by cert-manager into `omni-tls` (covers `omni.kidd.network`, `omni.kubernetes.kidd.network`, `omni.siderolink.kidd.network`).
 5. **Omni Helm chart** deploys: one pod, three Ingresses sharing `omni-tls`, three Services (main h2c, k8s-proxy https, wireguard UDP NodePort).
-6. **Cluster-template sync Job** runs `omnictl cluster template sync` against the running Omni, substituting `${LAB_ROOT_CA_INDENTED}` with the contents of the lab CA before applying.
-7. **Talos schematic Job** registers a schematic with the Image Factory and points `http://192.168.1.59/talos/boot.ipxe` at it.
-8. Omni is ready to receive Talos machines: power one on and it PXE boots straight into Omni, which allocates it to `talos-default`.
+6. **Cluster-template sync Job** applies the machine class and runs `omnictl cluster template sync` against the running Omni, substituting `${LAB_ROOT_CA_INDENTED}` with the contents of the lab CA before applying.
+7. **Talos schematic Job** registers a schematic with the Image Factory and points `http://192.168.1.59/talos/boot.ipxe` at it. `ainur-netboot`'s `talos-iso` Job then caches the same image as `http://192.168.1.59/talos-media/metal-amd64.iso`.
+8. Omni is ready to receive Talos machines: power one on, from the network or a USB stick, and it boots straight into Omni, which allocates it to `talos-default`.
 9. **arda bootstrap Job** retries until `talos-default` is up, then installs Argo CD there with an `arda` root app for `src/manifests/arda`.
 
 ## How the machines trust the lab CA
@@ -53,6 +54,8 @@ iPXE         --(proxy-dhcp.yaml)--> http://192.168.1.59/talos/boot.ipxe
 boot.ipxe    --> https://pxe.factory.talos.dev/pxe/<schematic>/<version>/metal-amd64
 ```
 
+Or from USB: write `http://192.168.1.59/talos-media/metal-amd64.iso` to a stick. It is the same schematic, so the CA and join config are in it too. Omni's own "download installation media" is not: it lacks the CA. A new lab CA or join token gives a new ISO, and the old stick stops working.
+
 To go offline, run a self-hosted Image Factory (`siderolabs/image-factory:deploy/helm/image-factory`) and point both `registries.factories` in `values.yaml` and the URLs in `talos-schematic-job.yaml` at it.
 
 ## Verifying
@@ -65,6 +68,7 @@ kubectl -n ainur-sidero-omni get pods,ingress,certificate
 kubectl -n ainur-sidero-omni logs job/omni-cluster-template-sync | tail -20
 kubectl -n ainur-sidero-omni logs job/talos-schematic | tail -5
 curl -s http://192.168.1.59/talos/boot.ipxe
+curl -sI http://192.168.1.59/talos-media/metal-amd64.iso
 
 # x86 machine asking for a boot file?
 kubectl -n ainur-netboot logs deploy/proxy-dhcp

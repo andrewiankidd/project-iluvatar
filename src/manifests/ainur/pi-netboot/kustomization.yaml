@@ -13,3 +13,4 @@ resources:
   - builder-job.yaml
   - kube-vip.yaml
   - proxy-dhcp.yaml
+  - talos-iso.yaml

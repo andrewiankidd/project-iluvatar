@@ -1,0 +1,9 @@
+# Every x86 machine that joins Omni; omni-cluster-template.yaml takes its
+# machines from here. Applied by ../omni-cluster-template-sync-job.yaml.
+metadata:
+  namespace: default
+  type: MachineClasses.omni.sidero.dev
+  id: available
+spec:
+  matchlabels:
+    - omni.sidero.dev/arch = amd64

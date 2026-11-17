@@ -73,6 +73,10 @@ spec:
             - name: talos-ipxe
               mountPath: /usr/share/nginx/html/talos
               readOnly: true
+            # /talos-media/metal-amd64.iso, cached by talos-iso.yaml.
+            - name: talos-media
+              mountPath: /usr/share/nginx/html/talos-media
+              readOnly: true
       volumes:
         - name: boot
           persistentVolumeClaim:
@@ -89,3 +93,6 @@ spec:
           configMap:
             name: talos-ipxe
             optional: true
+        - name: talos-media
+          persistentVolumeClaim:
+            claimName: talos-media

@@ -36,14 +36,17 @@ What changed:
 ### Test sequence (when the lab is next on)
 
 1. Bootstrap ainur from the VM as usual. Check the Omni pod, its three Ingresses and the `omni` Certificate.
-2. Both Jobs complete: `kubectl -n ainur-sidero-omni logs job/omni-cluster-template-sync`, `job/talos-schematic`. `curl http://192.168.1.59/talos/boot.ipxe` shows a schematic ID.
-3. One x86 machine on UEFI network boot. `kubectl -n ainur-netboot logs deploy/proxy-dhcp` shows its request. It should appear in Omni and be allocated to `talos-default`.
+2. Both Jobs complete: `kubectl -n ainur-sidero-omni logs job/omni-cluster-template-sync`, `job/talos-schematic`. `curl http://192.168.1.59/talos/boot.ipxe` shows a schematic ID, and `kubectl -n ainur-netboot logs job/talos-iso` says the ISO is cached.
+3. One x86 machine, booted from a USB stick written from `http://192.168.1.59/talos-media/metal-amd64.iso` (Secure Boot off). Network boot (`kubectl -n ainur-netboot logs deploy/proxy-dhcp`) is untried and can come later. It should appear in Omni and be allocated to `talos-default` as its control plane. That one machine is already a working cluster; the rest join as workers whenever they are switched on.
 4. **The real test**: after Omni installs and reboots it, it reconnects without intervention. Then power-cycle it, and it reconnects again.
 5. `arda-bootstrap` completes and arda's Argo CD shows the `arda` apps, each with its Secret, and Longhorn with a disk on every node.
 6. A manual Longhorn backup lands in R2, and restores.
 
 ### Things that could still bite
 
+- **Omni's old state.** If Omni's data volume on ainur survived from v1.7.2, v1.13.3 has to migrate it across six releases. And `gpg-generator.yaml` always makes a new etcd key, backing it up but never restoring it, so a rebuilt ainur cannot read Omni's saved state. There is no Talos cluster worth keeping, so Omni starting empty is the safe path. Check this before the first run.
+- With fewer than three machines, Longhorn's volumes run degraded (three replicas wanted) until more join.
+- After the install, the disk has to boot before the USB stick, or the machine just boots the ISO again.
 - `proxy-dhcp` uses dnsmasq's `pxe-service` for both the TFTP and iPXE stages; it has never seen a real ProDesk. If the firmware ignores proxy offers, the fallback is the router's own DHCP options 66/67.
 - `boot.ipxe` chains to `https://pxe.factory.talos.dev`; iPXE fetches cross-signing certs from `ca.ipxe.org` for that. Online only until the factory is self-hosted (below).
 - The `automation` key lasts a year (Omni's maximum). Fine for a lab rebuilt more often than that; if not, the Jobs will start failing on auth.

@@ -108,6 +108,7 @@ spec:
 
               # Served by bootstrap-http as /talos/boot.ipxe, which the
               # proxy DHCP (../pi-netboot/proxy-dhcp.yaml) hands to iPXE.
+              # iso-url is what ../pi-netboot/talos-iso.yaml caches for USB.
               {
                 echo "apiVersion: v1"
                 echo "kind: ConfigMap"
@@ -115,6 +116,7 @@ spec:
                 echo "  name: talos-ipxe"
                 echo "  namespace: ainur-netboot"
                 echo "data:"
+                echo "  iso-url: $FACTORY_URL/image/$id/$TALOS_VERSION/metal-amd64.iso"
                 echo "  boot.ipxe: |"
                 echo "    #!ipxe"
                 echo "    chain --replace --autofree $PXE_URL/pxe/$id/$TALOS_VERSION/metal-\${buildarch}"

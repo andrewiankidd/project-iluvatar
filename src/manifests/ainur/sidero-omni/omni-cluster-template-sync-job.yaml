@@ -19,8 +19,8 @@ spec:
               value: https://github.com/andrewiankidd/project-iluvatar
             - name: REPO_REF
               value: main
-            - name: TEMPLATE_PATH
-              value: src/manifests/ainur/sidero-omni/omni-config/omni-cluster-template.yaml
+            - name: CONFIG_PATH
+              value: src/manifests/ainur/sidero-omni/omni-config
             - name: OMNICTL_URL
               value: https://github.com/siderolabs/omni/releases/download/v1.13.3/omnictl-linux-arm64
           command:
@@ -40,14 +40,15 @@ spec:
               git init -q
               git remote add origin "$REPO_URL"
               git config core.sparseCheckout true
-              echo "$TEMPLATE_PATH" > .git/info/sparse-checkout
+              echo "$CONFIG_PATH/" > .git/info/sparse-checkout
               git fetch -q --depth 1 origin "$REPO_REF"
               git checkout -q FETCH_HEAD
 
               export LAB_ROOT_CA_INDENTED
               LAB_ROOT_CA_INDENTED="$(sed 's/^/        /' /etc/omni/lab-root-ca.crt)"
-              envsubst < "$TEMPLATE_PATH" > /tmp/omni-cluster-template.rendered.yaml
+              envsubst < "$CONFIG_PATH/omni-cluster-template.yaml" > /tmp/omni-cluster-template.rendered.yaml
 
+              omnictl apply -f "$CONFIG_PATH/machine-class.yaml"
               omnictl cluster template sync \
                 -f /tmp/omni-cluster-template.rendered.yaml
           volumeMounts:
