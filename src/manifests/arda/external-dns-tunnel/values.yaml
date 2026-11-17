@@ -1,6 +1,9 @@
 # external-dns chart 1.23.0, Cloudflare provider: Ingress hosts, each a
 # proxied CNAME to arda's Cloudflare Tunnel (cloudflared.yml). Service
 # records are the other instance's (../external-dns/values.yaml).
+#
+# Opt-in: only an Ingress annotated kidd.network/tunnel: "true" is published,
+# so nothing reaches the internet by default.
 
 provider:
   name: cloudflare
@@ -29,5 +32,6 @@ extraArgs:
   # The tunnel named "arda", whatever the Ingress reports as its address.
   - --default-targets=7d53b9b2-e0fd-451b-9126-70edf9c2bbe6.cfargotunnel.com
   - --force-default-targets
+  - --annotation-filter=kidd.network/tunnel=true
   # Through Cloudflare's proxy, which is what sends them into the tunnel.
   - --cloudflare-proxied

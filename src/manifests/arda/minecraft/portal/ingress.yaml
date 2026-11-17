@@ -8,6 +8,8 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: portal
+  annotations:
+    kidd.network/tunnel: "true"
 spec:
   ingressClassName: traefik
   rules:
