@@ -75,6 +75,11 @@ What changed:
 
 - `arda-local` runs Minecraft and Dragonwilds on a workstation until arda is up. It reads the same `ARDA_*` names from its own `.env`, so the lines are shared. Moving them means restoring each world into its Longhorn volume on arda, then retiring the stopgap. Never run both: they share the tunnel and the DNS records.
 
+### More workloads
+
+- Planned on the x86 page, none built: Jellyfin, Paperless, Bitwarden, Crafty, LlamaGPT. Each would be an Argo CD app under `src/manifests/arda` storing its data on Longhorn, with any secrets coming from `.env`.
+- After the x86 path is proven and the stopgap retired.
+
 ---
 
 ## Tier 2 — Defensive depth (when bored, or after Tier 1)
