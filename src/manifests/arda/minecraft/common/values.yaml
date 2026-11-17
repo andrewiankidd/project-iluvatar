@@ -45,6 +45,9 @@ minecraftServer:
     # Floodgate lets them in without a Java account.
     - https://download.geysermc.org/v2/projects/geyser/versions/2.12.1/builds/1302/downloads/spigot
     - https://download.geysermc.org/v2/projects/floodgate/versions/2.2.5/builds/141/downloads/spigot
+    # Java players see Bedrock players' 3D skins (persona hair and the like),
+    # flattened onto a Java skin; needs Geyser and Floodgate above.
+    - https://github.com/andrewiankidd/persona-skins/releases/download/v0.1.0/persona-skins-0.1.0.jar
   rcon:
     enabled: true
 
