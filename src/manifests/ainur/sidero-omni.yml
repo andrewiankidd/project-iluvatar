@@ -20,6 +20,9 @@ spec:
     - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
       targetRevision:  main
       path: src/manifests/ainur/sidero-omni
+      # The Helm values above, not a manifest.
+      directory:
+        exclude: values.yaml
     - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
       targetRevision:  main
       ref: values
