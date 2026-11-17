@@ -68,12 +68,12 @@ What changed:
 ### Backups
 
 - Longhorn's own nightly backups (`longhorn/recurring-jobs.yaml`, two weeks kept) to **Cloudflare R2**, bucket `arda-backups`. No Velero: Argo CD rebuilds every Kubernetes object, so only volume data needs backing up.
-- **One-off, in Cloudflare**: make the `arda-backups` bucket and an R2 API token for it, then put its keys and endpoint in `.env` as `ARDA_BACKUP_*`.
+- The bucket exists (2026-11-17, Western Europe), and `ARDA_BACKUP_*` are in `.env`: an R2 token's ID as the access key, the SHA-256 of its value as the secret. They passed an S3 write, list and delete. Rolling or deleting that token stops backups until the keys are derived again.
 - **Then**: a DR drill. Nuke everything, rebuild from `start.sh` plus a restore, write down what broke.
 
 ### Off the stopgap
 
-- `arda-local` runs Minecraft and Dragonwilds on a workstation until arda is up. Moving them means restoring each world into its Longhorn volume on arda, then retiring the stopgap. Never run both: they share the tunnel and the DNS records.
+- `arda-local` runs Minecraft and Dragonwilds on a workstation until arda is up. It reads the same `ARDA_*` names from its own `.env`, so the lines are shared. Moving them means restoring each world into its Longhorn volume on arda, then retiring the stopgap. Never run both: they share the tunnel and the DNS records.
 
 ---
 
