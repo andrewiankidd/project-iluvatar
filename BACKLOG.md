@@ -35,7 +35,7 @@ What changed:
 
 ### Test sequence (when the lab is next on)
 
-1. Bootstrap ainur from the VM as usual. Check the Omni pod, its three Ingresses and the `omni` Certificate.
+1. Bootstrap ainur from the VM, then `bootstrap/netboot/rebootstrap.sh` so the SD card Pi isn't left on an old build. Check the Omni pod, its three Ingresses and the `omni` Certificate.
 2. Both Jobs complete: `kubectl -n ainur-sidero-omni logs job/omni-cluster-template-sync`, `job/talos-schematic`. `curl http://192.168.1.59/talos/boot.ipxe` shows a schematic ID, and `kubectl -n ainur-netboot logs job/talos-iso` says the ISO is cached.
 3. One x86 machine, booted from a USB stick written from `http://192.168.1.59/talos-media/metal-amd64.iso` (Secure Boot off). Network boot (`kubectl -n ainur-netboot logs deploy/proxy-dhcp`) is untried and can come later. It should appear in Omni and be allocated to `talos-default` as its control plane. That one machine is already a working cluster; the rest join as workers whenever they are switched on.
 4. **The real test**: after Omni installs and reboots it, it reconnects without intervention. Then power-cycle it, and it reconnects again.
@@ -44,7 +44,7 @@ What changed:
 
 ### Things that could still bite
 
-- **Omni's old state.** If Omni's data volume on ainur survived from v1.7.2, v1.13.3 has to migrate it across six releases. And `gpg-generator.yaml` always makes a new etcd key, backing it up but never restoring it, so a rebuilt ainur cannot read Omni's saved state. There is no Talos cluster worth keeping, so Omni starting empty is the safe path. Check this before the first run.
+- **Omni's old state.** If Omni's data volume on ainur survived from v1.7.2, v1.13.3 has to migrate it across six releases. And `gpg-generator.yaml` always makes a new etcd key, backing it up but never restoring it, so a rebuilt ainur cannot read Omni's saved state. There is no Talos cluster worth keeping, so Omni starting empty is the safe path: `bootstrap/netboot/rebootstrap.sh` gives the whole of ainur a fresh start, Omni included.
 - With fewer than three machines, Longhorn's volumes run degraded (three replicas wanted) until more join.
 - After the install, the disk has to boot before the USB stick, or the machine just boots the ISO again.
 - `proxy-dhcp` uses dnsmasq's `pxe-service` for both the TFTP and iPXE stages; it has never seen a real ProDesk. If the firmware ignores proxy offers, the fallback is the router's own DHCP options 66/67.
@@ -91,6 +91,11 @@ What changed:
 
 - The Dex admin password is `bcrypt(ubuntu)` and the shared OIDC client secret is `dex-oidc-secret`, both in the repo.
 - **Accepted for now**: this is still dev. Rotate them once the whole loop is proven, through `.env` like the arda secrets, so they never land in git again.
+
+### Rebuilding the Pi image without the VM
+
+- `rebootstrap.sh` relies on the bootstrap VM for a fresh image. The in-cluster `pi-netboot-builder` Job runs once per cluster, and nothing re-runs it.
+- **Fix**: a way to re-run it on demand (deleting the Job is enough; Argo CD recreates it), then a rolling reboot. The catch: when the SD card Pi is re-flashed it comes back as a new cluster, and the rest must follow it. Not worth it while the VM is the easy answer.
 
 ### Renovate Bot
 

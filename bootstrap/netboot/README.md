@@ -37,6 +37,10 @@ To run the services natively on your system, simply use Docker Compose:
 sudo docker compose --profile debian-netboot up
 ```
 
+### Re-bootstrapping
+
+A Pi with an SD card boots from it once netboot has flashed it, so it keeps running the build it was flashed with. With the VM up, `./rebootstrap.sh` reboots every Pi onto the VM's latest build, wiping the SD card first on any Pi running from one. See [Re-bootstrapping Ainur](https://andrewiankidd.github.io/project-iluvatar/getting-started/rebootstrap-ainur/).
+
 ## Directory Structure
 
 - **assets/**: Files that will be utilized during building of boot files

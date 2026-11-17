@@ -69,56 +69,6 @@ write_files:
         echo "127.0.1.1 $hn" >> /etc/hosts
       fi
 
-      # No image staged? nothing to do
-      if [ ! -f "$IMG" ]; then
-        exit 0
-      fi
-
-      # Expected hash: prefer precomputed file; otherwise compute
-      if [ -f "$HASH_FILE" ]; then
-        EXPECTED_HASH="$(cut -d' ' -f1 < "$HASH_FILE" | tr -d '\n')"
-      else
-        if [[ "$IMG" == *.zst ]]; then
-          EXPECTED_HASH="$(zstd -dc "$IMG" | sha256sum | awk '{print $1}')"
-        else
-          EXPECTED_HASH="$(sha256sum "$IMG" | awk '{print $1}')"
-        fi
-      fi
-
-      CURRENT_HASH=""
-      mkdir -p "$MNT"
-      if mount -o ro "$PART_BOOT" "$MNT" 2>/dev/null; then
-        if [ -f "$MNT/$STAMP" ]; then
-          CURRENT_HASH="$(tr -d '\n' < "$MNT/$STAMP")"
-        fi
-        umount "$MNT" || true
-      fi
-
-      # Up-to-date? exit
-      if [ -n "$CURRENT_HASH" ] && [ "$CURRENT_HASH" = "$EXPECTED_HASH" ]; then
-        exit 0
-      fi
-
-      sync
-      if [[ "$IMG" == *.zst ]]; then
-        zstd -dc "$IMG" | dd of="$DEV" bs=4M conv=fsync status=progress
-      else
-        dd if="$IMG" of="$DEV" bs=4M conv=fsync status=progress
-      fi
-      sync
-
-      for i in {1..10}; do
-        if mount "$PART_BOOT" "$MNT" 2>/dev/null; then
-          echo "$EXPECTED_HASH" > "$MNT/$STAMP"
-          sync
-          umount "$MNT" || true
-          break
-        fi
-        sleep 1
-      done
-
-      /sbin/reboot
-
   # Prepare SSH host keys and restart sshd
   - path: /usr/local/sbin/ssh-prepare.sh
     permissions: '0755'

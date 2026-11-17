@@ -91,7 +91,9 @@ write_files:
       # Agent args overlay
       echo "--node-label=kidd.network/boot=netboot" >"$ARGS_DIR/K3S_AGENT_ARGS"
 
-  # SD card auto-flash: runs earliest; flashes /dev/mmcblk0 if image/hash differs, then reboots
+  # SD card auto-flash: runs earliest; flashes /dev/mmcblk0 if image/hash differs, then reboots.
+  # The Pi then boots from the card and never sees a newer build; to move it on,
+  # see ../../../../../rebootstrap.sh (getting-started/rebootstrap-ainur in the docs).
   - path: /usr/local/sbin/sd-flash.sh
     permissions: '0755'
     content: |
