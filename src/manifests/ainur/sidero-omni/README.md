@@ -2,7 +2,7 @@
 
 Sidero Omni deployment for the x86 / Talos side of project-iluvatar.
 
-This directory is the in-repo source path for the [`sidero-omni` Argo CD Application](../sidero-omni.yml). It bundles the v2 Omni Helm chart from `siderolabs/omni @ v1.7.2` with the project-specific values, the GPG key bootstrap for etcd encryption, and the cluster template that defines what x86 Talos machines look like once they join.
+This directory is the in-repo source path for the [`sidero-omni` Argo CD Application](../sidero-omni.yml). It bundles the v2 Omni Helm chart from `siderolabs/omni @ v1.13.3` with the project-specific values, the GPG key bootstrap for etcd encryption, the cluster template that defines what x86 Talos machines look like once they join, and the Talos image those machines boot.
 
 ## What lives here
 
@@ -11,9 +11,14 @@ This directory is the in-repo source path for the [`sidero-omni` Argo CD Applica
 | `values.yaml` | Helm values for the upstream `siderolabs/omni` v2 chart. Includes a multi-SAN `Certificate` for the three Omni hostnames as an `extraObjects` entry. |
 | `gpg-generator.yaml` | One-shot `Job` that generates a GPG private key and stores it as the `omni-gpg` Secret. The chart references this via `etcdEncryptionKey.existingSecret`. |
 | `gpg-backup-pvc.yaml` | Small PVC where the GPG key gets backed up so re-running the generator doesn't lose it. |
-| `omnictl-config-secret.yaml` | `omniconfig.yaml` for the `omnictl` CLI, identity `omni-sync@local`. Used by the cluster-template sync job. |
 | `omni-cluster-template-sync-job.yaml` | `Job` that runs `omnictl cluster template sync` after Omni is up, registering the cluster template defined below. |
-| `omni-config/omni-cluster-template.yaml` | The Talos cluster template: control plane + workers via `machineClass: available`, plus the **`TrustedRootsConfig` patch that adds the lab CA to every member machine's trust store**. |
+| `omni-config/omni-cluster-template.yaml` | The Talos cluster template: control plane + workers via `machineClass: available`, plus a `TrustedRootsConfig` patch with the lab CA. |
+| `talos-schematic-job.yaml` | `Job` that builds the Talos image the x86 machines PXE boot (lab CA + Omni join config embedded) and writes `boot.ipxe` for `ainur-netboot` to serve. |
+| `arda-bootstrap-job.yaml` | `Job` that installs Argo CD on the `talos-default` cluster once it is up, and points it at `src/manifests/arda`. |
+
+Both Jobs run `omnictl` as the `automation` service account, which Omni creates on its first start (`initialServiceAccount` in `values.yaml`) and whose key it writes to its own data volume. The Jobs mount that volume read-only, on Omni's node. Its key lasts a year, the most Omni allows; a cold rebuild makes a new one.
+
+The etcd encryption key from `gpg-generator.yaml` is only that, and never expires. It used to double as an `omnictl` user key, which Omni only accepts after a browser login and caps at a few hours.
 
 ## Bootstrap flow
 
@@ -25,48 +30,52 @@ Argo CD reconciles this Application after the cert-manager and trust-manager sta
 4. **`omni` multi-SAN Certificate** is materialised by cert-manager into `omni-tls` (covers `omni.kidd.network`, `omni.kubernetes.kidd.network`, `omni.siderolink.kidd.network`).
 5. **Omni Helm chart** deploys: one pod, three Ingresses sharing `omni-tls`, three Services (main h2c, k8s-proxy https, wireguard UDP NodePort).
 6. **Cluster-template sync Job** runs `omnictl cluster template sync` against the running Omni, substituting `${LAB_ROOT_CA_INDENTED}` with the contents of the lab CA before applying.
-7. Omni is ready to receive Talos machines.
+7. **Talos schematic Job** registers a schematic with the Image Factory and points `http://192.168.1.59/talos/boot.ipxe` at it.
+8. Omni is ready to receive Talos machines: power one on and it PXE boots straight into Omni, which allocates it to `talos-default`.
+9. **arda bootstrap Job** retries until `talos-default` is up, then installs Argo CD there with an `arda` root app for `src/manifests/arda`.
 
-## Verifying the install (smoke test before any Talos machines)
+## How the machines trust the lab CA
+
+This was the blocker on Omni v1.7.2: a machine could be made to trust the lab CA on its first boot, but Omni then installed Talos from a stock image, and the machine lost the CA and its SideroLink connection. Config patches could not help, because they only arrive after the machine has registered.
+
+The fix is to put the CA in the image itself. `talos-schematic-job.yaml` builds an [Image Factory](https://github.com/siderolabs/image-factory) schematic whose `embeddedMachineConfiguration` holds:
+
+- a `TrustedRootsConfig` with the lab CA, and
+- the SideroLink, event sink and log documents from `omnictl jointoken machine-config`.
+
+Since Omni 1.13, a machine's installer is built from the schematic it booted with, keeping every embedded document except the SideroLink ones Omni manages itself. So the CA is there from the first second of the first boot, and stays through install, reboots and upgrades.
+
+The x86 boot path, from `ainur-netboot`:
+
+```
+firmware PXE --(proxy-dhcp.yaml)--> ipxe.efi over TFTP from 192.168.1.59
+iPXE         --(proxy-dhcp.yaml)--> http://192.168.1.59/talos/boot.ipxe
+boot.ipxe    --> https://pxe.factory.talos.dev/pxe/<schematic>/<version>/metal-amd64
+```
+
+To go offline, run a self-hosted Image Factory (`siderolabs/image-factory:deploy/helm/image-factory`) and point both `registries.factories` in `values.yaml` and the URLs in `talos-schematic-job.yaml` at it.
+
+## Verifying
 
 ```bash
 # Pod, ingresses, certs healthy?
 kubectl -n ainur-sidero-omni get pods,ingress,certificate
 
-# Web UI reachable, OIDC issuer correct?
-curl -s https://omni.kidd.network/.well-known/openid-configuration | jq .
-
-# Cluster template registered?
+# Cluster template registered, schematic built?
 kubectl -n ainur-sidero-omni logs job/omni-cluster-template-sync | tail -20
+kubectl -n ainur-sidero-omni logs job/talos-schematic | tail -5
+curl -s http://192.168.1.59/talos/boot.ipxe
+
+# x86 machine asking for a boot file?
+kubectl -n ainur-netboot logs deploy/proxy-dhcp
 ```
 
-You should see the Omni pod `Running`, three Ingresses with the `omni-tls` secret, the `omni` Certificate `Ready: True`, and the cluster-template sync job `Complete`.
-
-## Verifying the TLS bootstrap problem is (or isn't) solved
-
-After Omni is up, generate a Talos image, boot one x86 machine, let it auto-allocate to the `talos-default` cluster. **Before the machine reboots into runtime mode**, check whether the cluster-template patch is making it into the rendered ClusterMachineConfig:
+Once a machine has joined and rebooted, it should still be connected in Omni. Its config should carry the CA:
 
 ```bash
-# Get the machine ID from Omni
-kubectl -n ainur-sidero-omni exec deploy/omni -- /omnictl get machines
-
-# Inspect what Omni will push to that machine
-kubectl -n ainur-sidero-omni exec deploy/omni -- \
-  /omnictl get clustermachineconfig <machine-id> -o yaml \
-  | yq 'select(.kind == "TrustedRootsConfig")'
+omnictl get machines
+omnictl get clustermachineconfig <machine-id> -o yaml | grep -c TrustedRootsConfig
 ```
-
-**Two outcomes:**
-
-- **TrustedRootsConfig is present** → the patch lands. If the machine still fails to reconnect after reboot, the bug is in Talos's boot-order (TrustedRootsConfig applied after siderolink dials) and the fallback is the [Image Factory schematic approach](../../../../BACKLOG.md#active-direction--talosomni-v2-chart-migration) (bake the CA into the Talos image's META partition at build time).
-- **TrustedRootsConfig is absent** → the cluster-template patch isn't surviving the patcher. Reshape the patch from a single-mapping `inline:` to a literal block scalar form and re-test.
-
-## What this chart deliberately does NOT do
-
-- It does not inject the lab CA into machine join configs. Omni v2 has no such mechanism (confirmed against the v1.7.2 source). The trust establishment for `siderolink.api` happens via:
-  - Kernel cmdline + image-time injection (first boot only)
-  - Cluster-template `TrustedRootsConfig` patch (persists across reboots, hopefully)
-- It does not host an Image Factory. If image-side trust baking becomes necessary, Image Factory has its own Helm chart at `siderolabs/image-factory:deploy/helm/image-factory` and can be deployed alongside.
 
 ## Files removed in the v1 → v2 migration
 

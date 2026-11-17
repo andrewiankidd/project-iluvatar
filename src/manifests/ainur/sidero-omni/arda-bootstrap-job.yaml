@@ -1,0 +1,94 @@
+# Gives arda (the talos-default cluster) its own Argo CD and points it at
+# src/manifests/arda, the way k3s's HelmCharts do for ainur.
+#
+# Fails until the cluster exists and is up; Argo CD re-creates the Job after
+# ttlSecondsAfterFinished, so it simply tries again later. Re-running it is
+# harmless.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: arda-bootstrap
+  namespace: ainur-sidero-omni
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: bootstrap
+          image: alpine/kubectl:1.37.1
+          env:
+            - name: OMNI_ENDPOINT
+              value: https://omni.kidd.network
+            - name: CLUSTER
+              value: talos-default
+            - name: ARGOCD_INSTALL_URL
+              value: https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.1/manifests/install.yaml
+            - name: OMNICTL_URL
+              value: https://github.com/siderolabs/omni/releases/download/v1.13.3/omnictl-linux-arm64
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              apk add --no-cache ca-certificates curl
+              cat /etc/omni/lab-root-ca.crt >> /etc/ssl/certs/ca-certificates.crt
+              curl -fsSL -L "$OMNICTL_URL" -o /usr/local/bin/omnictl
+              chmod +x /usr/local/bin/omnictl
+              export OMNI_SERVICE_ACCOUNT_KEY="$(cat /omni-data/automation.key)"
+
+              omnictl kubeconfig /tmp/kubeconfig --cluster "$CLUSTER" \
+                --service-account --user arda-bootstrap --force
+              export KUBECONFIG=/tmp/kubeconfig
+
+              kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+              kubectl apply -n argocd --server-side --force-conflicts -f "$ARGOCD_INSTALL_URL"
+              kubectl wait --for condition=established --timeout=120s \
+                crd/applications.argoproj.io
+
+              kubectl apply -f - <<EOF
+              apiVersion: argoproj.io/v1alpha1
+              kind: Application
+              metadata:
+                name: arda
+                namespace: argocd
+              spec:
+                project: default
+                source:
+                  repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+                  targetRevision: main
+                  path: src/manifests/arda
+                destination:
+                  server: https://kubernetes.default.svc
+                  namespace: argocd
+                syncPolicy:
+                  automated:
+                    prune: true
+                    selfHeal: true
+              EOF
+          volumeMounts:
+            - name: omni-data
+              mountPath: /omni-data
+              readOnly: true
+            - name: lab-root-ca
+              mountPath: /etc/omni/lab-root-ca.crt
+              subPath: ca.crt
+              readOnly: true
+      # For the automation key on Omni's ReadWriteOnce data volume, as in
+      # omni-cluster-template-sync-job.yaml.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omni
+              topologyKey: kubernetes.io/hostname
+      volumes:
+        - name: omni-data
+          persistentVolumeClaim:
+            claimName: omni
+            readOnly: true
+        - name: lab-root-ca
+          configMap:
+            name: lab-ca
