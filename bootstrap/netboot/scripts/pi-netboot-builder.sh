@@ -349,6 +349,17 @@ copy_assets() {
 }
 #endregion copy assets
 
+#region kernel args
+# The Pis' NVMe drives can hang in their deepest power-saving state under
+# sustained writes (a DRAM-less Patriot P320 dropped off the bus mid-write),
+# so keep them out of it. Added to the SD card image's cmdline here, and to
+# netboot's below.
+NVME_ARGS="nvme_core.default_ps_max_latency_us=0"
+if [ -f "$BOOT_EXPORT_DIRECTORY/cmdline.txt" ] && ! grep -q "$NVME_ARGS" "$BOOT_EXPORT_DIRECTORY/cmdline.txt"; then
+	sed -i "1s/\$/ $NVME_ARGS/" "$BOOT_EXPORT_DIRECTORY/cmdline.txt"
+fi
+#endregion kernel args
+
 #region sdcard
 if [[ "${COMPOSE_PROFILE,,}" == *sdcard* ]]; then
 	echo "COMPOSE_PROFILE contains 'sdcard'; syncing exports back into disk image."
@@ -480,7 +491,7 @@ if [[ "${COMPOSE_PROFILE,,}" == *netboot* ]]; then
 
 	echo "Patching '$BOOT_EXPORT_DIRECTORY/cmdline.txt'"
 	# Noisy boot for debugging
-	CMDLINE_CONTENTS="rd.debug selinux=0 dwc_otg.lpm_enable=0 console=tty1 elevator=deadline systemd.log_level=info systemd.show_status=1 systemd.log_target=console systemd.debug-shell=1"
+	CMDLINE_CONTENTS="rd.debug selinux=0 dwc_otg.lpm_enable=0 console=tty1 elevator=deadline systemd.log_level=info systemd.show_status=1 systemd.log_target=console systemd.debug-shell=1 $NVME_ARGS"
 
 	# remote root via NFS, RW by default
 	CMDLINE_CONTENTS="$CMDLINE_CONTENTS ip=dhcp root=/dev/nfs rootwait rootdelay=5 rw nfsroot=$BOOTSTRAP_IP_ADDRESS:/mnt/nfsshare/$IMG_FILENAME,v3,tcp,ro"
