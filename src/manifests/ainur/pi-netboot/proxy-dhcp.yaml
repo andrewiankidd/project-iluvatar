@@ -1,0 +1,48 @@
+# Proxy DHCP for the x86 (arda) machines. It hands out no addresses: the
+# router keeps doing DHCP, and this only adds the boot answer for x86 UEFI
+# PXE clients. The Pis do not need it; they find TFTP from their EEPROM.
+#
+#   firmware PXE  ->  ipxe.efi over TFTP from the VIP (tftp-deployment.yaml)
+#   iPXE          ->  http://192.168.1.59/talos/boot.ipxe (http-deployment.yaml)
+#                 ->  the Talos image with the lab CA baked in
+#                     (../sidero-omni/talos-schematic-job.yaml)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy-dhcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: netboot
+      component: proxy-dhcp
+  template:
+    metadata:
+      labels:
+        app: netboot
+        component: proxy-dhcp
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: dnsmasq
+          image: quay.io/poseidon/dnsmasq:v0.5.0-54-g6e263b7
+          args:
+            - --keep-in-foreground
+            - --log-facility=-
+            - --log-dhcp
+            - --port=0
+            - --dhcp-range=192.168.1.0,proxy,255.255.255.0
+            - --dhcp-userclass=set:ipxe,iPXE
+            - --pxe-service=tag:!ipxe,x86-64_EFI,Talos,ipxe.efi,192.168.1.59
+            - --pxe-service=tag:ipxe,x86-64_EFI,Talos,http://192.168.1.59/talos/boot.ipxe
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN, NET_BIND_SERVICE, NET_RAW]

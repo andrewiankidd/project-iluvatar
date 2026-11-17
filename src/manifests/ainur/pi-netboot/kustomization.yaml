@@ -12,3 +12,4 @@ resources:
   - http-ingress.yaml
   - builder-job.yaml
   - kube-vip.yaml
+  - proxy-dhcp.yaml

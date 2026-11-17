@@ -5,111 +5,80 @@ description: Delivering immutable nodes on demand
 draft: true
 ---
 
-Once DHCP and firmware are cooperating, Talos just needs three files and a machine configuration to come alive. This page shows how those pieces are assembled inside the bootstrap stack.
+The x86 machines boot Talos straight from the Pi cluster, with nothing on their disks and nothing to configure per machine. Power one on and it lands in Omni, already trusting the lab CA.
 
 ## Explanation
 
-Talos publishes a boot artefact bundle for every release:
+The hard part was never the PXE boot itself, it was trust. Omni sits behind the lab's self-signed CA, and a Talos machine has to trust that CA before it can dial SideroLink. Getting the CA onto a machine for its first boot was easy enough, but Omni then installed Talos from a stock image, the CA was gone, and the machine dropped off. Config patches can't fix that, because they only reach a machine once it has registered.
 
-- `metal-amd64.iso` (not used here, but handy for recovery)
-- `metal-amd64.raw.xz` (squashfs root image we serve over HTTP)
-- `vmlinuz-amd64` (kernel)
-- `initramfs-amd64.xz`
+So the CA goes into the image. The [Image Factory](https://github.com/siderolabs/image-factory) builds Talos images from a *schematic*, and a schematic can embed machine config. Ours embeds two things:
 
-We place the kernel/initramfs in TFTP for quick access and leave the heavier root image on HTTP. The iPXE script then loads the kernel, injects kernel parameters pointing at the Talos machine config endpoint, and hands off.
+- a `TrustedRootsConfig` holding the lab CA
+- Omni's join config (SideroLink, event sink and log documents)
+
+Omni 1.13 builds each machine's installer from the schematic it booted with, so the CA is there from the first boot through install, reboots and upgrades. No Let's Encrypt, nothing that needs the internet to vouch for us.
 
 ## Implementation
 
-### 1. Download and publish Talos artefacts
+Everything lives in the `ainur` cluster:
 
-From your workstation (or using the bootstrap automation pipeline):
+| Piece | File |
+|-------|------|
+| Builds the schematic, writes `boot.ipxe` | `src/manifests/ainur/sidero-omni/talos-schematic-job.yaml` |
+| Proxy DHCP, x86 UEFI clients only | `src/manifests/ainur/pi-netboot/proxy-dhcp.yaml` |
+| `ipxe.efi` over TFTP | `src/manifests/ainur/pi-netboot/tftp-deployment.yaml` |
+| `boot.ipxe` over HTTP | `src/manifests/ainur/pi-netboot/http-deployment.yaml` |
 
-```bash
-export TALOS_VERSION=v1.7.3
-cd bootstrap/netboot
+### 1. The schematic
 
-# download the release artefacts
-curl -LO https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/metal-amd64.raw.xz
-curl -LO https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/vmlinuz-amd64
-curl -LO https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/initramfs-amd64.xz
+Once Omni is up, the Job asks it for the join config (`omnictl jointoken machine-config`), puts the lab CA in front of it, and posts the result to the factory:
 
-# copy into the served volumes
-install -m 0644 vmlinuz-amd64 boot/talos/vmlinuz-amd64
-install -m 0644 initramfs-amd64.xz boot/talos/initramfs-amd64.xz
-install -m 0644 metal-amd64.raw.xz os/talos/${TALOS_VERSION}/metal-amd64.raw.xz
-
-# grab fresh iPXE binaries if you need them
-curl -Lo boot/talos/undionly.kpxe https://boot.ipxe.org/undionly.kpxe
-curl -Lo boot/talos/ipxe.efi https://boot.ipxe.org/ipxe.efi
+```yaml
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/intel-ucode
+      - siderolabs/iscsi-tools        # Longhorn
+      - siderolabs/util-linux-tools   # Longhorn
+  embeddedMachineConfiguration: |
+    apiVersion: v1alpha1
+    kind: TrustedRootsConfig
+    name: lab-root-ca
+    certificates: |
+      -----BEGIN CERTIFICATE-----
+      ...
+    ---
+    apiVersion: v1alpha1
+    kind: SideroLinkConfig
+    ...
 ```
 
-The docker-compose stack exposes `boot/` via TFTP and `os/` via HTTP (`http://192.168.1.66:8080/` by default).
+The factory answers with the schematic's ID, a hash of its content, so a new lab CA or join token simply gives a new ID.
 
-### 2. Generate machine configs
+### 2. The boot chain
 
-Talos machine configs are immutable YAML blobs. Generate them once, commit to Git, and expose over HTTPS (the bootstrap Pis run an `nginx` Deployment for this exact purpose).
+The router keeps handing out addresses. The proxy DHCP only adds a boot answer, and only for x86 UEFI PXE clients, so the Pis (which find TFTP from their EEPROM) are unaffected.
 
-```bash
-talosctl gen config iluvatar \
-  https://192.168.1.66:6443 \
-  --with-secrets \
-  --output docs/src/content/assets/talos \
-  --with-docs=false \
-  --install-disk /dev/nvme0n1
+```
+firmware PXE  ->  ipxe.efi over TFTP from the VIP, 192.168.1.59
+iPXE          ->  http://192.168.1.59/talos/boot.ipxe
+boot.ipxe     ->  chain https://pxe.factory.talos.dev/pxe/<schematic>/v1.14.6/metal-${buildarch}
 ```
 
-This produces `controlplane.yaml`, `worker.yaml`, and `talosconfig`. Commit them to the repository and have the bootstrap cluster serve them from, e.g., `https://bootstrap.iluvatar.lan/talos/controlplane.yaml`.
+### 3. Into Omni
 
-### 3. Write the iPXE script
+The machine boots in maintenance mode, dials SideroLink with the CA it already trusts, and registers. The cluster template allocates it to `talos-default`, Omni installs Talos from the same schematic, and after the reboot it reconnects on its own. Once the cluster is up, a Job installs Argo CD on it and points it at `src/manifests/arda`.
 
-Create `boot/talos/talos.ipxe`:
+## Going offline
 
-```bash
-#!ipxe
-
-set boot-url http://192.168.1.66:8080/talos
-kernel ${boot-url}/vmlinuz-amd64 initrd=initramfs-amd64.xz \
-  console=tty0 console=ttyS0,115200 \
-  talos.platform=metal \
-  talos.config=${boot-url}/machine-config/${mac:hexhyp}
-initrd ${boot-url}/initramfs-amd64.xz
-boot ||
-prompt --key 0x197e --timeout 2000 --label retry Boot failed, retrying...
-goto start
-```
-
-The `${mac:hexhyp}` trick lets each node request `machine-config/aa-bb-cc-dd-ee-ff`. Symlink or copy the appropriate control-plane/worker YAML into that directory to assign roles.
-
-Point dnsmasq at the script by adjusting the boot entry:
-
-```ini
-dhcp-boot=tag:efi,talos/ipxe.efi
-dhcp-boot=tag:!efi,talos/undionly.kpxe
-dhcp-option=option-209,http://192.168.1.66:8080/talos/talos.ipxe
-```
-
-With Option 209 in place, any iPXE binary that chainloads from firmware will immediately pull `talos.ipxe` over HTTP.
-
-### 4. Tell Talos where to find the control plane
-
-If you are doing an initial bootstrap, use:
-
-```bash
-talosctl --talosconfig talosconfig bootstrap
-```
-
-from a laptop once the first control-plane node is up. After that, Talos automatically points new workers at the Kubernetes API server defined inside the machine config.
-
-### 5. Automate with GitOps
-
-Store the Talos artefact version, iPXE script, and machine mappings in Git. Argo CD (running on the bootstrap Pis) syncs the ConfigMaps and hostPath volumes so any change—new Talos release, machine promoted to control plane, etc.—propagates automatically.
+For now the images come from the public factory. To cut that cord, run a self-hosted Image Factory (it has its own Helm chart, `siderolabs/image-factory:deploy/helm/image-factory`), then point `registries.factories` in Omni's values and the URLs in the schematic Job at it.
 
 ## Troubleshooting
 
-- **Stuck at PXE prompt?** Double-check dnsmasq logs; the firmware may be requesting IPv6 or the wrong architecture tag.
-- **Talos kernel boots but reboots instantly?** Verify the machine config URL resolves from inside the bootstrap VLAN and that the TLS certificate matches the hostname you embedded.
-- **Workers never join Kubernetes?** Make sure your control-plane machine configs use `type: controlplane` and that `talosctl gen config` was run with the correct API endpoint.
+- **No boot offer?** `kubectl -n ainur-netboot logs deploy/proxy-dhcp` shows every PXE request it sees. Make sure the machine is set to UEFI network boot.
+- **iPXE starts but finds no script?** `curl http://192.168.1.59/talos/boot.ipxe`. If it's missing, check `kubectl -n ainur-sidero-omni logs job/talos-schematic`.
+- **Machine never shows up in Omni?** Its console prints the SideroLink connection attempts. A TLS error there means it booted an image without the CA, usually a stale schematic.
 
 ## Next Steps
 
-With Talos nodes netbooting reliably, continue with [PXE Boot & Talos Install](/project-iluvatar/getting-started/bootstrap-arda/) for the high-level cluster bring-up, or move straight to [Deploy Core Workloads](/project-iluvatar/getting-started/deploy-core-workloads/).
+Continue with [PXE Boot & Talos Install](/project-iluvatar/getting-started/bootstrap-arda/) for the high-level cluster bring-up, or move straight to [Deploy Core Workloads](/project-iluvatar/getting-started/deploy-core-workloads/).

@@ -69,6 +69,10 @@ spec:
             - name: k3s-agent-token
               mountPath: /usr/share/nginx/html/k3s/k3s-agent-token
               readOnly: true
+            # /talos/boot.ipxe, written by sidero-omni's talos-schematic Job.
+            - name: talos-ipxe
+              mountPath: /usr/share/nginx/html/talos
+              readOnly: true
       volumes:
         - name: boot
           persistentVolumeClaim:
@@ -81,3 +85,7 @@ spec:
           hostPath:
             path: /tmp/k3s/k3s-agent-token
             type: File
+        - name: talos-ipxe
+          configMap:
+            name: talos-ipxe
+            optional: true
