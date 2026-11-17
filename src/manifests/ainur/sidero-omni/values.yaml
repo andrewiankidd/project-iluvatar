@@ -1,29 +1,12 @@
 # ---------------------------------------------------------------------------
-# Omni Helm chart values — for the v2 chart (siderolabs/omni @ v1.7.2)
+# Omni Helm chart values — v2 chart (siderolabs/omni @ v1.13.3)
 #
-# Migration note: this file replaces the previous v1-chart values.yaml.
-# The v1 chart is unmaintained and the v2 chart explicitly does not support
-# in-place upgrade. This is a fresh-install configuration.
+# Omni serves the Web UI, gRPC and the SideroLink API over h2c on one internal
+# port and demuxes by Content-Type; Traefik terminates TLS once per host.
 #
-# Architectural change that motivated this migration:
-#   omni in v2 serves the Web UI + gRPC + SideroLink API all over h2c on
-#   one internal port (8080) and one siderolink port (8090), and demuxes
-#   by Content-Type. The ingress terminates TLS once per host; Traefik talks
-#   h2c to the backend via the service annotation set by the chart default.
-#   The v1 "siderolink TLS on separate port with custom Traefik ServersTransport"
-#   dance is no longer needed.
-#
-# What this chart does NOT solve (and cannot):
-#   - Talos machines trusting the self-signed lab CA when connecting back to
-#     siderolink after their first reboot. Omni v2 has no first-class admin
-#     mechanism to inject a custom CA into machine join configs (confirmed by
-#     reading the source: every caller of RenderJoinConfig passes zero extra
-#     documents). The supported workaround is the TrustedRootsConfig patch
-#     in the cluster template (see omni-config/omni-cluster-template.yaml).
-#   - Image generation. Image Factory and the Talos image schematic live
-#     outside the chart. If the cluster-template patch turns out not to
-#     persist trust roots correctly across reboots, the fallback is to bake
-#     the lab CA into the Talos image at factory build time.
+# Machines trust the lab CA because it is baked into the Talos image they boot
+# (talos-schematic-job.yaml). Since Omni 1.13 a machine's installer is built
+# from the schematic it booted with, so the CA survives install and reboots.
 # ---------------------------------------------------------------------------
 
 fullnameOverride: omni
@@ -31,7 +14,7 @@ fullnameOverride: omni
 image:
   repository: ghcr.io/siderolabs/omni
   pullPolicy: IfNotPresent
-  tag: ""   # use chart appVersion (v1.7.2)
+  tag: ""   # use chart appVersion (v1.13.3)
 
 replicaCount: 1
 
@@ -159,6 +142,19 @@ extraObjects:
 # This block gets rendered into a Secret and mounted at /config/config.yaml.
 # The omni binary reads it via --config-path.
 config:
+  # Required since Omni 1.13: it does not start until the EULA is accepted.
+  eulaAccept:
+    name: Andrew Kidd
+    email: contact@andrewkidd.co.uk
+
+  # Where Talos images come from. The same URLs are in talos-schematic-job.yaml;
+  # point both at a self-hosted Image Factory to go offline.
+  registries:
+    factories:
+      primary:
+        url: https://factory.talos.dev
+        pxeURL: https://pxe.factory.talos.dev
+
   account:
     # UUID, must not change across the lifetime of the install.
     id: "8a6f8e9c-9d2a-4f8e-8c6e-9f01d3b7a4c1"
@@ -208,7 +204,16 @@ config:
     initialUsers:
       - admin@kidd.network
       - omni@local
-      - omni-sync@local
+
+    # What the Jobs here (template sync, Talos schematic) use omnictl as.
+    # Written on first start to the data volume, which they mount; a year
+    # is the longest Omni allows.
+    initialServiceAccount:
+      enabled: true
+      name: automation
+      role: Admin
+      keyPath: /data/automation.key
+      lifetime: 8760h
 
   etcdBackup:
     localPath: /data/etcd-backup

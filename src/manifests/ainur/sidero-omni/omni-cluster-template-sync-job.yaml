@@ -13,6 +13,8 @@ spec:
         - name: sync-template
           image: alpine:3.20
           env:
+            - name: OMNI_ENDPOINT
+              value: https://omni.kidd.network
             - name: REPO_URL
               value: https://github.com/andrewiankidd/project-iluvatar
             - name: REPO_REF
@@ -20,7 +22,7 @@ spec:
             - name: TEMPLATE_PATH
               value: src/manifests/ainur/sidero-omni/omni-config/omni-cluster-template.yaml
             - name: OMNICTL_URL
-              value: https://github.com/siderolabs/omni/releases/latest/download/omnictl-linux-arm64
+              value: https://github.com/siderolabs/omni/releases/download/v1.13.3/omnictl-linux-arm64
           command:
             - sh
             - -c
@@ -31,9 +33,7 @@ spec:
               cat /etc/omni/lab-root-ca.crt >> /etc/ssl/certs/ca-certificates.crt
               curl -fsSL -L "$OMNICTL_URL" -o /usr/local/bin/omnictl
               chmod +x /usr/local/bin/omnictl
-
-              mkdir -p /root/.talos/keys
-              cp /etc/omni/omni.asc /root/.talos/keys/default-omni-sync@local.pgp
+              export OMNI_SERVICE_ACCOUNT_KEY="$(cat /omni-data/automation.key)"
 
               workdir="$(mktemp -d)"
               cd "$workdir"
@@ -48,33 +48,31 @@ spec:
               LAB_ROOT_CA_INDENTED="$(sed 's/^/        /' /etc/omni/lab-root-ca.crt)"
               envsubst < "$TEMPLATE_PATH" > /tmp/omni-cluster-template.rendered.yaml
 
-              omnictl \
-                --omniconfig /etc/omnictl/omniconfig.yaml \
-                cluster template sync \
+              omnictl cluster template sync \
                 -f /tmp/omni-cluster-template.rendered.yaml
           volumeMounts:
-            - name: omnictl-config
-              mountPath: /etc/omnictl
+            - name: omni-data
+              mountPath: /omni-data
               readOnly: true
-            - name: omni-gpg
-              mountPath: /etc/omni/omni.asc
-              subPath: omni.asc
-              readOnly: true
-            - name: omnictl-keys
-              mountPath: /root/.talos/keys
             - name: lab-root-ca
               mountPath: /etc/omni/lab-root-ca.crt
               subPath: ca.crt
               readOnly: true
+      # Omni's data volume holds the automation service account key
+      # (values.yaml initialServiceAccount); it is ReadWriteOnce, so run on
+      # Omni's node.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omni
+              topologyKey: kubernetes.io/hostname
       volumes:
-        - name: omnictl-config
-          secret:
-            secretName: omnictl-config
-        - name: omni-gpg
-          secret:
-            secretName: omni-gpg
-        - name: omnictl-keys
-          emptyDir: {}
+        - name: omni-data
+          persistentVolumeClaim:
+            claimName: omni
+            readOnly: true
         - name: lab-root-ca
           configMap:
             name: lab-ca

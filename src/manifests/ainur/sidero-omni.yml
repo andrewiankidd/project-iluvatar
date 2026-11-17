@@ -11,10 +11,8 @@ spec:
   project: ainur
   sources:
     - repoURL: https://github.com/siderolabs/omni.git
-      # Pinned to the v1.7.2 release, which ships the v2 helm chart (chart
-      # version 2.7.2). The chart explicitly does not support upgrade from
-      # the legacy v1 chart — this is a fresh install.
-      targetRevision: v1.7.2
+      # The v1.13.3 release, which ships the v2 helm chart (chart 2.13.3).
+      targetRevision: v1.13.3
       path: deploy/helm/omni
       helm:
         valueFiles:

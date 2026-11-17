@@ -1,10 +1,13 @@
 kind: Cluster
 name: talos-default
 kubernetes:
-  version: v1.34.2
+  version: v1.37.1
 talos:
-  version: v1.11.5
+  # Keep in step with TALOS_VERSION in ../talos-schematic-job.yaml.
+  version: v1.14.6
 patches:
+  # Already in the image the machines boot (../talos-schematic-job.yaml);
+  # repeated here so it stays in every cluster member's config regardless.
   - name: lab-root-ca
     inline:
       apiVersion: v1alpha1
