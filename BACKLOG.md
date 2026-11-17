@@ -39,7 +39,8 @@ What changed:
 2. Both Jobs complete: `kubectl -n ainur-sidero-omni logs job/omni-cluster-template-sync`, `job/talos-schematic`. `curl http://192.168.1.59/talos/boot.ipxe` shows a schematic ID.
 3. One x86 machine on UEFI network boot. `kubectl -n ainur-netboot logs deploy/proxy-dhcp` shows its request. It should appear in Omni and be allocated to `talos-default`.
 4. **The real test**: after Omni installs and reboots it, it reconnects without intervention. Then power-cycle it, and it reconnects again.
-5. `arda-bootstrap` completes and arda's Argo CD shows the `arda` apps.
+5. `arda-bootstrap` completes and arda's Argo CD shows the `arda` apps, each with its Secret, and Longhorn with a disk on every node.
+6. A manual Longhorn backup lands in R2, and restores.
 
 ### Things that could still bite
 
@@ -50,27 +51,29 @@ What changed:
 
 ---
 
-## Tier 1 — Needed before arda is useful
+## Tier 1 — arda's foundations (built 2026-11-17, not yet run)
 
 ### Secrets without anything manual
 
-arda's apps read Secrets nothing creates yet: `cloudflared-tunnel`, `cloudflare-api-token` (twice), `minecraft-players`, `dragonwilds`, and soon the backup credentials. Each app's comment shows the `kubectl create secret`, which is exactly the manual step the project refuses.
-
-- **Proposal**: the gitignored `bootstrap/netboot/.env` is already the one local input. Put the secret values there, carry them into ainur as Secrets at bootstrap, and have `arda-bootstrap-job.yaml` (which already has arda's kubeconfig) copy each into its namespace on arda.
+- The `ARDA_*` values in the gitignored `bootstrap/netboot/.env` (see `.env.example`) → `pi-netboot-builder.sh` serves them at `/secrets/arda.env` → `arda-secrets.sh` in user-data makes ainur's `arda-secrets` Secret once k3s is ready → `arda-bootstrap-job.yaml` hands each arda app its Secret, hourly.
 - Not SOPS or Sealed Secrets: both mean encrypting by hand.
-- **Open question**: how the values get from the VM into ainur. The k3s agent token already travels over the bootstrap HTTP share, which is the precedent, but it is LAN-readable.
+- **Trade-off**: `/secrets/arda.env` is readable by anyone on the LAN while the bootstrap VM runs, as the k3s agent token already is. Fine under LAN trust.
+- **Watch**: a value changed in `.env` only reaches the clusters on the next bootstrap from the VM.
 
 ### arda storage
 
-- Talos has no storage class. The Minecraft values say `storageClass: longhorn # decide once arda's storage exists`, and Dragonwilds' PVC has none.
-- **Fix**: Longhorn on arda as an Argo app, plus a cluster-template patch for the kubelet mount (`/var/lib/longhorn`). The extensions it needs (`iscsi-tools`, `util-linux-tools`) are already in the schematic.
+- Longhorn 1.13.0 on arda (`src/manifests/arda/longhorn.yml`), the default storage class, on each node's SATA SSD: a Talos `UserVolumeConfig` at `/var/mnt/longhorn` plus the kubelet mount, both cluster-template patches.
+- **Watch**: the disk selector is `disk.transport == "sata" && !system_disk`. A node without that SSD gets no Longhorn disk.
 
 ### Backups
 
-- Longhorn volumes have replication but no backup. Losing a volume means losing a world.
-- **Fix**: Longhorn's own recurring backups to an S3-compatible target, **Cloudflare R2** (free up to 10 GB). No Velero: Argo CD rebuilds every Kubernetes object, so only volume data needs backing up. Google Drive is not object storage and is out.
-- Depends on arda storage and on the secrets item (R2 keys).
+- Longhorn's own nightly backups (`longhorn/recurring-jobs.yaml`, two weeks kept) to **Cloudflare R2**, bucket `arda-backups`. No Velero: Argo CD rebuilds every Kubernetes object, so only volume data needs backing up.
+- **One-off, in Cloudflare**: make the `arda-backups` bucket and an R2 API token for it, then put its keys and endpoint in `.env` as `ARDA_BACKUP_*`.
 - **Then**: a DR drill. Nuke everything, rebuild from `start.sh` plus a restore, write down what broke.
+
+### Off the stopgap
+
+- `arda-local` runs Minecraft and Dragonwilds on a workstation until arda is up. Moving them means restoring each world into its Longhorn volume on arda, then retiring the stopgap. Never run both: they share the tunnel and the DNS records.
 
 ---
 
@@ -79,7 +82,7 @@ arda's apps read Secrets nothing creates yet: `cloudflared-tunnel`, `cloudflare-
 ### Dex secrets in the public repo
 
 - The Dex admin password is `bcrypt(ubuntu)` and the shared OIDC client secret is `dex-oidc-secret`, both in the repo.
-- **Accepted for now**: this is still dev. Rotate them once the whole loop is proven, through the same mechanism as the Tier 1 secrets, so they never land in git again.
+- **Accepted for now**: this is still dev. Rotate them once the whole loop is proven, through `.env` like the arda secrets, so they never land in git again.
 
 ### Renovate Bot
 
