@@ -132,27 +132,15 @@ else
     exit 1
 fi
 
-# Set the default bridged network for created VMs (always bridged like original)
-# Use robust parsing to handle names with spaces
-if multipass_cmd networks --format csv >/dev/null 2>&1; then
-    NETWORK_NAME=$(multipass_cmd networks --format csv | tail -n +2 | head -n 1 | cut -d, -f1)
-else
-    NETWORK_NAME=$(multipass_cmd networks | awk 'NR==2{print; exit}' | sed -E 's/  +.*$//')
+# The network the VM bridges onto, which must be the Pis' LAN: VM_NETWORK from
+# .env, else the first wired one. Multipass's own default is left alone, since
+# changing it restarts the daemon and suspends every other VM.
+NETWORK_NAME="${VM_NETWORK:-$(multipass_cmd networks --format csv | awk -F, '$2=="ethernet" {print $1; exit}')}"
+if [ -z "$NETWORK_NAME" ]; then
+    echo "No wired network found; set VM_NETWORK in .env (see 'multipass networks')."
+    exit 1
 fi
-
-# Only update if different to avoid bouncing the daemon unnecessarily (Windows)
-CURRENT_BRIDGED_RAW=$(multipass_cmd get local.bridged-network 2>/dev/null | tail -n1)
-CURRENT_BRIDGED="${CURRENT_BRIDGED_RAW#*=}"
-
-if [[ "$CURRENT_BRIDGED" != "$NETWORK_NAME" ]]; then
-    echo "Setting default bridged network to '$NETWORK_NAME' (was '${CURRENT_BRIDGED:-unset}')..."
-    if ! multipass_cmd set local.bridged-network="$NETWORK_NAME"; then
-        echo "Failed to set bridged network."
-        exit 1
-    fi
-else
-    echo "Default bridged network already '$NETWORK_NAME'; skipping."
-fi
+echo "Bridging onto '$NETWORK_NAME'"
 MAC_ADDRESS=${MAC_ADDRESS:-"52:54:00:4b:ab:cd"}
 
 # check if we need to create vm
@@ -185,7 +173,7 @@ if [ "$VM_EXISTS" = false ] || [ "$VM_REBUILD" = true ]; then
       CLOUD_INIT_ARG="$CLOUD_INIT_FILE"
     fi
     cat "$CLOUD_INIT_FILE"
-    multipass_cmd launch $VM_OS --name $VM_NAME --cpus $VM_CPUS --memory $VM_MEMORY --disk $VM_DISK --network name=$NETWORK_NAME,mode=manual,mac="$MAC_ADDRESS" --cloud-init "$CLOUD_INIT_ARG"
+    multipass_cmd launch $VM_OS --name $VM_NAME --cpus $VM_CPUS --memory $VM_MEMORY --disk $VM_DISK --network "name=$NETWORK_NAME,mode=manual,mac=$MAC_ADDRESS" --cloud-init "$CLOUD_INIT_ARG"
     if [ $? -ne 0 ]; then
         echo "Failed to create VM. Please ensure Multipass is installed and running."
         exit 1
