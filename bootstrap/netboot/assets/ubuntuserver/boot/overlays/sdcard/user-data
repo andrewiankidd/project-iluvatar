@@ -20,7 +20,10 @@ write_files:
       #!/bin/bash
       set -euo pipefail
       echo "[prepare] ensuring tmpfs mounts and fstab entries"
-      mkdir -p /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs /var/lib/rancher/k3s/agent/containerd/tmpmounts /var/lib/kubelet/pods /var/log
+      # Images (unpacked, downloaded, and containerd's index of them) in RAM, so
+      # pulling them never competes with etcd for the card. Needs the native
+      # overlayfs snapshotter, below.
+      mkdir -p /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs /var/lib/rancher/k3s/agent/containerd/io.containerd.content.v1.content /var/lib/rancher/k3s/agent/containerd/io.containerd.metadata.v1.bolt /var/lib/rancher/k3s/agent/containerd/tmpmounts /var/lib/kubelet/pods /var/log
       add_fstab_once() {
         local line="$1"
         local mountpoint="$2"
@@ -28,7 +31,9 @@ write_files:
           echo "$line" >> /etc/fstab
         fi
       }
-      add_fstab_once 'tmpfs /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs tmpfs defaults,size=20% 0 0' '/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs'
+      add_fstab_once 'tmpfs /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs tmpfs defaults,size=40% 0 0' '/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs'
+      add_fstab_once 'tmpfs /var/lib/rancher/k3s/agent/containerd/io.containerd.content.v1.content tmpfs defaults,size=15% 0 0' '/var/lib/rancher/k3s/agent/containerd/io.containerd.content.v1.content'
+      add_fstab_once 'tmpfs /var/lib/rancher/k3s/agent/containerd/io.containerd.metadata.v1.bolt tmpfs defaults,size=1% 0 0' '/var/lib/rancher/k3s/agent/containerd/io.containerd.metadata.v1.bolt'
       add_fstab_once 'tmpfs /var/lib/rancher/k3s/agent/containerd/tmpmounts tmpfs defaults,size=5% 0 0' '/var/lib/rancher/k3s/agent/containerd/tmpmounts'
       add_fstab_once 'tmpfs /var/lib/kubelet/pods tmpfs defaults,size=20% 0 0' '/var/lib/kubelet/pods'
       add_fstab_once 'tmpfs /var/log tmpfs defaults,size=5% 0 0' '/var/log'
@@ -44,9 +49,11 @@ write_files:
       echo "[args] staging netboot-specific K3S_* argument overlays"
       ARGS_DIR="/run/k3s-bootstrap"
       mkdir -p "$ARGS_DIR"
-      # Common args suited for netboot/ephemeral filesystems
+      # Common args suited for ephemeral filesystems. The root here is plain
+      # ext4, so containerd's native overlayfs snapshotter works and puts images
+      # in the RAM disk above; netboot needs fuse-overlayfs, the SD card does not.
       cat >"$ARGS_DIR/K3S_COMMON_ARGS" <<'EOF'
-      --snapshotter=fuse-overlayfs --kubelet-arg=eviction-hard=nodefs.available<0%,imagefs.available<0%,containerfs.available<0% --kubelet-arg=image-gc-high-threshold=70 --kubelet-arg=image-gc-low-threshold=50 --kubelet-arg=eviction-pressure-transition-period=5m --kubelet-arg=serialize-image-pulls=true --kubelet-arg=container-log-max-size=5Mi --kubelet-arg=container-log-max-files=2
+      --kubelet-arg=eviction-hard=nodefs.available<0%,imagefs.available<0%,containerfs.available<0% --kubelet-arg=image-gc-high-threshold=70 --kubelet-arg=image-gc-low-threshold=50 --kubelet-arg=eviction-pressure-transition-period=5m --kubelet-arg=serialize-image-pulls=true --kubelet-arg=container-log-max-size=5Mi --kubelet-arg=container-log-max-files=2
       EOF
 
 final_message: "Cloud-init for valar-0 complete. k3s installed with sdcard runtime."

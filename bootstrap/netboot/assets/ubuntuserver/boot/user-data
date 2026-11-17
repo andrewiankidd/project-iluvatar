@@ -564,19 +564,19 @@ write_files:
       ---
       apiVersion: helm.cattle.io/v1
       kind: HelmChart
-        metadata:
-          name: trust-manager
-          namespace: kube-system
-        spec:
-          chart: trust-manager
-          repo: https://charts.jetstack.io
-          targetNamespace: cert-manager
-          createNamespace: true
-          valuesContent: |
-            secretTargets:
-              enabled: true
-              authorizedSecrets:
-                - lab-ca-secret
+      metadata:
+        name: trust-manager
+        namespace: kube-system
+      spec:
+        chart: trust-manager
+        repo: https://charts.jetstack.io
+        targetNamespace: cert-manager
+        createNamespace: true
+        valuesContent: |
+          secretTargets:
+            enabled: true
+            authorizedSecrets:
+              - lab-ca-secret
 
   - path: /etc/k3s-manifests/03-clusterissuer-local-ca.yaml
     permissions: '0644'
@@ -916,6 +916,9 @@ write_files:
       [Service]
       Type=oneshot
       ExecStart=/bin/sh -c 'systemctl start k3s-manifests-install.service tls-bootstrap.service arda-secrets.service || true'
+      # Stay active once run: k3s-ready.path re-fires whenever this unit is
+      # inactive and its paths exist, so without it the dispatch loops forever.
+      RemainAfterExit=yes
 
       [Install]
       WantedBy=multi-user.target
