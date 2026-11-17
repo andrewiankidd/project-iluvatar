@@ -31,13 +31,16 @@ if ! curl -sf --connect-timeout 3 --max-time 5 -o /dev/null "http://$BOOTSTRAP_I
   exit 1
 fi
 
-# On the Pi: wipe the SD card's partition table if it booted from it, so the
-# firmware moves on to netboot, then reboot.
+# On the Pi: if it booted from its SD card, zero the card's partition table
+# and the start of its boot partition, so the firmware finds nothing to boot
+# and moves on to netboot, then reboot. wipefs is not enough: it clears only
+# the MBR signature, which the firmware ignores, and the Pi boots a kernel
+# that then can't find its root partition.
 remote='
 if findmnt -no SOURCE / | grep -q "^/dev/mmcblk0"; then
   echo "booted from its SD card; wiping it so it netboots the new image"
   sync
-  wipefs -af /dev/mmcblk0 >/dev/null
+  dd if=/dev/zero of=/dev/mmcblk0 bs=1M count=8 conv=fsync status=none
 fi
 echo "rebooting"
 systemctl reboot

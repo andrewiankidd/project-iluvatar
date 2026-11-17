@@ -17,7 +17,7 @@ When a netbooted Pi finds an SD card, `sd-flash.sh` (in the netboot [user-data o
 
 That's the point: it's the node that can come up on its own, with nothing else on the network. But it also means it keeps the build it was flashed with, forever, and the rest of the cluster bootstraps around an old revision.
 
-The fix is to make the card unbootable. With no partition table the firmware moves on to netboot, `sd-flash.sh` sees a card that doesn't match the current image, flashes it, and the Pi reboots onto the new build.
+The fix is to make the card unbootable. Zero its partition table and the start of its boot partition, and the firmware moves on to netboot, `sd-flash.sh` sees a card that doesn't match the current image, flashes it, and the Pi reboots onto the new build.
 
 ## Doing it
 
@@ -31,7 +31,11 @@ The fix is to make the card unbootable. With no partition table the firmware mov
     ./bootstrap/netboot/rebootstrap.sh 192.168.1.50
     ```
 
-For each Pi it SSHes in, and if `/` is on the SD card, runs `wipefs` on the card. Then it reboots. The SD card Pi reboots twice: once into netboot to be flashed, then onto the card.
+For each Pi it SSHes in, and if `/` is on the SD card, zeroes the card's first 8 MiB. Then it reboots.
+
+:::note
+`wipefs` is not enough. It only clears the partition table's two-byte signature, which the Pi firmware ignores: the Pi boots the kernel from the card anyway, and Linux, which does check the signature, can't find its root partition and stops in the initramfs.
+::: The SD card Pi reboots twice: once into netboot to be flashed, then onto the card.
 
 The Pis are `192.168.1.50`-`52` with the `ubuntu` user from user-data unless `.env` says otherwise (`PI_HOSTS`, `PI_USER`, `PI_PASSWORD`; see `.env.example`). `ssh` and `sshpass` run in a throwaway container, so Docker is all it needs.
 
@@ -45,8 +49,8 @@ If the script can't help (no Docker, no VM), it's the same three commands on the
 
 ```bash
 findmnt -no SOURCE /            # /dev/mmcblk0p2 means it booted from the card
-sudo wipefs -af /dev/mmcblk0    # no partition table, no SD boot
-sudo reboot
+sudo dd if=/dev/zero of=/dev/mmcblk0 bs=1M count=8 conv=fsync   # no partition table, no boot partition
+sudo reboot -f
 ```
 
 Something still has to be serving netboot when it comes back, so start the VM first either way.
