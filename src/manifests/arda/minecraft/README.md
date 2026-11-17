@@ -84,6 +84,7 @@ Not defined in this repo for arda yet:
 4. Delete the hand-made `creative.minecraft.kidd.network` record in Cloudflare.
    external-dns does not overwrite records it does not own.
 
-The whitelist (`WHITELIST` in `common/values.yaml`) is by UUID; a Bedrock
+Who may join (survival) and who may build (creative) are UUIDs in the
+`minecraft-players` Secret (see `minecraft.yml`), not in this repo. A Bedrock
 player's is Floodgate's, from the "not whitelisted" log line or
 `fwhitelist add <gamertag>`.

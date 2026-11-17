@@ -131,11 +131,18 @@ initContainers:
         mkdir -p "$d"
         echo "$NPCS" | base64 -d > "$d/npcs.yml"
         echo "$PROTECTION" | base64 -d > "$d/protection.yml"
+        { echo "builders:"; echo "$BUILDERS" | tr ',' '\n' | sed '/^$/d; s/^/  - /'; } > "$d/builders.yml"
     env:
       - name: NPCS
         value: '{{ .Values.npcs | toJson | b64enc }}'
       - name: PROTECTION
         value: '{{ .Values.protection | toJson | b64enc }}'
+      - name: BUILDERS
+        valueFrom:
+          secretKeyRef:
+            name: minecraft-players
+            key: builders
+            optional: true
     volumeMounts:
       - name: datadir
         mountPath: /data
@@ -211,13 +218,13 @@ extraEnv:
   # player's UUID is Floodgate's (00000000-0000-0000-0009-<XUID in hex>): it
   # is in the "not whitelisted" log line, or `fwhitelist add <gamertag>`.
   OVERRIDE_WHITELIST: "true"
-  # Comma-separated with no spaces (the image reads it as one argument), in
-  # order: the owner, two players, and the owner on Bedrock.
-  WHITELIST: "\
-    <uuid>,\
-    <uuid>,\
-    <uuid>,\
-    <uuid>"
+  # Comma-separated with no spaces, from the minecraft-players Secret
+  # (minecraft.yml) so who plays stays out of this public repo.
+  WHITELIST:
+    valueFrom:
+      secretKeyRef:
+        name: minecraft-players
+        key: whitelist
 
 persistence:
   annotations:

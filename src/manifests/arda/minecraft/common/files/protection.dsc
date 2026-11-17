@@ -26,6 +26,14 @@ protection_apply:
   - define members <yaml[protection].read[members].if_null[<list>]>
   - define flags <yaml[protection].read[flags].if_null[<map>]>
   - yaml unload id:protection
+  # Plus the builders from the minecraft-players Secret, written by the same
+  # init container to builders.yml.
+  - if <util.has_file[data/builders.yml]>:
+    - if <yaml.list.contains[builders]>:
+      - yaml unload id:builders
+    - ~yaml load:data/builders.yml id:builders
+    - define members <[members].include[<yaml[builders].read[builders].if_null[<list>]>]>
+    - yaml unload id:builders
   - foreach <[worlds]> as:world:
     - execute as_server "rg removemember -w <[world]> -a __global__"
     - if <[members].any>:

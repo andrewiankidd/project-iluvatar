@@ -36,7 +36,10 @@ spec:
             # menu: can ban and unban anyone. The server refuses to start
             # without one.
             - name: OWNER_ID
-              value: <player id>   # the owner
+              valueFrom:
+                secretKeyRef:
+                  name: dragonwilds
+                  key: owner-id
             - name: SERVER_NAME
               value: KiddCo Dragonwilds
             # Only for a new world; a .sav in the volume is used as it is.

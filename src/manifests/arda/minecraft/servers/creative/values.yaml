@@ -16,14 +16,12 @@ extraEnv:
   WHITELIST: ""
 
 # WorldGuard's __global__ region in each world, set on every start
-# (common/files/protection.dsc). Members build; everyone else may only use
-# doors, buttons, levers, gates and pressure plates. A region inside a world
-# keeps its own members and flags. A flag set to "unset" is cleared.
+# (common/files/protection.dsc). The builders in the minecraft-players Secret
+# build; everyone else may only use doors, buttons, levers, gates and pressure
+# plates. A region inside a world keeps its own members and flags. A flag set
+# to "unset" is cleared.
 protection:
   worlds: [world, world_nether, world_the_end]
-  members:
-    - <uuid>   # the owner
-    - <uuid>   # the owner on Bedrock
   flags:
     passthrough: deny   # non-members: no building, chests or other use...
     use: allow          # ...except doors, buttons, levers and the like
