@@ -1,0 +1,14 @@
+# Every volume is in the default group, so every volume is backed up to R2
+# each night, keeping two weeks.
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: backup-daily
+  namespace: longhorn-system
+spec:
+  task: backup
+  cron: "0 4 * * *"
+  retain: 14
+  concurrency: 2
+  groups:
+    - default

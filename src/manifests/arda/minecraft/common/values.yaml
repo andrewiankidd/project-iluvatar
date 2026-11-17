@@ -233,7 +233,8 @@ persistence:
   dataDir:
     enabled: true
     Size: 20Gi
-    # storageClass: longhorn   # decide once arda's storage exists
+    # The cluster's default class: Longhorn on arda (../../longhorn.yml),
+    # backed up nightly to R2.
 
 # NPCs, declared per server in its values.yaml (see servers/creative/values.yaml
 # and common/files/npcs.dsc). None by default.

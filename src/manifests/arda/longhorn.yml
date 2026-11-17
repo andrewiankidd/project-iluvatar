@@ -1,0 +1,45 @@
+# Longhorn on arda: the default storage class, on each node's SATA SSD (a
+# Talos user volume at /var/mnt/longhorn, from the cluster template in
+# src/manifests/ainur/sidero-omni/omni-config), backed up daily to Cloudflare
+# R2 (longhorn/recurring-jobs.yaml).
+#
+# Reads the r2-backup Secret, which arda-bootstrap-job.yaml makes from the
+# ARDA_BACKUP_* values in the bootstrap VM's .env. The arda-backups bucket is
+# made in Cloudflare with the R2 token.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: longhorn
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://charts.longhorn.io
+      chart: longhorn
+      targetRevision: 1.13.0
+      helm:
+        valueFiles:
+          - $values/src/manifests/arda/longhorn/values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      path: src/manifests/arda/longhorn
+      directory:
+        include: recurring-jobs.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: longhorn-system
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Talos enforces the baseline Pod Security standard; Longhorn needs more.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+    automated:
+      prune: true
+      selfHeal: true

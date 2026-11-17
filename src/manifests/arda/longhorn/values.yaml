@@ -1,0 +1,18 @@
+# Longhorn chart 1.13.0 on arda (../longhorn.yml).
+
+defaultSettings:
+  defaultDataPath: /var/mnt/longhorn
+  defaultReplicaCount: "3"
+  replicaAutoBalance: best-effort
+
+# R2 speaks S3; "auto" is its only region.
+defaultBackupStore:
+  backupTarget: s3://arda-backups@auto/
+  backupTargetCredentialSecret: r2-backup
+
+persistence:
+  defaultClass: true
+  defaultClassReplicaCount: 3
+
+preUpgradeChecker:
+  jobEnabled: false
