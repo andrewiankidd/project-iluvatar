@@ -3,6 +3,9 @@ kind: Job
 metadata:
   name: omni-cluster-template-sync
   namespace: ainur-sidero-omni
+  # A changed Job spec cannot be patched; recreate it instead.
+  annotations:
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
 spec:
   backoffLimit: 3
   ttlSecondsAfterFinished: 3600
@@ -45,7 +48,7 @@ spec:
               git checkout -q FETCH_HEAD
 
               export LAB_ROOT_CA_INDENTED
-              LAB_ROOT_CA_INDENTED="$(sed 's/^/        /' /etc/omni/lab-root-ca.crt)"
+              LAB_ROOT_CA_INDENTED="$(sed '2,$s/^/        /' /etc/omni/lab-root-ca.crt)"
               envsubst < "$CONFIG_PATH/omni-cluster-template.yaml" > /tmp/omni-cluster-template.rendered.yaml
 
               omnictl apply -f "$CONFIG_PATH/machine-class.yaml"

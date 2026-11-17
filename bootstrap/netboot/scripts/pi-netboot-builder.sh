@@ -292,7 +292,9 @@ if [ -n "$CLEAN_BOOT_FILES" ]; then
 	echo "Warning: CLEAN_BOOT_FILES is set. Syncing boot export with --delete."
 fi
 echo "Copying boot files to '$BOOT_EXPORT_DIRECTORY'"
-rsync -xar --inplace --delete --progress "$BOOT_MOUNT_PATH"/ "$BOOT_EXPORT_DIRECTORY"/
+# In the cluster, bootstrap-http mounts k3s/, talos/ and talos-media/ into this
+# export; deleting their mountpoints here unmounts them from the live server.
+rsync -xar --inplace --delete --progress --exclude=/k3s --exclude=/talos --exclude=/talos-media "$BOOT_MOUNT_PATH"/ "$BOOT_EXPORT_DIRECTORY"/
 
 # copy OS files from mountpoint to export directory
 if [ -n "$CLEAN_OS_FILES" ]; then

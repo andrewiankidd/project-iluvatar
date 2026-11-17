@@ -61,8 +61,8 @@ The router keeps handing out addresses. The proxy DHCP only adds a boot answer, 
 
 ```
 firmware PXE  ->  ipxe.efi over TFTP from the VIP, 192.168.1.59
-iPXE          ->  http://192.168.1.59/talos/boot.ipxe
-boot.ipxe     ->  chain https://pxe.factory.talos.dev/pxe/<schematic>/v1.14.6/metal-${buildarch}
+iPXE          ->  http://bootstrap.kidd.network/talos/boot.ipxe
+boot.ipxe     ->  chain https://pxe.factory.talos.dev/pxe/<schematic>/v1.14.5/metal-${buildarch}
 ```
 
 ### 3. Into Omni
@@ -76,7 +76,7 @@ For now the images come from the public factory. To cut that cord, run a self-ho
 ## Troubleshooting
 
 - **No boot offer?** `kubectl -n ainur-netboot logs deploy/proxy-dhcp` shows every PXE request it sees. Make sure the machine is set to UEFI network boot.
-- **iPXE starts but finds no script?** `curl http://192.168.1.59/talos/boot.ipxe`. If it's missing, check `kubectl -n ainur-sidero-omni logs job/talos-schematic`.
+- **iPXE starts but finds no script?** `curl http://bootstrap.kidd.network/talos/boot.ipxe`. If it's missing, check `kubectl -n ainur-sidero-omni logs job/talos-schematic`.
 - **Machine never shows up in Omni?** Its console prints the SideroLink connection attempts. A TLS error there means it booted an image without the CA, usually a stale schematic.
 
 ## Next Steps

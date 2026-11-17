@@ -31,7 +31,7 @@ Argo CD reconciles this Application after the cert-manager and trust-manager sta
 4. **`omni` multi-SAN Certificate** is materialised by cert-manager into `omni-tls` (covers `omni.kidd.network`, `omni.kubernetes.kidd.network`, `omni.siderolink.kidd.network`).
 5. **Omni Helm chart** deploys: one pod, three Ingresses sharing `omni-tls`, three Services (main h2c, k8s-proxy https, wireguard UDP NodePort).
 6. **Cluster-template sync Job** applies the machine class and runs `omnictl cluster template sync` against the running Omni, substituting `${LAB_ROOT_CA_INDENTED}` with the contents of the lab CA before applying.
-7. **Talos schematic Job** registers a schematic with the Image Factory and points `http://192.168.1.59/talos/boot.ipxe` at it. `ainur-netboot`'s `talos-iso` Job then caches the same image as `http://192.168.1.59/talos-media/metal-amd64.iso`.
+7. **Talos schematic Job** registers a schematic with the Image Factory and points `http://bootstrap.kidd.network/talos/boot.ipxe` at it. `ainur-netboot`'s `talos-iso` Job then caches the same image as `http://bootstrap.kidd.network/talos-media/metal-amd64.iso`.
 8. Omni is ready to receive Talos machines: power one on, from the network or a USB stick, and it boots straight into Omni, which allocates it to `talos-default`.
 9. **arda bootstrap Job** retries until `talos-default` is up, then installs Argo CD there with an `arda` root app for `src/manifests/arda`.
 
@@ -50,11 +50,11 @@ The x86 boot path, from `ainur-netboot`:
 
 ```
 firmware PXE --(proxy-dhcp.yaml)--> ipxe.efi over TFTP from 192.168.1.59
-iPXE         --(proxy-dhcp.yaml)--> http://192.168.1.59/talos/boot.ipxe
+iPXE         --(proxy-dhcp.yaml)--> http://bootstrap.kidd.network/talos/boot.ipxe
 boot.ipxe    --> https://pxe.factory.talos.dev/pxe/<schematic>/<version>/metal-amd64
 ```
 
-Or from USB: write `http://192.168.1.59/talos-media/metal-amd64.iso` to a stick. It is the same schematic, so the CA and join config are in it too. Omni's own "download installation media" is not: it lacks the CA. A new lab CA or join token gives a new ISO, and the old stick stops working.
+Or from USB: write `http://bootstrap.kidd.network/talos-media/metal-amd64.iso` to a stick. It is the same schematic, so the CA and join config are in it too. Omni's own "download installation media" is not: it lacks the CA. A new lab CA or join token gives a new ISO, and the old stick stops working.
 
 To go offline, run a self-hosted Image Factory (`siderolabs/image-factory:deploy/helm/image-factory`) and point both `registries.factories` in `values.yaml` and the URLs in `talos-schematic-job.yaml` at it.
 
@@ -67,8 +67,8 @@ kubectl -n ainur-sidero-omni get pods,ingress,certificate
 # Cluster template registered, schematic built?
 kubectl -n ainur-sidero-omni logs job/omni-cluster-template-sync | tail -20
 kubectl -n ainur-sidero-omni logs job/talos-schematic | tail -5
-curl -s http://192.168.1.59/talos/boot.ipxe
-curl -sI http://192.168.1.59/talos-media/metal-amd64.iso
+curl -s http://bootstrap.kidd.network/talos/boot.ipxe
+curl -sI http://bootstrap.kidd.network/talos-media/metal-amd64.iso
 
 # x86 machine asking for a boot file?
 kubectl -n ainur-netboot logs deploy/proxy-dhcp

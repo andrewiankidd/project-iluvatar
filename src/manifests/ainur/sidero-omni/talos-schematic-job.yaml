@@ -42,6 +42,9 @@ kind: Job
 metadata:
   name: talos-schematic
   namespace: ainur-sidero-omni
+  # A changed Job spec cannot be patched; recreate it instead.
+  annotations:
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
 spec:
   backoffLimit: 3
   ttlSecondsAfterFinished: 3600
@@ -57,7 +60,7 @@ spec:
               value: https://omni.kidd.network
             # Keep in step with omni-config/omni-cluster-template.yaml.
             - name: TALOS_VERSION
-              value: v1.14.6
+              value: v1.14.5
             # The same factory as registries.factories in values.yaml.
             - name: FACTORY_URL
               value: https://factory.talos.dev
