@@ -1,0 +1,51 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: homepage
+  namespace: ainur-homepage
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+    cert-manager.io/cluster-issuer: "local-ca"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - homepage.kidd.network
+      secretName: homepage-tls
+  rules:
+    - host: homepage.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: homepage
+                port:
+                  number: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: homepage-public
+  namespace: ainur-homepage
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+    cert-manager.io/cluster-issuer: "local-ca"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - lab.kidd.network
+      secretName: homepage-public-tls
+  rules:
+    - host: lab.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: homepage-public
+                port:
+                  number: 3000

@@ -31,7 +31,7 @@ write_files:
           echo "$line" >> /etc/fstab
         fi
       }
-      add_fstab_once 'tmpfs /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs tmpfs defaults,size=40% 0 0' '/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs'
+      add_fstab_once 'tmpfs /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs tmpfs defaults,size=50% 0 0' '/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs'
       add_fstab_once 'tmpfs /var/lib/rancher/k3s/agent/containerd/io.containerd.content.v1.content tmpfs defaults,size=15% 0 0' '/var/lib/rancher/k3s/agent/containerd/io.containerd.content.v1.content'
       add_fstab_once 'tmpfs /var/lib/rancher/k3s/agent/containerd/io.containerd.metadata.v1.bolt tmpfs defaults,size=1% 0 0' '/var/lib/rancher/k3s/agent/containerd/io.containerd.metadata.v1.bolt'
       add_fstab_once 'tmpfs /var/lib/rancher/k3s/agent/containerd/tmpmounts tmpfs defaults,size=5% 0 0' '/var/lib/rancher/k3s/agent/containerd/tmpmounts'

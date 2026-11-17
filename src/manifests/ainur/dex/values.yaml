@@ -22,6 +22,11 @@ config:
       secret: dex-oidc-secret
       redirectURIs:
         - https://argocd.kidd.network/auth/callback
+    - id: homepage
+      name: homepage
+      secret: dex-oidc-secret
+      redirectURIs:
+        - https://homepage.kidd.network/api/auth/callback/homepage-oidc
     - id: omni
       name: omni
       secret: dex-oidc-secret

@@ -1,0 +1,31 @@
+# homepage.kidd.network: every service, behind a Dex login. A service shows
+# here with `gethomepage.dev/instance.private: ""` on its Ingress.
+config:
+  settingsString: |
+    title: kidd.network
+    instanceName: private
+    headerStyle: clean
+
+env:
+  - name: HOMEPAGE_ALLOWED_HOSTS
+    value: homepage.kidd.network
+  - name: HOMEPAGE_EXTERNAL_URL
+    value: https://homepage.kidd.network
+  - name: HOMEPAGE_AUTH_ENABLED
+    value: "true"
+  # Signs the session cookie. In the repo like Dex's client secrets for now
+  # (BACKLOG, Tier 2).
+  - name: HOMEPAGE_AUTH_SECRET
+    value: homepage-session-secret-change-me-0001
+  - name: HOMEPAGE_OIDC_ISSUER
+    value: https://dex.kidd.network
+  - name: HOMEPAGE_OIDC_CLIENT_ID
+    value: homepage
+  - name: HOMEPAGE_OIDC_CLIENT_SECRET
+    value: dex-oidc-secret
+  - name: HOMEPAGE_OIDC_NAME
+    value: kidd.network
+  - name: HOMEPAGE_OIDC_AUTO_LOGIN
+    value: "true"
+  - name: NODE_EXTRA_CA_CERTS
+    value: /etc/ssl/local-ca/ca.crt

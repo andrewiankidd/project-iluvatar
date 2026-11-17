@@ -1,0 +1,11 @@
+# lab.kidd.network: only what is marked public, no login. A service shows here
+# with `gethomepage.dev/instance.public: ""` on its Ingress.
+config:
+  settingsString: |
+    title: kidd.network
+    instanceName: public
+    headerStyle: clean
+
+env:
+  - name: HOMEPAGE_ALLOWED_HOSTS
+    value: lab.kidd.network

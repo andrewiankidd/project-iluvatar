@@ -98,6 +98,13 @@ ingress:
     enabled: true
     className: traefik
     host: omni.kidd.network
+    annotations:
+      gethomepage.dev/enabled: "true"
+      gethomepage.dev/instance.private: ""
+      gethomepage.dev/group: Cluster
+      gethomepage.dev/name: Omni
+      gethomepage.dev/description: Talos machines and arda
+      gethomepage.dev/icon: mdi-server-network
     tls:
       - secretName: omni-tls
         hosts:

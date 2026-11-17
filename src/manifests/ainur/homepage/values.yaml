@@ -1,0 +1,33 @@
+# Shared by both Homepage instances (../homepage.yml); values-private.yaml and
+# values-public.yaml add the name, host and login.
+image:
+  tag: v2.8.0
+
+enableRbac: true
+serviceAccount:
+  create: true
+
+config:
+  bookmarks: []
+  services: []
+  widgets:
+    - kubernetes:
+        cluster:
+          show: true
+          cpu: true
+          memory: true
+        nodes:
+          show: true
+          cpu: true
+          memory: true
+  kubernetes:
+    mode: cluster
+
+# The lab CA, for talking to Dex (NODE_EXTRA_CA_CERTS in values-private.yaml).
+persistence:
+  lab-ca:
+    enabled: true
+    type: configMap
+    name: lab-ca
+    mountPath: /etc/ssl/local-ca
+    readOnly: true
