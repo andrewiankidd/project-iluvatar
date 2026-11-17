@@ -431,7 +431,7 @@ write_files:
       # prefer file-based tokens if present for both server and agent.
       K3S_TOKEN="${K3S_TOKEN:-}"
       K3S_AGENT_TOKEN="${K3S_AGENT_TOKEN:-}"
-      INSTALL_K3S_VERSION="v1.33.6+k3s1"
+      INSTALL_K3S_VERSION="${INSTALL_K3S_VERSION:-v1.37.2+k3s1}"
       echo "[install] starting k3s install"
       STATE="/run/k3s-bootstrap/env"
       if [ -f "$STATE" ]; then
@@ -486,6 +486,7 @@ write_files:
           echo "[token] token MISSING at ${TOKEN_PATH:-'(unset)'}"
         fi
         curl -sfL --retry 5 --retry-connrefused --connect-timeout 5 --max-time 120 https://get.k3s.io | \
+          INSTALL_K3S_VERSION="$INSTALL_K3S_VERSION" \
           K3S_TOKEN="$K3S_TOKEN" K3S_AGENT_TOKEN="$K3S_AGENT_TOKEN" \
           INSTALL_K3S_EXEC=" $K3S_COMMON_ARGS $K3S_SERVER_ARGS" \
           sh -s -
@@ -506,6 +507,7 @@ write_files:
         if [ -n "${LEADER_IP:-}" ]; then
           echo "[agent] using leader $LEADER_IP"
           curl -sfL --retry 5 --retry-connrefused --connect-timeout 5 --max-time 120 https://get.k3s.io | \
+            INSTALL_K3S_VERSION="$INSTALL_K3S_VERSION" \
             K3S_URL="https://$LEADER_IP:6443" K3S_TOKEN="$K3S_AGENT_TOKEN" \
             INSTALL_K3S_EXEC=" $K3S_COMMON_ARGS $K3S_AGENT_ARGS" \
             sh -s -

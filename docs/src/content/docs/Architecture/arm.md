@@ -78,7 +78,7 @@ Cloud-init config lives in `bootstrap/netboot/assets/ubuntuserver/boot/user-data
 - **Base OS + SSH prep**: sets the hostname deterministically, installs core packages (NFS/iSCSI/XFS tooling, zstd, etc.), and regenerates SSH host keys on first boot.
 - **Netboot image stamping**: idempotently writes the staged OS image to disk (dd/zstd) and records the hash so repeat boots skip re-flashing.
 - **NVMe prep for Longhorn**: partitions and formats the first NVMe disk as XFS, mounts it under `/var/lib/longhorn/disks/nvme1`, and enables trim.
-- **k3s bootstrap orchestration**: leader/agent election via `k3s-*-scripts`, optional token fetch from the bootstrap HTTP site, installs k3s (`v1.33.6+k3s1`) as server or agent, and restarts until the API is ready.
+- **k3s bootstrap orchestration**: leader/agent election via `k3s-*-scripts`, optional token fetch from the bootstrap HTTP site, installs k3s (`v1.37.2+k3s1`, pinned) as server or agent, and restarts until the API is ready.
 - **TLS/PKI bootstrap**: generates a local root CA, seeds cert-manager/trust-manager manifests, configures kube-apiserver OIDC flags, and publishes the CA ConfigMap for apps (plus an optional CA download site).
 
 ### Orchestration: K3s
