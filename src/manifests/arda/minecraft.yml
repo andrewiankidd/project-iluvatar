@@ -18,11 +18,8 @@
 # external-dns (external-dns.yml) publishes the server records.
 #
 # Who plays is not in this public repo. The servers read the minecraft-players
-# Secret, UUIDs comma-separated with no spaces:
-#   kubectl create namespace minecraft
-#   kubectl -n minecraft create secret generic minecraft-players \
-#     --from-literal=whitelist=<uuid>,<uuid> \
-#     --from-literal=builders=<uuid>,<uuid>
+# Secret (whitelist, builders): ARDA_MINECRAFT_* in the bootstrap VM's .env,
+# handed out by src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

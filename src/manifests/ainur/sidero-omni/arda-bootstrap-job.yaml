@@ -1,5 +1,7 @@
 # Gives arda (the talos-default cluster) its own Argo CD and points it at
-# src/manifests/arda, the way k3s's HelmCharts do for ainur.
+# src/manifests/arda, the way k3s's HelmCharts do for ainur, then hands each
+# arda app its Secret from ainur's arda-secrets (the ARDA_* values in the
+# bootstrap VM's .env; see bootstrap/netboot/.env.example).
 #
 # Fails until the cluster exists and is up; Argo CD re-creates the Job after
 # ttlSecondsAfterFinished, so it simply tries again later. Re-running it is
@@ -27,6 +29,10 @@ spec:
               value: https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.1/manifests/install.yaml
             - name: OMNICTL_URL
               value: https://github.com/siderolabs/omni/releases/download/v1.13.3/omnictl-linux-arm64
+          envFrom:
+            - secretRef:
+                name: arda-secrets
+                optional: true
           command:
             - sh
             - -c
@@ -67,6 +73,40 @@ spec:
                     prune: true
                     selfHeal: true
               EOF
+
+              # Each app's Secret, from whichever ARDA_* values are set.
+              put() {
+                ns=$1; name=$2; shift 2
+                kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
+                kubectl -n "$ns" create secret generic "$name" "$@" \
+                  --dry-run=client -o yaml | kubectl apply -f -
+              }
+              if [ -n "${ARDA_CLOUDFLARE_API_TOKEN:-}" ]; then
+                put external-dns cloudflare-api-token --from-literal=api-token="$ARDA_CLOUDFLARE_API_TOKEN"
+                put ddns cloudflare-api-token --from-literal=api-token="$ARDA_CLOUDFLARE_API_TOKEN"
+              fi
+              if [ -n "${ARDA_CLOUDFLARE_TUNNEL_TOKEN:-}" ]; then
+                put cloudflared cloudflared-tunnel --from-literal=token="$ARDA_CLOUDFLARE_TUNNEL_TOKEN"
+              fi
+              if [ -n "${ARDA_MINECRAFT_WHITELIST:-}${ARDA_MINECRAFT_BUILDERS:-}" ]; then
+                put minecraft minecraft-players \
+                  --from-literal=whitelist="${ARDA_MINECRAFT_WHITELIST:-}" \
+                  --from-literal=builders="${ARDA_MINECRAFT_BUILDERS:-}"
+              fi
+              if [ -n "${ARDA_DRAGONWILDS_OWNER_ID:-}" ]; then
+                set -- --from-literal=owner-id="$ARDA_DRAGONWILDS_OWNER_ID" \
+                  --from-literal=admin-password="${ARDA_DRAGONWILDS_ADMIN_PASSWORD:-}"
+                if [ -n "${ARDA_DRAGONWILDS_WORLD_PASSWORD:-}" ]; then
+                  set -- "$@" --from-literal=world-password="$ARDA_DRAGONWILDS_WORLD_PASSWORD"
+                fi
+                put dragonwilds dragonwilds "$@"
+              fi
+              if [ -n "${ARDA_BACKUP_ACCESS_KEY_ID:-}" ]; then
+                put longhorn-system r2-backup \
+                  --from-literal=AWS_ACCESS_KEY_ID="$ARDA_BACKUP_ACCESS_KEY_ID" \
+                  --from-literal=AWS_SECRET_ACCESS_KEY="${ARDA_BACKUP_SECRET_ACCESS_KEY:-}" \
+                  --from-literal=AWS_ENDPOINTS="${ARDA_BACKUP_ENDPOINT:-}"
+              fi
           volumeMounts:
             - name: omni-data
               mountPath: /omni-data

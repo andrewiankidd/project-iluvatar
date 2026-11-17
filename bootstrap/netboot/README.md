@@ -15,6 +15,10 @@ The compose is made up of four containers with three different configurations
 | Debian Builder  |   ✅    |       ✅     |   ❌   |   Used to download, extract, patch and export a Debian based Pi OS image onto the server volumes  |
 
 
+## Secrets
+
+The few values the clusters need that cannot be in this public repo (Cloudflare tokens, who plays, R2 backup keys) go in `.env` as `ARDA_*` variables; see `.env.example`. The builder serves them to ainur at `/secrets/arda.env`, ainur keeps them as its `arda-secrets` Secret, and arda gets each app's Secret from there. Nothing to run by hand; the file is readable on the LAN while the VM runs.
+
 ## Running
 **Warning: If you are using Windows, you must use a VM.**
 

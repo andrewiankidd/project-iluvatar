@@ -3,11 +3,9 @@
 # says where its record points (external-dns.kubernetes.io/target), or gets
 # its LoadBalancer address. Ingress hosts are external-dns-tunnel.yml's.
 #
-# Needs a Cloudflare API token (Zone:DNS:Edit on kidd.network) that is not
-# in this public repo; create it once per cluster:
-#   kubectl create namespace external-dns
-#   kubectl -n external-dns create secret generic cloudflare-api-token \
-#     --from-literal=api-token=<token>
+# Reads the cloudflare-api-token Secret: ARDA_CLOUDFLARE_API_TOKEN in the
+# bootstrap VM's .env (Zone:DNS:Edit on kidd.network), handed out by
+# src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

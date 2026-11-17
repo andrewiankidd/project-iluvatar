@@ -7,10 +7,8 @@
 #
 # DNS only: proxying would hide the address the forwards need.
 #
-# Reads the cloudflare-api-token Secret, in this app's namespace:
-#   kubectl create namespace ddns
-#   kubectl -n ddns create secret generic cloudflare-api-token \
-#     --from-literal=api-token=<token>
+# Reads the cloudflare-api-token Secret, in this app's namespace, as
+# external-dns.yml does.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

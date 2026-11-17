@@ -904,6 +904,38 @@ write_files:
         install -D -m0644 "$f" "$dst/$b"
       done
 
+  # The ARDA_* values from the bootstrap VM's .env (pi-netboot-builder.sh) as
+  # the arda-secrets Secret, which arda-bootstrap-job.yaml hands out on arda.
+  # Only the VM serves the file, so later boots leave the Secret as it is.
+  - path: /usr/local/sbin/arda-secrets.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      url="${CLOUD_INIT_BASE_URL:-http://bootstrap.kidd.network}/secrets/arda.env"
+      f="$(mktemp)"
+      trap 'rm -f "$f"' EXIT
+      if ! curl -sfL --connect-timeout 3 --max-time 10 "$url" -o "$f"; then
+        echo "[arda-secrets] none at $url; leaving arda-secrets as it is"
+        exit 0
+      fi
+      k3s kubectl create namespace ainur-sidero-omni --dry-run=client -o yaml | k3s kubectl apply -f -
+      k3s kubectl -n ainur-sidero-omni create secret generic arda-secrets \
+        --from-env-file="$f" --dry-run=client -o yaml | k3s kubectl apply -f -
+
+  - path: /etc/systemd/system/arda-secrets.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=arda secrets from the bootstrap VM
+      Wants=k3s.service
+      After=k3s.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/arda-secrets.sh
+      RemainAfterExit=yes
+
   - path: /etc/systemd/system/k3s-manifests-install.service
     permissions: '0644'
     content: |
@@ -931,7 +963,7 @@ write_files:
 
       [Service]
       Type=oneshot
-      ExecStart=/bin/sh -c 'systemctl start k3s-manifests-install.service tls-bootstrap.service || true'
+      ExecStart=/bin/sh -c 'systemctl start k3s-manifests-install.service tls-bootstrap.service arda-secrets.service || true'
 
       [Install]
       WantedBy=multi-user.target

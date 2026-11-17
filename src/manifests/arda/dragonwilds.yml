@@ -13,12 +13,9 @@
 # there, the server makes a new world named DEFAULT_WORLD_NAME. To move a
 # world in, stop the server and copy its .sav there.
 #
-# Reads the dragonwilds Secret, in this app's namespace:
-#   kubectl create namespace dragonwilds
-#   kubectl -n dragonwilds create secret generic dragonwilds \
-#     --from-literal=owner-id=<player id> \
-#     --from-literal=admin-password=<password> \
-#     [--from-literal=world-password=<password>]
+# Reads the dragonwilds Secret: owner-id, admin-password and, if set,
+# world-password, from ARDA_DRAGONWILDS_* in the bootstrap VM's .env, handed
+# out by src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml.
 # admin-password unlocks Server Management in the game's pause menu;
 # world-password, if set, is asked of everyone joining.
 apiVersion: argoproj.io/v1alpha1

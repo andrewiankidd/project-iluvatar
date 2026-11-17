@@ -527,6 +527,17 @@ else
 fi
 #endregion netboot
 
+#region secrets
+# The ARDA_* values from .env, served at /secrets/arda.env for ainur to make
+# its arda-secrets Secret from (user-data: arda-secrets.sh). Only the bootstrap
+# VM has them; the in-cluster builder has none, and its sync removes the file.
+if env | grep -q '^ARDA_'; then
+	echo "Writing ARDA_* secrets to '$BOOT_EXPORT_DIRECTORY/secrets/arda.env'"
+	mkdir -p "$BOOT_EXPORT_DIRECTORY/secrets"
+	env | grep '^ARDA_' | sort > "$BOOT_EXPORT_DIRECTORY/secrets/arda.env"
+fi
+#endregion secrets
+
 # wait for sd.img copy to finish
 if [ -n "$sd_copy_pid" ]; then
   if ! wait "$sd_copy_pid"; then

@@ -8,11 +8,9 @@
 # Cloudflare's free certificate covers kidd.network and *.kidd.network, one
 # level deep: an Ingress host such as a.b.kidd.network would not get HTTPS.
 #
-# Needs the tunnel's token, which is not in this public repo; create it once
-# per cluster (`cloudflared tunnel token arda` prints it):
-#   kubectl create namespace cloudflared
-#   kubectl -n cloudflared create secret generic cloudflared-tunnel \
-#     --from-literal=token=<token>
+# Reads the cloudflared-tunnel Secret: ARDA_CLOUDFLARE_TUNNEL_TOKEN in the
+# bootstrap VM's .env (`cloudflared tunnel token arda` prints it), handed out
+# by src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
