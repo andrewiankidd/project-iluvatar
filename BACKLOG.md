@@ -10,7 +10,7 @@ The standing rule: **nothing manual.** Start the bootstrap VM and everything els
 
 - Self-reproducing bootstrap loop (ouroboros). The cluster hosts the netboot stack that boots the cluster.
 - Everything declarative from cloud-init → k3s HelmChart manifests → Argo CD app-of-apps. Almost no imperative state.
-- Honest separation of "stateless ephemeral nodes" from "stateful cluster" via Longhorn + selectable persistence.
+- Honest separation of "stateless ephemeral nodes" from "stateful cluster" via Longhorn + selectable persistence. Not yet across a rebuild: see "Next direction".
 - SSO + private CA chain auto-wires across apps with zero manual `kubectl label` steps.
 - The same forked containers (`andrewkidd/nfs-server`, `andrewkidd/tftp-server`) used by both the bootstrap VM and the in-cluster netboot stack.
 - Minecraft is one folder per server (ApplicationSet), and who plays is in a Secret, not the repo.
@@ -54,6 +54,38 @@ What changed:
 
 ---
 
+## Next direction — stateless nodes, data that survives a rebuild
+
+**Status as of 2026-11-17**: designed, not built. After `talos-default` is up.
+
+Today a re-bootstrap throws everything away. The NVMe drives keep Longhorn's replicas, but the new cluster can't use them: what makes a replica a volume (which volume it belongs to, which copies are in sync, which PVC it serves) lives in etcd, and a fresh etcd sees only orphaned folders. Longhorn won't adopt them, and shouldn't: it can't tell a stale copy from a current one.
+
+The design: **etcd snapshots in S3, restored by any fresh cluster that finds one.**
+
+- **Nodes stay stateless.** OS from netboot or the SD card, etcd on the RAM disk, as now. Nothing on a node needs keeping, and the SD card Pi can be re-flashed at will.
+- **The NVMe is Longhorn's alone**, data only, replicated across the Pis. PVCs are declared in Git.
+- **The index lives in a bucket.** k3s saves etcd snapshots to S3 on a schedule (`--etcd-s3`, `--etcd-snapshot-schedule-cron`). Before k3s starts on a server with an empty datastore, a step looks in the bucket: if there's a snapshot it restores the latest (`--cluster-reset --cluster-reset-restore-path=<latest>`), if not it's a first boot. Restored, Longhorn's records point at the replicas still on the NVMe (each disk keeps an ID that matches), and the PVCs bind to the same data.
+- **arda the same way**: Omni can back up each cluster's etcd to S3 itself.
+
+What it needs:
+
+1. **A fixed k3s server token**, in `.env` like the `ARDA_*` values. Snapshots are encrypted with it; a random token per bootstrap can't read the last one.
+2. **Fresh snapshots.** `rebootstrap.sh` takes one before it reboots anything (as arda-local backs up before stopping), plus a schedule. Anything made after the last snapshot comes back orphaned; most other drift heals itself, since Argo CD re-applies Git.
+3. **Node passwords.** k3s records a password per node in etcd, and keeps the node's copy on the node. A netbooted Pi forgets its copy, so a restored cluster would turn it away. Keep the file on the NVMe, or clear the recorded passwords once after a restore.
+4. **A LAN S3 target for offline.** k3s writes to one target; R2 works today. Offline, it becomes an S3 server on the LAN, with R2 as the off-site copy.
+5. **The Omni GPG key restored, not regenerated.** `gpg-generator.yaml` makes a new key every time and only ever writes its backup, so Omni's restored state would be unreadable. Restore it from the backup when there is one.
+
+Still not covered: re-flashing the control plane takes the VIP down while it netboots (kube-vip's leader election goes through its API server), so that re-flash still needs the bootstrap VM serving netboot. It now comes back as the same cluster rather than a new one. With that, rebuilding the Pi image in the cluster on demand (re-run the builder Job; the SD card Pi checks the image hash on a timer) becomes worth doing.
+
+Considered and set aside:
+
+- **Keeping etcd on the NVMe**, with all three Pis as control planes. Works, and keeps the VIP up through any one reboot, but the nodes stop being stateless and the bootstrap scripts change throughout.
+- **Static local volumes at fixed paths.** Survive a rebuild with no snapshot, but give up Longhorn's replication.
+- **Back up, rebuild, restore the volumes** (Longhorn system backup). Throws away the replicas on every rebuild.
+- **Ceph through Rook**, which can adopt its own disks. Far too heavy for Pis.
+
+---
+
 ## Tier 1 — arda's foundations (built 2026-11-17, not yet run)
 
 ### Secrets without anything manual
@@ -91,11 +123,6 @@ What changed:
 
 - The Dex admin password is `bcrypt(ubuntu)` and the shared OIDC client secret is `dex-oidc-secret`, both in the repo.
 - **Accepted for now**: this is still dev. Rotate them once the whole loop is proven, through `.env` like the arda secrets, so they never land in git again.
-
-### Rebuilding the Pi image without the VM
-
-- `rebootstrap.sh` relies on the bootstrap VM for a fresh image. The in-cluster `pi-netboot-builder` Job runs once per cluster, and nothing re-runs it.
-- **Fix**: a way to re-run it on demand (deleting the Job is enough; Argo CD recreates it), then a rolling reboot. The catch: when the SD card Pi is re-flashed it comes back as a new cluster, and the rest must follow it. Not worth it while the VM is the easy answer.
 
 ### Renovate Bot
 
@@ -149,7 +176,7 @@ What changed:
 
 ### Leader-election split brain
 
-- `/tmp/k3s/k3s-leader` is a single-writer file with no quorum. Fine at 2-3 nodes; dicier past that.
+- `/tmp/k3s/k3s-leader` is a single-writer file with no quorum. Fine at 2-3 nodes; dicier past that. Its sharpest edge, losing the cluster with the leader, is what the etcd snapshots in "Next direction" take away.
 - Future: a Kubernetes Lease, or HA k3s with embedded etcd.
 
 ---
