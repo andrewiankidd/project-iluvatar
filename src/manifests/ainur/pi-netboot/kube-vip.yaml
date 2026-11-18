@@ -68,8 +68,12 @@ spec:
               value: "ainur-netboot"
             - name: vip_arp
               value: "true"
+            # No election: one kube-vip, on valar-50, simply holds the VIP. With
+            # election, an API server slow to renew its lease (the SD card busy
+            # pulling images) made it drop the VIP and restart, taking netboot
+            # and every *.kidd.network name down with it.
             - name: vip_leaderelection
-              value: "true"
+              value: "false"
             - name: vip_namespace
               value: "ainur-netboot"
             - name: vip_loglevel
