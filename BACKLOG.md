@@ -243,6 +243,16 @@ The North Star is a lab that rebuilds with no internet at all. What still reache
 - The repo itself, from GitHub: both Argo CDs, template sync, the builder and arda-bootstrap clone it, so with the internet down nothing can change or rebuild. **Fix**: a Git mirror (Forgejo or Gitea) that they read from, GitHub staying the public copy. Probably an offsite Pi, so a rebuild of ainur doesn't take its own source with it and the source has an off-site copy (see Tier 6). The easiest piece of this tier.
 - The Cloudflare Tunnel and DNS are online by nature; the LAN path has to keep working without them.
 
+### Offline knowledge
+
+What makes an offline lab worth having rather than merely resilient.
+
+- **Kiwix** (`kiwix-serve`): ZIM snapshots of Wikipedia (~110 GB with images, ~50 GB without, ~10 GB top articles), Wikivoyage, WikiMed, Stack Exchange, iFixit, Project Gutenberg (~70 GB), Khan Academy. One small container serves them all; a CronJob refreshes them from `download.kiwix.org` while online, and offline the last copy stays.
+- **Books**: Gutenberg's ZIM for public domain; Kavita or Calibre-Web for an own ebook library.
+- **A general-knowledge LLM**: Ollama (shared with Home Assistant) behind Open WebUI, Dex in front. Open WebUI searching Kiwix keeps a small CPU model answering from local sources, and gives Jarvis answers with the internet down.
+- **Maps**: OpenStreetMap tiles for the region, served locally.
+- **Storage**: large and rarely changing, so the NAS, not Longhorn (three replicas of 110 GB doesn't fit a 1 TB SSD). Until then, the no-pictures and top-articles ZIMs.
+
 ---
 
 ## Tier 6 — The Parents' Garage (multi-site future)
