@@ -345,7 +345,7 @@ copy_assets() {
 				echo "No overlay found. Copying base file for '$rel'"
 				rsync -xar --inplace --progress "$f" "$dest"
 			fi
-			[ "$rel" = "user-data" ] && fill_secrets "$dest"
+			if [ "$rel" = "user-data" ]; then fill_secrets "$dest"; fi
 		done
 		# A missing AINUR_* value would leave a blank password or k3s token.
 		if missing=$(grep -o '\${AINUR_[A-Z0-9_]*}' "$BOOT_EXPORT_DIRECTORY/user-data" 2>/dev/null | sort -u | tr '\n' ' ') && [ -n "$missing" ]; then
