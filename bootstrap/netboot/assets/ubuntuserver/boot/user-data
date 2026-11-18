@@ -912,8 +912,7 @@ write_files:
       Description=Re-read the arda secrets from the bootstrap VM
 
       [Timer]
-      OnBootSec=10min
-      OnUnitInactiveSec=10min
+      OnCalendar=*:0/10
 
       [Install]
       WantedBy=timers.target
@@ -978,8 +977,7 @@ write_files:
       Description=Re-read the ainur secrets from the bootstrap VM
 
       [Timer]
-      OnBootSec=10min
-      OnUnitInactiveSec=10min
+      OnCalendar=*:0/10
 
       [Install]
       WantedBy=timers.target
