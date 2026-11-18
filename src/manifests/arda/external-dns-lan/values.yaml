@@ -1,0 +1,54 @@
+# external-dns chart 1.23.0, UniFi webhook provider 0.11.0: each arda Ingress
+# host as an A record in UniFi's local DNS, to its address (192.168.1.58, see
+# ../metallb). UniFi's *.kidd.network sends everything else to ainur; an exact
+# name wins over the wildcard, so arda's sites resolve to arda on the LAN.
+#
+# Only records it made (owner arda-lan) are changed or removed: the wildcard
+# and anything made by hand are left alone.
+fullnameOverride: external-dns-lan
+
+provider:
+  name: webhook
+  webhook:
+    image:
+      repository: ghcr.io/home-operations/external-dns-unifi-webhook
+      tag: 0.11.0
+    env:
+      - name: UNIFI_HOST
+        value: https://192.168.1.1
+      - name: UNIFI_SITE
+        value: default
+      # The console's certificate is its own self-signed one.
+      - name: UNIFI_SKIP_TLS_VERIFY
+        value: "true"
+      # ARDA_UNIFI_API_KEY, put here by ainur's arda-bootstrap Job.
+      - name: UNIFI_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: unifi-api-key
+            key: UNIFI_API_KEY
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: http-webhook
+      initialDelaySeconds: 10
+      timeoutSeconds: 5
+    readinessProbe:
+      httpGet:
+        path: /readyz
+        port: http-webhook
+      initialDelaySeconds: 10
+      timeoutSeconds: 5
+
+sources:
+  - ingress
+
+domainFilters:
+  - kidd.network
+
+policy: sync
+registry: txt
+txtOwnerId: arda-lan
+txtPrefix: k8s.arda-lan.%{record_type}-
+
+triggerLoopOnEvent: true

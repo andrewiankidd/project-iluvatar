@@ -1,0 +1,36 @@
+# arda's sites on the LAN: an A record in UniFi for each arda Ingress host,
+# to arda's address, so that name skips UniFi's *.kidd.network (which points
+# at ainur). The third external-dns here: external-dns.yml publishes Service
+# records and external-dns-tunnel.yml the Ingress hosts, both to Cloudflare.
+#
+# Reads the unifi-api-key Secret: ARDA_UNIFI_API_KEY in the bootstrap VM's
+# .env, handed out by src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-dns-lan
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://kubernetes-sigs.github.io/external-dns
+      chart: external-dns
+      targetRevision: 1.23.0
+      helm:
+        releaseName: external-dns-lan
+        valueFiles:
+          - $values/src/manifests/arda/external-dns-lan/values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-dns
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    automated:
+      prune: true
+      selfHeal: true

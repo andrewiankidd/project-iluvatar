@@ -98,6 +98,10 @@ spec:
               if [ -n "${ARDA_CLOUDFLARE_TUNNEL_TOKEN:-}" ]; then
                 put cloudflared cloudflared-tunnel --from-literal=token="$ARDA_CLOUDFLARE_TUNNEL_TOKEN"
               fi
+              # external-dns-lan's LAN records in UniFi (src/manifests/arda/external-dns-lan.yml).
+              if [ -n "${ARDA_UNIFI_API_KEY:-}" ]; then
+                put external-dns unifi-api-key --from-literal=UNIFI_API_KEY="$ARDA_UNIFI_API_KEY"
+              fi
               if [ -n "${ARDA_MINECRAFT_WHITELIST:-}${ARDA_MINECRAFT_BUILDERS:-}" ]; then
                 put minecraft minecraft-players \
                   --from-literal=whitelist="${ARDA_MINECRAFT_WHITELIST:-}" \
