@@ -765,6 +765,15 @@ write_files:
               syncPolicy:
                 syncOptions:
                   - CreateNamespace=true
+                # Keep retrying a failed sync: a fresh cluster has to come up on
+                # its own, and most failures are ordering (a CRD, webhook or
+                # Secret not there yet) that resolves itself.
+                retry:
+                  limit: -1
+                  backoff:
+                    duration: 30s
+                    factor: 2
+                    maxDuration: 10m
                 automated:
                   prune: true
                   selfHeal: true
@@ -780,6 +789,15 @@ write_files:
                 server: https://kubernetes.default.svc
                 namespace: argocd
               syncPolicy:
+                # Keep retrying a failed sync: a fresh cluster has to come up on
+                # its own, and most failures are ordering (a CRD, webhook or
+                # Secret not there yet) that resolves itself.
+                retry:
+                  limit: -1
+                  backoff:
+                    duration: 30s
+                    factor: 2
+                    maxDuration: 10m
                 automated:
                   prune: true
                   selfHeal: true
