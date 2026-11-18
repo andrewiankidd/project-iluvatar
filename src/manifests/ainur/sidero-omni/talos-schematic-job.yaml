@@ -115,6 +115,28 @@ spec:
               test -n "$id"
               echo "schematic $id"
 
+              # The boot menu: Talos, or (picked by hand, never the default)
+              # Talos that first wipes the system disk, like the ISO's "Reset
+              # system disk". That's for a machine whose install Omni can't
+              # reach any more, such as one installed by an earlier Omni or
+              # under an earlier lab CA. The wipe is a kernel argument here,
+              # not in the schematic, so it can't follow into the install.
+              reset="$(curl -fsS "$PXE_URL/pxe/$id/$TALOS_VERSION/metal-amd64" \
+                | sed -e '/^#!ipxe/d' -e '/^kernel /s/$/ talos.experimental.wipe=system/')"
+              echo "$reset" | grep -q '^kernel .*talos.experimental.wipe=system$'
+              {
+                echo '#!ipxe'
+                echo 'menu Talos'
+                echo 'item talos Talos'
+                echo 'item reset Talos (Reset system disk: wipes it, then joins Omni)'
+                echo 'choose --default talos --timeout 10000 target || goto talos'
+                echo 'goto ${target}'
+                echo ':talos'
+                echo "chain --replace --autofree $PXE_URL/pxe/$id/$TALOS_VERSION/metal-\${buildarch}"
+                echo ':reset'
+                echo "$reset"
+              } > /tmp/boot.ipxe
+
               # Served by bootstrap-http as /talos/boot.ipxe, which the
               # proxy DHCP (../pi-netboot/proxy-dhcp.yaml) hands to iPXE.
               # iso-url is what ../pi-netboot/talos-iso.yaml caches for USB.
@@ -127,8 +149,7 @@ spec:
                 echo "data:"
                 echo "  iso-url: $FACTORY_URL/image/$id/$TALOS_VERSION/metal-amd64.iso"
                 echo "  boot.ipxe: |"
-                echo "    #!ipxe"
-                echo "    chain --replace --autofree $PXE_URL/pxe/$id/$TALOS_VERSION/metal-\${buildarch}"
+                sed 's/^/    /' /tmp/boot.ipxe
               } > /tmp/talos-ipxe.yaml
 
               sa=/var/run/secrets/kubernetes.io/serviceaccount
