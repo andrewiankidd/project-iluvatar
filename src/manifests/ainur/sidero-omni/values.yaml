@@ -100,7 +100,7 @@ ingress:
     host: omni.kidd.network
     annotations:
       gethomepage.dev/enabled: "true"
-      gethomepage.dev/instance.private: ""
+      gethomepage.dev/instance: private
       gethomepage.dev/group: Cluster
       gethomepage.dev/name: Omni
       gethomepage.dev/description: Talos machines and arda

@@ -829,7 +829,7 @@ write_files:
           traefik.ingress.kubernetes.io/router.tls: "true"
           kubernetes.io/ingress.class: traefik
           gethomepage.dev/enabled: "true"
-          gethomepage.dev/instance.private: ""
+          gethomepage.dev/instance: private
           gethomepage.dev/group: Cluster
           gethomepage.dev/name: Argo CD
           gethomepage.dev/description: GitOps for ainur

@@ -1,5 +1,5 @@
 # userpage.kidd.network: every service, behind a Dex login. A service shows
-# here with `gethomepage.dev/instance.private: ""` on its Ingress.
+# only here with `gethomepage.dev/instance: private` on its Ingress.
 config:
   settingsString: |
     title: kidd.network

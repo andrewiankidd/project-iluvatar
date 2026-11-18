@@ -1,6 +1,6 @@
-# kidd.network and homepage.kidd.network: only what is marked public, no
-# login. A service shows here with `gethomepage.dev/instance.public: ""` on its
-# Ingress; the links below are added by hand.
+# kidd.network and homepage.kidd.network: public services, no login.
+# Every listed service shows here unless its Ingress has
+# `gethomepage.dev/instance: private`; the links below are added by hand.
 config:
   settingsString: |
     title: kidd.network
