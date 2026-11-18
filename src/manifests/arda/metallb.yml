@@ -14,6 +14,12 @@ spec:
     - repoURL: https://metallb.github.io/metallb
       chart: metallb
       targetRevision: 0.16.2
+      helm:
+        valuesObject:
+          speaker:
+            # Talos labels control planes exclude-from-external-load-balancers,
+            # and arda's control plane runs the workloads: announce from it too.
+            ignoreExcludeLB: true
     - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
       targetRevision: main
       path: src/manifests/arda/metallb

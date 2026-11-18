@@ -30,11 +30,9 @@ patches:
     inline:
       apiVersion: v1alpha1
       kind: KubeNodeConfig
-      # And keep it a load balancer node, or MetalLB won't announce arda's
-      # 192.168.1.58 from it (src/manifests/arda/metallb).
-      labels:
-        node.kubernetes.io/exclude-from-external-load-balancers:
-          $patch: delete
+      # The control planes' exclude-from-external-load-balancers label is
+      # left alone (a delete fails on a new machine's config, which doesn't
+      # have it there); MetalLB ignores it instead (src/manifests/arda/metallb.yml).
       taints:
         node-role.kubernetes.io/control-plane:
           $patch: delete
