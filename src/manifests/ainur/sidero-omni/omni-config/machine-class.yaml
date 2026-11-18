@@ -7,3 +7,14 @@ metadata:
 spec:
   matchlabels:
     - omni.sidero.dev/arch = amd64
+---
+# arda's workers: machines the arda-disks CronJob has labelled
+# kidd.network/arda-worker, which it does only once talos-default has its
+# control plane, so the first machine is always the control plane.
+metadata:
+  namespace: default
+  type: MachineClasses.omni.sidero.dev
+  id: arda-workers
+spec:
+  matchlabels:
+    - omni.sidero.dev/arch = amd64, kidd.network/arda-worker

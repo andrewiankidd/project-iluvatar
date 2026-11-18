@@ -13,6 +13,12 @@
 # DRY_RUN=1 only says what it would do.
 #
 # Does nothing until talos-default is up.
+#
+# First, though, it makes free machines arda's workers: the Workers class
+# (omni-config/machine-class.yaml) needs kidd.network/arda-worker, which
+# this gives a machine in no cluster only once talos-default has its
+# control plane. So the first machine is always the control plane, and
+# every one after it a worker.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -56,6 +62,19 @@ spec:
                   chmod +x /usr/local/bin/omnictl /usr/local/bin/talosctl
                   [ -s /omni-data/automation.key ] || { echo "Omni isn't up yet"; exit 0; }
                   export OMNI_SERVICE_ACCOUNT_KEY="$(cat /omni-data/automation.key)"
+
+                  ids() { awk '/^    id:/ {print $2}'; }
+                  if [ -n "$(omnictl get clustermachine -o yaml \
+                    -l "omni.sidero.dev/cluster=$CLUSTER,omni.sidero.dev/role-controlplane" 2>/dev/null | ids)" ]; then
+                    for m in $(omnictl get machinestatus -o yaml \
+                      -l '!omni.sidero.dev/cluster,!kidd.network/arda-worker' 2>/dev/null | ids); do
+                      echo "$m: in no cluster, and $CLUSTER has its control plane; making it a worker"
+                      printf '%s\n' 'metadata:' '  namespace: default' '  type: MachineLabels.omni.sidero.dev' \
+                        "  id: $m" '  labels:' '    kidd.network/arda-worker: ""' 'spec: {}' > /tmp/worker.yaml
+                      [ "$DRY_RUN" = 1 ] || omnictl apply -f /tmp/worker.yaml
+                    done
+                  fi
+
                   omnictl talosconfig /tmp/talosconfig --force >/dev/null
                   omnictl kubeconfig /tmp/kubeconfig --cluster "$CLUSTER" \
                     --service-account --user arda-disks --force >/dev/null 2>&1 || true

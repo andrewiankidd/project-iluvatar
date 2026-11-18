@@ -22,20 +22,6 @@ patches:
         install:
           diskSelector:
             type: nvme
-  # Workloads on the control plane too, so one machine is already a cluster
-  # and every node's SSD counts for Longhorn.
-  # Talos 1.14 dropped cluster.allowSchedulingOnControlPlanes: the
-  # control plane's NoSchedule taint lives in KubeNodeConfig now.
-  - name: schedule-on-control-plane
-    inline:
-      apiVersion: v1alpha1
-      kind: KubeNodeConfig
-      # The control planes' exclude-from-external-load-balancers label is
-      # left alone (a delete fails on a new machine's config, which doesn't
-      # have it there); MetalLB ignores it instead (src/manifests/arda/metallb.yml).
-      taints:
-        node-role.kubernetes.io/control-plane:
-          $patch: delete
   # Longhorn (src/manifests/arda/longhorn.yml) on each node's SATA SSD,
   # mounted at /var/mnt/longhorn. Talos 1.14 has no kubelet extraMounts (the
   # v1alpha1 machine.kubelet section is gone); user volumes under /var/mnt
@@ -53,13 +39,31 @@ patches:
       filesystem:
         type: xfs
 ---
+# The first machine. Both sets draw on the same machines and Omni doesn't
+# fill one before the other, so workers come from their own class
+# (machine-class.yaml), which a machine joins only once this set is full.
 kind: ControlPlane
 machineClass:
   name: available
   size: 1
+patches:
+  # Workloads on the control plane too, so one machine is already a cluster
+  # and every node's SSD counts for Longhorn. Talos 1.14 dropped
+  # cluster.allowSchedulingOnControlPlanes: the NoSchedule taint lives in
+  # KubeNodeConfig now. Only here: a worker's config has no such taint, and
+  # deleting one that isn't there fails the whole config. (The control
+  # plane's exclude-from-external-load-balancers label stays; MetalLB
+  # ignores it, src/manifests/arda/metallb.yml.)
+  - name: schedule-on-control-plane
+    inline:
+      apiVersion: v1alpha1
+      kind: KubeNodeConfig
+      taints:
+        node-role.kubernetes.io/control-plane:
+          $patch: delete
 ---
-# Whatever else is switched on, so the cluster grows as machines join.
+# Every machine after the first, so the cluster grows as machines join.
 kind: Workers
 machineClass:
-  name: available
+  name: arda-workers
   size: unlimited
