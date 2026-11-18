@@ -117,13 +117,13 @@ Considered and set aside:
 - Planned on the x86 page, none built: Jellyfin, Paperless, Bitwarden, Crafty, LlamaGPT. Each would be an Argo CD app under `src/manifests/arda` storing its data on Longhorn, with any secrets coming from `.env`.
 - After the x86 path is proven and the stopgap retired.
 - **Bitwarden**: Vaultwarden is the usual lightweight server; Dex in front like the rest.
-- **Media**: Jellyfin, with Sonarr/Radarr (and Lidarr if music), Prowlarr (Jackett's successor) for indexers, Bazarr for subtitles, and a download client. Needs bulk storage (see Hardware): a ProDesk's SSD under Longhorn's three replicas is no place for a library.
+- **Media**: Jellyfin, with Sonarr/Radarr (and Lidarr if music), Prowlarr (Jackett's successor) for indexers, Bazarr for subtitles, and a download client. Needs bulk storage (see Hardware): a ProDesk's SSD under Longhorn's three replicas is no place for a library. Transcoding needs no GPU: the ProDesks' Intel iGPUs do Quick Sync, given the `i915` extension in the Talos schematic and Intel's GPU device plugin on arda.
 
 ### Home Assistant and a local assistant (the end goal)
 
 - Replace Google Nest and the Hue cloud with Home Assistant plus a local LLM voice assistant: Whisper (speech to text), Piper (text to speech), Ollama behind Home Assistant's Assist, and Home Assistant voice satellites where the Nest speakers are. All local, so it fits the offline rule.
 - **Zigbee over the network, not USB**: a PoE Ethernet coordinator (SLZB-06-style) lets Home Assistant run on arda without being pinned to the node with the dongle. Hue bulbs are Zigbee and pair to it directly, so the bridge and its cloud go.
-- **The LLM needs a GPU.** The ProDesks have none; Whisper and Piper are fine on CPU, a useful model isn't. Decide: a GPU box, or a small model. Supersedes LlamaGPT.
+- **The LLM starts on CPU.** GPUs are out of budget. Home Assistant's own intent matching handles plain commands instantly with no LLM; a small quantized model (3B-8B, Ollama) on a ProDesk handles the rest in seconds. A GPU box later changes nothing else. Supersedes LlamaGPT.
 - On the Lab VLAN, its IoT devices on IoT. Whatever the household uses has to keep working mid-rebuild, so keep a manual fallback (switches, the Hue app) until it has earned trust.
 - If the Nest setup includes cameras or a doorbell: UniFi Protect records locally and Home Assistant integrates with it.
 
@@ -228,7 +228,8 @@ Absent, and 2026-11-18 showed what that costs: valar-51/52 hung with no record o
 
 - **A UPS, with NUT.** A power cut is harmless to the stateless Pis, not to Longhorn volumes mid-write, Omni's state or the game worlds. NUT shuts the clusters down cleanly before the battery does. A UniFi UPS reports into the same controller.
 - **A switched, metered PDU** for the ProDesks, the one thing not on PoE: remote power-cycle for a hung machine (BIOS *After Power Loss: Power On*) and per-outlet draw to spot one. The UniFi SmartPower PDU Pro if a UK model exists; a used APC AP79xx/AP88xx otherwise.
-- **Bulk storage** (a UNAS) for the media stack, over NFS/SMB. Drives are the expensive part.
+- **Bulk storage** (a UNAS Pro 8, 10G DAC to the switch's SFP+) for the media stack, over NFS/SMB. Drives are the expensive part.
+- **UniFi Protect**: the UDM SE runs it, recording to its 3.5" bay. Doorbell and cameras on a Switch Flex fed from a PoE++ port on the Pro-24-PoE.
 - **Three 4-port KVM switches** behind the three JetKVMs (ProDesks; Pis; front-of-rack plus desktop and work laptop). Must switch on hotkeys over USB pass-through (JetKVM is a composite device), with EDID emulation; full USB switching keeps JetKVM's virtual media usable.
 
 ---
@@ -239,7 +240,7 @@ The North Star is a lab that rebuilds with no internet at all. What still reache
 
 - Talos images from `factory.talos.dev`. **Fix**: self-hosted Image Factory (`siderolabs/image-factory:deploy/helm/image-factory`), then `registries.factories` in Omni's values and the URLs in `talos-schematic-job.yaml`. Its `pxeURL` can be plain HTTP on the LAN, which also drops iPXE's reliance on `ca.ipxe.org`.
 - Container images, Helm charts, `omnictl` and Argo CD from GitHub. **Fix**: a registry mirror / pull-through cache on ainur.
-- The repo itself, from GitHub: both Argo CDs, template sync, the builder and arda-bootstrap clone it, so with the internet down nothing can change or rebuild. **Fix**: a Git mirror (Forgejo or Gitea) that they read from, GitHub staying the public copy. On ainur, or on a machine outside the lab, so a rebuild of ainur doesn't take its own source with it. The easiest piece of this tier.
+- The repo itself, from GitHub: both Argo CDs, template sync, the builder and arda-bootstrap clone it, so with the internet down nothing can change or rebuild. **Fix**: a Git mirror (Forgejo or Gitea) that they read from, GitHub staying the public copy. Probably an offsite Pi, so a rebuild of ainur doesn't take its own source with it and the source has an off-site copy (see Tier 6). The easiest piece of this tier.
 - The Cloudflare Tunnel and DNS are online by nature; the LAN path has to keep working without them.
 
 ---
