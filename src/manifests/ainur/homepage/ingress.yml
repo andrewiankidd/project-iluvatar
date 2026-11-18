@@ -10,10 +10,10 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - homepage.kidd.network
+        - userpage.kidd.network
       secretName: homepage-tls
   rules:
-    - host: homepage.kidd.network
+    - host: userpage.kidd.network
       http:
         paths:
           - path: /
@@ -24,6 +24,8 @@ spec:
                 port:
                   number: 3000
 ---
+# kidd.network itself is outside the *.kidd.network wildcard: it needs its own
+# DNS record on the LAN.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -36,10 +38,21 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - lab.kidd.network
+        - kidd.network
+        - homepage.kidd.network
       secretName: homepage-public-tls
   rules:
-    - host: lab.kidd.network
+    - host: kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: homepage-public
+                port:
+                  number: 3000
+    - host: homepage.kidd.network
       http:
         paths:
           - path: /

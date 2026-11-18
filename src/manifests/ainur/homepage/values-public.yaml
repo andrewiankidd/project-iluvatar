@@ -1,11 +1,18 @@
-# lab.kidd.network: only what is marked public, no login. A service shows here
-# with `gethomepage.dev/instance.public: ""` on its Ingress.
+# kidd.network and homepage.kidd.network: only what is marked public, no
+# login. A service shows here with `gethomepage.dev/instance.public: ""` on its
+# Ingress; the links below are added by hand.
 config:
   settingsString: |
     title: kidd.network
     instanceName: public
     headerStyle: clean
+  services:
+    - Lab:
+        - Log in:
+            href: https://userpage.kidd.network
+            description: Everything else, after a Dex login
+            icon: mdi-login
 
 env:
   - name: HOMEPAGE_ALLOWED_HOSTS
-    value: lab.kidd.network
+    value: kidd.network,homepage.kidd.network

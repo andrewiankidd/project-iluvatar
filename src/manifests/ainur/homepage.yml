@@ -9,9 +9,10 @@ metadata:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   project: ainur
-  # Two Homepage instances from one chart: homepage (everything, behind Dex)
-  # and homepage-public (only what is marked public, no login). Services list
-  # themselves with gethomepage.dev/* annotations on their Ingress.
+  # Two Homepage instances from one chart: homepage at userpage.kidd.network
+  # (everything, behind a Dex login) and homepage-public at kidd.network and
+  # homepage.kidd.network (only what is marked public, no login). Services
+  # list themselves with gethomepage.dev/* annotations on their Ingress.
   sources:
     - repoURL: https://jameswynn.github.io/helm-charts
       targetRevision: 2.1.0

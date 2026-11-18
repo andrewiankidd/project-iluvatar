@@ -1,4 +1,4 @@
-# homepage.kidd.network: every service, behind a Dex login. A service shows
+# userpage.kidd.network: every service, behind a Dex login. A service shows
 # here with `gethomepage.dev/instance.private: ""` on its Ingress.
 config:
   settingsString: |
@@ -8,9 +8,9 @@ config:
 
 env:
   - name: HOMEPAGE_ALLOWED_HOSTS
-    value: homepage.kidd.network
+    value: userpage.kidd.network
   - name: HOMEPAGE_EXTERNAL_URL
-    value: https://homepage.kidd.network
+    value: https://userpage.kidd.network
   - name: HOMEPAGE_AUTH_ENABLED
     value: "true"
   # Signs the session cookie. In the repo like Dex's client secrets for now
