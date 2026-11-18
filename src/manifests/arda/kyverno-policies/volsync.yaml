@@ -108,7 +108,10 @@ spec:
               cacheStorageClassName: longhorn
               cacheCapacity: 2Gi
               cleanupCachePVC: true
-              cleanupTempPVC: true
+              # Kept: Longhorn's snapshots live inside the volume they were
+              # taken from, so the PVC cloning from this one would never
+              # finish if it went. One extra copy of the data, on purpose.
+              cleanupTempPVC: false
               enableFileDeletion: true
 
     - name: backup
@@ -136,7 +139,10 @@ spec:
               cacheStorageClassName: longhorn
               cacheCapacity: 2Gi
               pruneIntervalDays: 7
+              # The last 5 whatever their day, too: a backup run straight after
+              # a failed restore must not prune the good one from earlier that day.
               retain:
+                last: 5
                 daily: 7
                 weekly: 4
                 monthly: 6
