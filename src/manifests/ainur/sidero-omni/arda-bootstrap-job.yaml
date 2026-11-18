@@ -42,7 +42,11 @@ spec:
               cat /etc/omni/lab-root-ca.crt >> /etc/ssl/certs/ca-certificates.crt
               curl -fsSL -L "$OMNICTL_URL" -o /usr/local/bin/omnictl
               chmod +x /usr/local/bin/omnictl
+              # On a fresh ainur, Omni can start well after this Job: wait for it to
+              # write its key and answer, rather than spend the retries and fail.
+              until [ -s /omni-data/automation.key ]; do echo "waiting for Omni's key"; sleep 10; done
               export OMNI_SERVICE_ACCOUNT_KEY="$(cat /omni-data/automation.key)"
+              until omnictl get clusters >/dev/null 2>&1; do echo "waiting for Omni"; sleep 10; done
 
               omnictl kubeconfig /tmp/kubeconfig --cluster "$CLUSTER" \
                 --service-account --user arda-bootstrap --force
