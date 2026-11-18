@@ -10,6 +10,8 @@ kind: Job
 metadata:
   name: arda-bootstrap
   namespace: ainur-sidero-omni
+  annotations:
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
 spec:
   backoffLimit: 6
   ttlSecondsAfterFinished: 3600
