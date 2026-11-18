@@ -308,11 +308,12 @@ unmount_image_partitions
 
 #region copy assets
 # Fills ${AINUR_*} placeholders in a file with the AINUR_* values from .env,
-# which keeps the Pis' password and k3s tokens out of the repo.
+# which keeps the Pis' password and k3s tokens out of the repo; and
+# ${BOOTSTRAP_IP_ADDRESS}, so a Pi can find this builder's /secrets.
 fill_secrets() {
 	local file="$1" name content
 	content=$(cat "$file")
-	for name in $(env | grep -o '^AINUR_[A-Z0-9_]*'); do
+	for name in $(env | grep -o '^AINUR_[A-Z0-9_]*') BOOTSTRAP_IP_ADDRESS; do
 		content="${content//\$\{$name\}/"${!name}"}"
 	done
 	printf '%s\n' "$content" > "$file"

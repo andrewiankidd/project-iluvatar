@@ -872,13 +872,19 @@ write_files:
     content: |
       #!/bin/bash
       set -euo pipefail
-      url="${CLOUD_INIT_BASE_URL:-http://bootstrap.kidd.network}/secrets/arda.env"
       f="$(mktemp)"
       trap 'rm -f "$f"' EXIT
-      if ! curl -sfL --connect-timeout 3 --max-time 10 "$url" -o "$f"; then
-        echo "[arda-secrets] none at $url; leaving arda-secrets as it is"
+      # The builder that made this image first: on a fresh ainur,
+      # bootstrap.kidd.network is ainur itself and isn't serving yet.
+      for base in "http://${BOOTSTRAP_IP_ADDRESS}" "${CLOUD_INIT_BASE_URL:-http://bootstrap.kidd.network}"; do
+        url="$base/secrets/arda.env"
+        if curl -sfL --connect-timeout 3 --max-time 10 "$url" -o "$f"; then found=1; break; fi
+      done
+      if [ -z "${found:-}" ]; then
+        echo "[arda-secrets] none served; leaving arda-secrets as it is"
         exit 0
       fi
+      echo "[arda-secrets] from $url"
       k3s kubectl create namespace ainur-sidero-omni --dry-run=client -o yaml | k3s kubectl apply -f -
       k3s kubectl -n ainur-sidero-omni create secret generic arda-secrets \
         --from-env-file="$f" --dry-run=client -o yaml | k3s kubectl apply -f -
@@ -905,13 +911,19 @@ write_files:
     content: |
       #!/bin/bash
       set -euo pipefail
-      url="${CLOUD_INIT_BASE_URL:-http://bootstrap.kidd.network}/secrets/ainur.env"
       f="$(mktemp)"
       trap 'rm -f "$f"' EXIT
-      if ! curl -sfL --connect-timeout 3 --max-time 10 "$url" -o "$f"; then
-        echo "[ainur-secrets] none at $url; leaving ainur-secrets as it is"
+      # The builder that made this image first: on a fresh ainur,
+      # bootstrap.kidd.network is ainur itself and isn't serving yet.
+      for base in "http://${BOOTSTRAP_IP_ADDRESS}" "${CLOUD_INIT_BASE_URL:-http://bootstrap.kidd.network}"; do
+        url="$base/secrets/ainur.env"
+        if curl -sfL --connect-timeout 3 --max-time 10 "$url" -o "$f"; then found=1; break; fi
+      done
+      if [ -z "${found:-}" ]; then
+        echo "[ainur-secrets] none served; leaving ainur-secrets as it is"
         exit 0
       fi
+      echo "[ainur-secrets] from $url"
       put() {
         k3s kubectl create namespace "$1" --dry-run=client -o yaml | k3s kubectl apply -f -
         k3s kubectl -n "$1" create secret generic "$2" "${@:3}" --dry-run=client -o yaml \
