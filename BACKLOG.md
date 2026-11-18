@@ -118,6 +118,7 @@ Considered and set aside:
 - After the x86 path is proven and the stopgap retired.
 - **Bitwarden**: Vaultwarden is the usual lightweight server; Dex in front like the rest.
 - **Media**: Jellyfin, with Sonarr/Radarr (and Lidarr if music), Prowlarr (Jackett's successor) for indexers, Bazarr for subtitles, and a download client. Needs bulk storage (see Hardware): a ProDesk's SSD under Longhorn's three replicas is no place for a library. Transcoding needs no GPU: the ProDesks' Intel iGPUs do Quick Sync, given the `i915` extension in the Talos schematic and Intel's GPU device plugin on arda.
+- **Stremio fallback**: a self-hosted addon for when the hosted Torrentio is down. Not `torrentio-scraper` (crawlers and a database); Jackettio or Comet, which query the same Prowlarr on demand, one small container. Without debrid, Stremio streams torrents from the home IP.
 
 ### Home Assistant and a local assistant (the end goal)
 
