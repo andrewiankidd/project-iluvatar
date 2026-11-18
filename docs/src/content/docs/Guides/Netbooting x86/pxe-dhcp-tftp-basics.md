@@ -5,75 +5,53 @@ description: Wiring Talos into the broadcast storm
 draft: true
 ---
 
-This walkthrough explains how to advertise PXE services to x86 hardware without replacing your existing router or DHCP server.
+How ainur offers a network boot to the x86 machines without taking DHCP over from the router, and without getting in the way of the Pis, which netboot from the same servers.
 
 ## Explanation
 
-Classic PXE on x86 expects three moving pieces:
+Network boot on x86 has three moving parts:
 
-1. **DHCP** assigns an IP address and optionally tells the firmware where to find boot files.
-2. **TFTP** serves a tiny program (historically a PXE NBP, in our case iPXE) that knows how to fetch the real operating system kernel.
-3. **HTTP/HTTPS** serves larger artifacts such as the Talos kernel, initramfs, and squashfs root.
+1. **DHCP** gives the machine an address and tells its firmware where to find a boot program.
+2. **TFTP** serves that boot program: here iPXE, which knows how to fetch an operating system over HTTP(S).
+3. **HTTP(S)** serves the rest: the iPXE script, then the Talos kernel and initramfs.
 
-Instead of taking over DHCP entirely, you can run dnsmasq in *proxy* mode. Your router still hands out leases, but dnsmasq listens to the same broadcast and replies with just the extra PXE options (66/67) pointing to the TFTP service. The end result: you keep your existing network stack, yet every PXE-capable box discovers the Talos bootstrap files.
+The router keeps doing DHCP. A second DHCP server in *proxy* mode, dnsmasq, listens to the same broadcasts and answers only the boot part, with no addresses of its own. The machine merges the two answers.
+
+The Pis don't use it. Their EEPROM bootloader takes the TFTP server from the router's DHCP option 66 (ainur's VIP once ainur is up) and fetches its boot files directly. The proxy only answers x86-64 UEFI PXE clients, so the two never meet.
 
 ## Implementation
 
-### 1. Deploy dnsmasq in proxy mode
+`src/manifests/ainur/pi-netboot/proxy-dhcp.yaml` runs dnsmasq on valar-50, on the host network so it sees the broadcasts:
 
-Here’s an example snippet suitable for either a bare-metal install or a containerised deployment:
-
-```ini
-# listen on the bootstrap VLAN only
-interface=eth0
-
-# proxy-DHCP range (no actual leases handed out)
-dhcp-range=192.168.1.0,proxy
-
-# TFTP/iPXE location
-dhcp-option=66,192.168.1.66
-dhcp-boot=undionly.kpxe,bootstrap-tftp,192.168.1.66
-# Tell iPXE which script to chain once loaded
-dhcp-option=option:bootfile-name,undionly.kpxe
-dhcp-option=option:ipxe.configurl,http://192.168.1.66:8080/talos/talos.ipxe
-
-# Optional: point Talos nodes at internal DNS
-dhcp-option=6,192.168.1.3
+```text
+--port=0                                   no DNS
+--dhcp-range=192.168.1.0,proxy,255.255.255.0   proxy only: no leases
+--dhcp-userclass=set:ipxe,iPXE             tag requests that come from iPXE
+--pxe-service=tag:!ipxe,x86-64_EFI,Talos,ipxe.efi,192.168.1.59
+--pxe-service=tag:ipxe,x86-64_EFI,Talos,http://192.168.1.59/talos/boot.ipxe
 ```
 
-- `dhcp-range ... proxy` tells dnsmasq to respond **without** serving addresses.
-- `dhcp-option=66` is the TFTP server address.
-- `dhcp-boot` names the iPXE binary that chainloads the Talos boot script.
+- **Firmware asking** (no iPXE tag) is told to fetch `ipxe.efi` by TFTP from the VIP.
+- **iPXE asking** (the same machine, a moment later) is told to fetch `boot.ipxe` over HTTP. Without the tag it would be handed `ipxe.efi` again and loop.
+- **Only `x86-64_EFI`**: no legacy BIOS entry, so no `undionly.kpxe`. See [UEFI vs Legacy Boot](/project-iluvatar/guides/netbooting-x86/uefi-vs-legacy-boot/).
 
-Keep this file in version control with the rest of your bootstrap resources so that changes (new VLANs, different TFTP IP, etc.) are reviewed and documented.
+TFTP (`tftp-deployment.yaml`) serves the Pis' boot files and `ipxe.efi` from one directory. `ipxe.efi` comes from the dnsmasq image: an init container copies it in among the Pi files, and the Pi image builder leaves it out of its `--delete` syncs.
 
-### 2. Expose TFTP from the bootstrap stack
+## Checking it
 
-The example repository in this project ships a docker-compose stack with a TFTP container (`andrewkidd/tftp-server`). Once running, it can serve:
-
-- `undionly.kpxe` (for BIOS/Legacy clients)
-- `ipxe.efi` (for UEFI firmware)
-- `talos.ipxe` (chainloaded script that grabs kernels/initramfs over HTTP)
-
-If you’re running the stack on Kubernetes, mount the same directory into `/var/tftpboot` using a hostPath or RWX volume.
-
-### 3. Verify with a DHCP broadcast
-
-From any Linux box on the management network:
+From any Linux machine on the LAN (`curl` speaks TFTP):
 
 ```bash
-sudo nmap --script broadcast-dhcp-discover | grep -E 'TFTP|PXE|Boot'
+curl -s -o /tmp/ipxe.efi tftp://192.168.1.59/ipxe.efi && ls -l /tmp/ipxe.efi   # about 1.1 MB
+curl -s http://192.168.1.59/talos/boot.ipxe                                      # the menu
 ```
 
-You should see output similar to:
+Then network-boot a machine and watch dnsmasq offer it `ipxe.efi`:
 
+```bash
+kubectl -n ainur-netboot logs deploy/proxy-dhcp -f | grep -A6 PXEClient
 ```
-|     TFTP Server Name: 192.168.1.66
-|     Boot File Name: undionly.kpxe
-```
-
-At this point x86 firmware should pick up the bootstrap environment the same way the Pis do—only the hand-off script differs.
 
 ## Next Steps
 
-With proxy DHCP and TFTP answering correctly, the next hurdle is making sure each x86 node actually *boots* the media you want. That means aligning firmware expectations (UEFI vs legacy) and pointing Talos at the right machine configs. Continue with [UEFI vs Legacy Boot](/project-iluvatar/guides/netbooting-x86/uefi-vs-legacy-boot/).
+[UEFI vs Legacy Boot](/project-iluvatar/guides/netbooting-x86/uefi-vs-legacy-boot/): getting the machine to ask.

@@ -72,6 +72,7 @@ A re-bootstrap still starts every cluster from an empty datastore, but each volu
 Open:
 
 - **Omni's state on a rebuild.** local-path names each volume's directory after its PVC's UID, so a rebuilt cluster makes new, empty ones and leaves the old directories on the NVMe. A static PV at a fixed path (or VolSync back, to R2 or a LAN S3) would carry Omni over; the old directories need clearing either way.
+- **The lab CA survives a rebuild now** (2026-11-18): `AINUR_LAB_CA_CRT`/`AINUR_LAB_CA_KEY` in `.env`, used by `gen-lab-certs.sh`. Until then every rebuild made a new CA on valar-50's SD card, and every arda machine (and device) stopped trusting Omni.
 - **valar-51/52's NVMe** sit unused, and valar-50's still holds Longhorn's old replicas under `/var/mnt/nvme`.
 - Rebuilding the control plane still takes the VIP down while it netboots, so that re-flash needs the bootstrap VM serving netboot (`rebootstrap.sh` now points DHCP option 66 at it and ainur's `unifi` CronJob points it back).
 
@@ -144,6 +145,16 @@ Absent, and 2026-11-18 showed what that costs: valar-51/52 hung with no record o
 
 - The Pi password, k3s tokens, Dex admin hash, OIDC client secret and Homepage session key are now `AINUR_*` in the bootstrap `.env` (`ainur-secrets.sh` makes them Secrets; the builder fills user-data), not in the repo. Their values are still the old burner ones, which stay in git history.
 - **Then**: new values in `.env` and a rebootstrap. The Pis' SSH could also move from a password to a key.
+
+### Secrets served in the clear
+
+- The builder serves every `AINUR_*` and `ARDA_*` value at `http://<builder>/secrets/*.env`, and ainur's builder does the same from the VIP. That now includes the lab CA's private key, which can mint a certificate for any `*.kidd.network` name your devices will trust, alongside the UniFi API key. Anyone on the LAN can read them.
+- **Fix**: serve them only to the Pis (an allow-list of their addresses in nginx), or move the Pis to fetching them over SSH or with a token baked into user-data. VLANs (below) narrow who's on the LAN in the first place.
+
+### Secure Boot on arda
+
+- The ProDesks run with Secure Boot off: the `ipxe.efi` served isn't signed with a key the firmware trusts, and the schematic isn't Talos's Secure Boot variant.
+- **Then**: Talos's Secure Boot images (the factory builds them; the keys are Sidero's, enrolled once per machine), and a signed loader for the network boot. Omni supports Secure Boot installs.
 
 ### VLANs
 

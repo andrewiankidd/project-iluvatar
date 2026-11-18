@@ -5,7 +5,7 @@ description: Talos over the wire
 draft: true
 ---
 
-So you have a pile of diskless (or soon-to-be diskless) x86 boxes and want them to boot a modern, immutable OS without ever touching a USB stick. This section walks through the PXE flow that hands Talos Linux to generic x86 hardware.
+arda's x86 machines boot Talos from ainur over the network: no USB stick, no per-machine config. Network-boot a machine once and it lands in Omni, trusting the lab CA, and Omni installs Talos to its NVMe. The same boot menu can also wipe a machine and start it over.
 
 <details>
     <summary>What is PXE?</summary>
@@ -17,31 +17,22 @@ So you have a pile of diskless (or soon-to-be diskless) x86 boxes and want them 
 >  -- ChatGPT 🤖
 </details>
 
-## Prerequisites
-:::tip
-If you are reusing the same netboot stack that serves Raspberry Pi devices, start with the [Pi netboot guides](/project-iluvatar/guides/netbooting-raspberry-pi/). The x86 steps below reuse the same dnsmasq, TFTP, and image-hosting services—only the payload changes.
-:::
+## How it fits together
 
-- dnsmasq (or another DHCP forwarder) capable of proxy-DHCP, so your existing router keeps handing out leases while PXE options are injected.
-- TFTP service offering an iPXE shim plus the Talos kernel and initramfs.
-- HTTP server for the heavier Talos artefacts and machine configuration YAML.
-- Talos machine configurations generated with `talosctl gen config` and stored somewhere the nodes can reach—Git + static hosting works well.
+It reuses the servers that netboot the Pis ([Diskless Pi Netboot](/project-iluvatar/guides/netbooting-raspberry-pi/)), all on ainur behind its VIP, `192.168.1.59`:
 
-## Explanation
+1. The machine's firmware asks for a network boot. The router gives it an address; ainur's **proxy DHCP** adds where to boot from.
+2. It fetches **`ipxe.efi`** by TFTP from the VIP.
+3. iPXE fetches **`boot.ipxe`** over HTTP from the VIP: a menu, defaulting to Talos.
+4. Talos's kernel and initramfs come from the **Image Factory**, built from a schematic with the lab CA and Omni's join config inside.
+5. Talos boots in maintenance mode, joins **Omni**, and Omni installs it to the NVMe.
 
-x86 network boot follows the classic PXE handshake:
+| Page | What it covers |
+|------|----------------|
+| [PXE / DHCP / TFTP Basics](/project-iluvatar/guides/netbooting-x86/pxe-dhcp-tftp-basics/) | The proxy DHCP, and why it doesn't disturb the Pis |
+| [UEFI vs Legacy Boot](/project-iluvatar/guides/netbooting-x86/uefi-vs-legacy-boot/) | The firmware settings that make a machine ask |
+| [Serving Talos via PXE](/project-iluvatar/guides/netbooting-x86/serving-talos-via-pxe/) | The schematic, the menu and its **Reset system disk** entry |
 
-1. The node asks the network for DHCP information.
-2. dnsmasq responds with normal leases from your router, *plus* Option 66/67 telling the firmware to chainload iPXE from the bootstrap server.
-3. The downloaded iPXE script boots the Talos kernel (`vmlinuz`) and initramfs (`initramfs.xz`) via TFTP and HTTP.
-4. Talos brings up networking, grabs its machine config from HTTP, and joins the desired Kubernetes control plane.
+## Network boot or USB
 
-Because Talos is immutable and lives entirely in RAM, nodes can boot, reprovision, or be replaced without touching local disks—perfect for homelab boxes, refurb fleet machines, or cloud-style metal nodes.
-
-## Components
-- **dnsmasq (or equivalent)** - Provides proxy-DHCP responses pointing to the TFTP server and iPXE entrypoint.
-- **TFTP/iPXE** - Hosts the short bootstrap program that loads the Talos kernel/initrd.
-- **HTTP artefact server** - Serves Talos squashfs images, machine configurations, and the ignition-style boot scripts.
-- **Talos machine configs** - Generated with `talosctl gen config` and stored declaratively so updates can be applied repeatably.
-
-From here, the deeper dives cover DNS/TFTP plumbing, firmware requirements, and the exact iPXE/Talos hand-off.
+Network boot is the default. The same image is also offered as an ISO, for a machine that can't network-boot: `http://bootstrap.example.com/talos-media/metal-amd64.iso`, refreshed by ainur whenever the schematic changes. Both carry the same lab CA and join config, and both have a **Reset system disk** entry. See [Bootstrapping Arda](/project-iluvatar/getting-started/bootstrap-arda/).
