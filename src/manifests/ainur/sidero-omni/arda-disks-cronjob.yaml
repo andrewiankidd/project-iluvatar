@@ -1,0 +1,113 @@
+# Gets each arda machine's SATA SSD ready for Longhorn, the way ainur's
+# nvme-prepare does for the Pis' NVMe. Talos only creates the longhorn user
+# volume (omni-config/omni-cluster-template.yaml) on a disk with room for it,
+# and never wipes one itself, so an SSD that arrives with old partitions
+# (Windows, an earlier install) would sit unused.
+#
+# Every 10 minutes, for each machine in talos-default whose u-longhorn volume
+# isn't ready: wipes any SATA disk that isn't the system disk, isn't blank,
+# and has no Talos user volume on it. A disk already holding Longhorn's
+# volume is never touched. DRY_RUN=1 only says what it would wipe.
+#
+# Does nothing until talos-default is up.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: arda-disks
+  namespace: ainur-sidero-omni
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: prepare
+              image: alpine:3.20
+              env:
+                - name: OMNI_ENDPOINT
+                  value: https://omni.kidd.network
+                - name: CLUSTER
+                  value: talos-default
+                - name: DRY_RUN
+                  value: "0"
+                - name: OMNICTL_URL
+                  value: https://github.com/siderolabs/omni/releases/download/v1.13.3/omnictl-linux-arm64
+                # Keep in step with omni-config/omni-cluster-template.yaml.
+                - name: TALOSCTL_URL
+                  value: https://github.com/siderolabs/talos/releases/download/v1.14.5/talosctl-linux-arm64
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  apk add --no-cache ca-certificates curl >/dev/null
+                  cat /etc/omni/lab-root-ca.crt >> /etc/ssl/certs/ca-certificates.crt
+                  curl -fsSL -o /usr/local/bin/omnictl "$OMNICTL_URL"
+                  curl -fsSL -o /usr/local/bin/talosctl "$TALOSCTL_URL"
+                  chmod +x /usr/local/bin/omnictl /usr/local/bin/talosctl
+                  [ -s /omni-data/automation.key ] || { echo "Omni isn't up yet"; exit 0; }
+                  export OMNI_SERVICE_ACCOUNT_KEY="$(cat /omni-data/automation.key)"
+                  omnictl talosconfig /tmp/talosconfig --force >/dev/null
+
+                  # "<id> <field value>" per resource, from talosctl's YAML.
+                  fields() { awk -v f="$1" '/^---/ {if (id) print id, v; id = v = ""}
+                    /^    id:/ {id = $2} $1 == f":" {v = $2} END {if (id) print id, v}'; }
+
+                  machines=$(omnictl get clustermachine -l "omni.sidero.dev/cluster=$CLUSTER" -o yaml 2>/dev/null \
+                    | awk '/^    id:/ {print $2}')
+                  [ -n "$machines" ] || { echo "no machines in $CLUSTER yet"; exit 0; }
+
+                  for m in $machines; do
+                    t() { talosctl --talosconfig /tmp/talosconfig -n "$m" "$@"; }
+                    phase=$(t get volumestatus u-longhorn -o yaml 2>/dev/null | sed -n '/^spec:/,$p' | awk '$1 == "phase:" {print $2; exit}')
+                    if [ "$phase" = ready ]; then echo "$m: longhorn ready"; continue; fi
+                    system=$(t get systemdisk -o yaml | awk '$1 == "diskID:" {print $2}')
+                    vols=$(t get discoveredvolumes -o yaml)
+                    for d in $(t get disks -o yaml | fields transport | awk '$2 == "sata" {print $1}'); do
+                      [ "$d" = "$system" ] && continue
+                      # The disk and its partitions: filesystem and partition labels.
+                      labels=$(printf '%s\n' "$vols" | awk -v d="$d" '/^---/ {if (id == d || p == d) print l, pl; id = p = l = pl = ""}
+                        /^    id:/ {id = $2} /^    parent:/ {p = $2} /^    label:/ {l = $2} /^    partition_label:/ {pl = $2}
+                        END {if (id == d || p == d) print l, pl}')
+                      if printf '%s\n' "$labels" | grep -q 'u-'; then
+                        echo "$m: $d has a Talos user volume; leaving it"; continue
+                      fi
+                      if [ "$(printf '%s\n' "$vols" | awk -v d="$d" '/^    parent:/ && $2 == d' | wc -l)" -eq 0 ] \
+                        && ! printf '%s\n' "$labels" | grep -q '[^ ]'; then
+                        echo "$m: $d is blank; Talos will use it"; continue
+                      fi
+                      echo "$m: longhorn is ${phase:-missing}; wiping $d ($(echo $labels))"
+                      [ "$DRY_RUN" = 1 ] || t wipe disk "$d"
+                    done
+                  done
+              volumeMounts:
+                - name: omni-data
+                  mountPath: /omni-data
+                  readOnly: true
+                - name: lab-root-ca
+                  mountPath: /etc/omni/lab-root-ca.crt
+                  subPath: ca.crt
+                  readOnly: true
+          # For the automation key on Omni's ReadWriteOnce data volume, as in
+          # omni-cluster-template-sync-job.yaml.
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: omni
+                  topologyKey: kubernetes.io/hostname
+          volumes:
+            - name: omni-data
+              persistentVolumeClaim:
+                claimName: omni
+                readOnly: true
+            - name: lab-root-ca
+              configMap:
+                name: lab-ca

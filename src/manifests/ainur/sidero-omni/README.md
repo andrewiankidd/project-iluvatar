@@ -16,6 +16,7 @@ This directory is the in-repo source path for the [`sidero-omni` Argo CD Applica
 | `omni-config/omni-cluster-template.yaml` | The Talos cluster template: one control plane, and every other machine as a worker (`size: unlimited`), so it starts with one machine and grows. Workloads run on the control plane too. Talos installs to the NVMe drive; the SATA SSD is Longhorn's. |
 | `talos-schematic-job.yaml` | `Job` that builds the Talos image the x86 machines boot (lab CA + Omni join config embedded) and writes `boot.ipxe` and the ISO's address for `ainur-netboot`, whose `talos-iso` Job caches the ISO for USB. |
 | `arda-bootstrap-job.yaml` | `Job` that installs Argo CD on the `talos-default` cluster once it is up, and points it at `src/manifests/arda`. |
+| `arda-disks-cronjob.yaml` | `CronJob` that, every 10 minutes, wipes an arda machine's SATA SSD when Longhorn's volume isn't ready and the disk holds something else (old partitions), so Talos can create the volume. Never touches a disk with a Talos user volume on it, or the system disk. |
 
 Both Jobs run `omnictl` as the `automation` service account, which Omni creates on its first start (`initialServiceAccount` in `values.yaml`) and whose key it writes to its own data volume. The Jobs mount that volume read-only, on Omni's node. Its key lasts a year, the most Omni allows; a cold rebuild makes a new one.
 
