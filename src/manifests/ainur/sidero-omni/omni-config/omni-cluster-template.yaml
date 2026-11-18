@@ -24,12 +24,19 @@ patches:
             type: nvme
   # Workloads on the control plane too, so one machine is already a cluster
   # and every node's SSD counts for Longhorn.
+  # Talos 1.14 dropped cluster.allowSchedulingOnControlPlanes: the
+  # control plane's NoSchedule taint lives in KubeNodeConfig now.
   - name: schedule-on-control-plane
     inline:
-      cluster:
-        allowSchedulingOnControlPlanes: true
+      apiVersion: v1alpha1
+      kind: KubeNodeConfig
+      taints:
+        node-role.kubernetes.io/control-plane:
+          $patch: delete
   # Longhorn (src/manifests/arda/longhorn.yml) on each node's SATA SSD,
-  # mounted at /var/mnt/longhorn and shared with the kubelet.
+  # mounted at /var/mnt/longhorn. Talos 1.14 has no kubelet extraMounts (the
+  # v1alpha1 machine.kubelet section is gone); user volumes under /var/mnt
+  # are expected to reach the kubelet without one.
   - name: longhorn-disk
     inline:
       apiVersion: v1alpha1
@@ -41,15 +48,6 @@ patches:
           match: disk.transport == "sata" && !system_disk
       filesystem:
         type: xfs
-  - name: longhorn-kubelet
-    inline:
-      machine:
-        kubelet:
-          extraMounts:
-            - destination: /var/mnt/longhorn
-              type: bind
-              source: /var/mnt/longhorn
-              options: [bind, rshared, rw]
 ---
 kind: ControlPlane
 machineClass:
