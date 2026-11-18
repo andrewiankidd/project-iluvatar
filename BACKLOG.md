@@ -97,8 +97,10 @@ Considered and set aside:
 
 ### arda storage
 
-- Longhorn 1.13.0 on arda (`src/manifests/arda/longhorn.yml`), the default storage class, on each node's SATA SSD: a Talos `UserVolumeConfig` at `/var/mnt/longhorn` plus the kubelet mount, both cluster-template patches.
-- **Watch**: the disk selector is `disk.transport == "sata" && !system_disk`. A node without that SSD gets no Longhorn disk.
+- Longhorn 1.13.0 on arda (`src/manifests/arda/longhorn.yml`), the default storage class, on each node's SATA SSD: a Talos `UserVolumeConfig` at `/var/mnt/longhorn` (cluster-template patch, selector `disk.transport == "sata"`; Talos 1.14 has no `system_disk` and no kubelet `extraMounts`, and needs neither).
+- ainur's `arda-disks` CronJob wipes an SSD that arrives with old partitions (Talos won't), then labels the node `node.longhorn.io/create-default-disk=true`; Longhorn only makes a disk on labelled nodes, so it never writes to the bare directory before the SSD is mounted there.
+- **Watch**: a node without a SATA SSD gets no Longhorn disk. With one node, every volume is degraded (3 replicas wanted).
+- **Recreate** the three game volumes made on 2026-11-18 before the SSD was mounted (two faulted, survival only alive while its files stay open). Fresh worlds, no backups.
 
 ### Backups
 
@@ -114,6 +116,25 @@ Considered and set aside:
 
 - Planned on the x86 page, none built: Jellyfin, Paperless, Bitwarden, Crafty, LlamaGPT. Each would be an Argo CD app under `src/manifests/arda` storing its data on Longhorn, with any secrets coming from `.env`.
 - After the x86 path is proven and the stopgap retired.
+- **Bitwarden**: Vaultwarden is the usual lightweight server; Dex in front like the rest.
+- **Media**: Jellyfin, with Sonarr/Radarr (and Lidarr if music), Prowlarr (Jackett's successor) for indexers, Bazarr for subtitles, and a download client. Needs bulk storage (see Hardware): a ProDesk's SSD under Longhorn's three replicas is no place for a library.
+
+### Home Assistant and a local assistant (the end goal)
+
+- Replace Google Nest and the Hue cloud with Home Assistant plus a local LLM voice assistant: Whisper (speech to text), Piper (text to speech), Ollama behind Home Assistant's Assist, and Home Assistant voice satellites where the Nest speakers are. All local, so it fits the offline rule.
+- **Zigbee over the network, not USB**: a PoE Ethernet coordinator (SLZB-06-style) lets Home Assistant run on arda without being pinned to the node with the dongle. Hue bulbs are Zigbee and pair to it directly, so the bridge and its cloud go.
+- **The LLM needs a GPU.** The ProDesks have none; Whisper and Piper are fine on CPU, a useful model isn't. Decide: a GPU box, or a small model. Supersedes LlamaGPT.
+- On the Lab VLAN, its IoT devices on IoT. Whatever the household uses has to keep working mid-rebuild, so keep a manual fallback (switches, the Hue app) until it has earned trust.
+- If the Nest setup includes cameras or a doorbell: UniFi Protect records locally and Home Assistant integrates with it.
+
+### Observability (promoted from Tier 4, 2026-11-18)
+
+Absent, and 2026-11-18 showed what that costs: valar-51/52 hung with no record of why, the NVMe dropouts were found from console screenshots, and Longhorn volumes faulted silently.
+
+- Metrics: kube-prometheus-stack (Prometheus, node-exporter, kube-state-metrics, Grafana, Alertmanager) on ainur, scraping arda too.
+- Logs: Loki with Alloy, collecting both clusters' pods and UniFi's firewall/system logs over syslog. With the GeoLite2 database, that's a map of who hits the forwarded game ports.
+- Alerts somewhere local (self-hosted ntfy), so a hung node or a faulted volume says so. Blackbox checks (or Uptime Kuma) for "does the service answer from outside".
+- Grafana behind Dex; Homepage finds it by its annotations. All Argo CD apps, as usual.
 
 ---
 
@@ -124,10 +145,12 @@ Considered and set aside:
 - The Pi password, k3s tokens, Dex admin hash, OIDC client secret and Homepage session key are now `AINUR_*` in the bootstrap `.env` (`ainur-secrets.sh` makes them Secrets; the builder fills user-data), not in the repo. Their values are still the old burner ones, which stay in git history.
 - **Then**: new values in `.env` and a rebootstrap. The Pis' SSH could also move from a password to a key.
 
-### Game servers on their own VLAN
+### VLANs
 
-- Minecraft and Dragonwilds take port forwards from the internet. A hole in a server or plugin puts someone on the LAN, next to the Pis' SSH and every admin UI.
-- **Fix**: a VLAN for the game servers' traffic that can reach nothing else on the LAN.
+- Everything shares one LAN. Minecraft and Dragonwilds take port forwards from the internet, so a hole in a server or plugin puts someone next to the Pis' SSH and every admin UI.
+- **Plan**: Infrastructure (UniFi, JetKVMs, PDU/UPS), Lab (ainur, arda, the bootstrap VM), Exposed (game servers and anything else published: reaches nothing else), Work (the work laptop), Users, Guests, IoT (Home Assistant's devices).
+- **Watch**: netboot (option 66, TFTP, NFS, proxy DHCP) and kube-vip's ARP on `.59` all assume one segment; the Pis and the VM have to stay together, and DHCP relay or per-VLAN options decide what crosses. Plan it before moving anything.
+- Remote access is UniFi Teleport (or its plain WireGuard server); clients need the gateway as DNS for `*.kidd.network`, and the lab CA installed.
 
 ### The bootstrap VM's proxy DHCP never starts
 
@@ -201,15 +224,12 @@ Considered and set aside:
 
 ---
 
-## Tier 4 — Observability
+## Tier 4 — Hardware, when prices allow
 
-Currently absent. Fine while "the cluster is up when the website is up"; more pressing as workloads grow.
-
-- Prometheus + node-exporter + kube-state-metrics, Grafana, Loki.
-- Alertmanager → ntfy.sh / pushover / discord.
-- All deployable as Argo CD apps following the existing pattern.
-
-The first time a workload silently OOM-loops for a week, this becomes Tier 1.
+- **A UPS, with NUT.** A power cut is harmless to the stateless Pis, not to Longhorn volumes mid-write, Omni's state or the game worlds. NUT shuts the clusters down cleanly before the battery does. A UniFi UPS reports into the same controller.
+- **A switched, metered PDU** for the ProDesks, the one thing not on PoE: remote power-cycle for a hung machine (BIOS *After Power Loss: Power On*) and per-outlet draw to spot one. The UniFi SmartPower PDU Pro if a UK model exists; a used APC AP79xx/AP88xx otherwise.
+- **Bulk storage** (a UNAS) for the media stack, over NFS/SMB. Drives are the expensive part.
+- **Three 4-port KVM switches** behind the three JetKVMs (ProDesks; Pis; front-of-rack plus desktop and work laptop). Must switch on hotkeys over USB pass-through (JetKVM is a composite device), with EDID emulation; full USB switching keeps JetKVM's virtual media usable.
 
 ---
 
@@ -219,7 +239,7 @@ The North Star is a lab that rebuilds with no internet at all. What still reache
 
 - Talos images from `factory.talos.dev`. **Fix**: self-hosted Image Factory (`siderolabs/image-factory:deploy/helm/image-factory`), then `registries.factories` in Omni's values and the URLs in `talos-schematic-job.yaml`. Its `pxeURL` can be plain HTTP on the LAN, which also drops iPXE's reliance on `ca.ipxe.org`.
 - Container images, Helm charts, `omnictl` and Argo CD from GitHub. **Fix**: a registry mirror / pull-through cache on ainur.
-- The repo itself, from GitHub.
+- The repo itself, from GitHub: both Argo CDs, template sync, the builder and arda-bootstrap clone it, so with the internet down nothing can change or rebuild. **Fix**: a Git mirror (Forgejo or Gitea) that they read from, GitHub staying the public copy. On ainur, or on a machine outside the lab, so a rebuild of ainur doesn't take its own source with it. The easiest piece of this tier.
 - The Cloudflare Tunnel and DNS are online by nature; the LAN path has to keep working without them.
 
 ---
@@ -252,4 +272,4 @@ Deferred to "docs finalizer" stage. Notes for future-me:
 
 ---
 
-*Last reviewed: 2026-11-17. Next review: after the first end-to-end run of the x86 path.*
+*Last reviewed: 2026-11-18, after the first end-to-end run of the x86 path and a pass through saved r/homelab posts.*
