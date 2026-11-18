@@ -9,9 +9,10 @@
 #
 # Game traffic cannot go through the Cloudflare Tunnel, so <name>'s record is
 # a DNS-only CNAME to home.kidd.network (ddns.yml) and reaches the server
-# through the router's port forwards: TCP 25565, UDP 19132, TCP 19132 and
-# UDP 19133, to the LoadBalancer address. Everything on the web goes through
-# the tunnel.
+# through the router's port forwards (TCP 25565, UDP 19132, TCP 19132 and
+# UDP 19133) to arda's shared LoadBalancer address, 192.168.1.58. ainur's
+# unifi-port-forwards CronJob keeps those forwards in UniFi, from the
+# Service's own ports. Everything on the web goes through the tunnel.
 #
 # The portal (minecraft.kidd.network) finds the servers from their Service
 # labels at runtime; it holds no server list, and serves each map by name.
@@ -70,6 +71,11 @@ spec:
                 minecraft.kidd.network/description: '{{ .description }}'
                 minecraft.kidd.network/order: '{{ .order }}'
                 minecraft.kidd.network/map: 'https://minecraft.kidd.network/map/{{ .path.basename }}'
+                # 192.168.1.58, shared with the other games (metallb/pool.yaml),
+                # and forwarded from the internet by ainur's unifi-port-forwards
+                # CronJob. Two servers can't share it on the same ports.
+                metallb.io/allow-shared-ip: arda
+                kidd.network/port-forward: "true"
               extraEnv:
                 # Geyser hands this to NetherNet clients (common/patches/geyser.json).
                 CFG_BEDROCK_ADDRESS: '{{ .path.basename }}.minecraft.kidd.network'

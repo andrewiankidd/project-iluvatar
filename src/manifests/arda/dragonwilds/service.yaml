@@ -5,6 +5,10 @@ metadata:
   annotations:
     external-dns.kubernetes.io/hostname: dragonwilds.kidd.network
     external-dns.kubernetes.io/target: home.kidd.network
+    # 192.168.1.58, shared with the other games (../metallb/pool.yaml), and
+    # forwarded from the internet by ainur's unifi-port-forwards CronJob.
+    metallb.io/allow-shared-ip: arda
+    kidd.network/port-forward: "true"
 spec:
   type: LoadBalancer
   selector:
