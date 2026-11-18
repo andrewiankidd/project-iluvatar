@@ -513,6 +513,14 @@ write_files:
         echo "[token] using agent token from K3S_AGENT_TOKEN variable"
         if [ -n "${LEADER_IP:-}" ]; then
           echo "[agent] using leader $LEADER_IP"
+          # The server keeps a hash of each agent's node password and refuses
+          # any other ("Node password rejected"). A netbooted Pi's root is in
+          # RAM, so k3s would make up a new one every boot and the Pi could
+          # never rejoin. Derive it instead: the same Pi always has the same.
+          mkdir -p /etc/rancher/node
+          printf '%s' "${K3S_AGENT_TOKEN}:$(hostname)" | sha256sum | cut -d' ' -f1 \
+            | tr -d '\n' > /etc/rancher/node/password
+          chmod 600 /etc/rancher/node/password
           curl -sfL --retry 5 --retry-connrefused --connect-timeout 5 --max-time 120 https://get.k3s.io | \
             INSTALL_K3S_VERSION="$INSTALL_K3S_VERSION" \
             K3S_URL="https://$LEADER_IP:6443" K3S_TOKEN="$K3S_AGENT_TOKEN" \
