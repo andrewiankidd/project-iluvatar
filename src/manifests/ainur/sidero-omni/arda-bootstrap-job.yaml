@@ -3,9 +3,8 @@
 # arda app its Secret from ainur's arda-secrets (the ARDA_* values in the
 # bootstrap VM's .env; see bootstrap/netboot/.env.example).
 #
-# Fails until the cluster exists and is up; Argo CD re-creates the Job after
-# ttlSecondsAfterFinished, so it simply tries again later. Re-running it is
-# harmless.
+# Waits until the cluster is up, however long that takes. Argo CD re-creates
+# the Job after ttlSecondsAfterFinished; re-running it is harmless.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -48,9 +47,14 @@ spec:
               export OMNI_SERVICE_ACCOUNT_KEY="$(cat /omni-data/automation.key)"
               until omnictl get clusters >/dev/null 2>&1; do echo "waiting for Omni"; sleep 10; done
 
-              omnictl kubeconfig /tmp/kubeconfig --cluster "$CLUSTER" \
-                --service-account --user arda-bootstrap --force
+              # Until a machine has joined and arda's API answers; a Job that
+              # waits reads as Progressing, where failing retries read as broken.
               export KUBECONFIG=/tmp/kubeconfig
+              until omnictl kubeconfig /tmp/kubeconfig --cluster "$CLUSTER" \
+                  --service-account --user arda-bootstrap --force >/dev/null 2>&1 \
+                && kubectl get --raw /readyz >/dev/null 2>&1; do
+                echo "waiting for $CLUSTER"; sleep 60
+              done
 
               kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
               kubectl apply -n argocd --server-side --force-conflicts -f "$ARGOCD_INSTALL_URL"
