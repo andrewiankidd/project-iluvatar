@@ -1,11 +1,11 @@
 ---
 title: Netbooting x86
 slug: guides/netbooting-x86
-description: Talos over the wire
-draft: true
+description: Talos over the wire, served by the Pis
+draft: false
 ---
 
-So you have a pile of diskless (or soon-to-be diskless) x86 boxes and want them to boot a modern, immutable OS without ever touching a USB stick. This section walks through the PXE flow that hands Talos Linux to generic x86 hardware.
+arda's x86 machines boot Talos from the network, served by ainur, the Pi cluster. No USB sticks, nothing configured per machine: set the firmware once, press F9, and the machine lands in Omni already trusting the lab CA. The same menu can also wipe a machine that an earlier Omni installed and put it back into arda.
 
 <details>
     <summary>What is PXE?</summary>
@@ -18,30 +18,24 @@ So you have a pile of diskless (or soon-to-be diskless) x86 boxes and want them 
 </details>
 
 ## Prerequisites
+
 :::tip
-If you are reusing the same netboot stack that serves Raspberry Pi devices, start with the [Pi netboot guides](/project-iluvatar/guides/netbooting-raspberry-pi/). The x86 steps below reuse the same dnsmasq, TFTP, and image-hosting services—only the payload changes.
+This reuses the netboot stack that already serves the Raspberry Pis ([Netbooting Pi from Kubernetes](/project-iluvatar/guides/netbooting-pi-from-kubernetes/)): the same VIP, TFTP and HTTP servers. x86 adds a proxy DHCP and a different payload.
 :::
 
-- dnsmasq (or another DHCP forwarder) capable of proxy-DHCP, so your existing router keeps handing out leases while PXE options are injected.
-- TFTP service offering an iPXE shim plus the Talos kernel and initramfs.
-- HTTP server for the heavier Talos artefacts and machine configuration YAML.
-- Talos machine configurations generated with `talosctl gen config` and stored somewhere the nodes can reach—Git + static hosting works well.
+- ainur up, with its netboot stack serving on the VIP, 192.168.1.59.
+- Omni running on ainur. The boot image carries its join config.
+- x86 machines that can UEFI network boot over IPv4. Most can; some need a firmware setting first.
 
-## Explanation
+## How it fits together
 
-x86 network boot follows the classic PXE handshake:
+1. The machine's firmware broadcasts for DHCP. The router gives it an address as usual; ainur's proxy DHCP adds where to boot from.
+2. The firmware fetches `ipxe.efi` over TFTP from the VIP, and iPXE fetches `boot.ipxe` over HTTP.
+3. `boot.ipxe` is a two-entry menu: Talos, or Talos that wipes the system disk first. Either way the kernel and initramfs come from the Talos Image Factory, built with the lab CA and Omni's join config inside.
+4. Talos registers with Omni, and Omni's cluster template takes it from there: installs Talos to the NVMe and adds it to arda.
 
-1. The node asks the network for DHCP information.
-2. dnsmasq responds with normal leases from your router, *plus* Option 66/67 telling the firmware to chainload iPXE from the bootstrap server.
-3. The downloaded iPXE script boots the Talos kernel (`vmlinuz`) and initramfs (`initramfs.xz`) via TFTP and HTTP.
-4. Talos brings up networking, grabs its machine config from HTTP, and joins the desired Kubernetes control plane.
+## The guides
 
-Because Talos is immutable and lives entirely in RAM, nodes can boot, reprovision, or be replaced without touching local disks—perfect for homelab boxes, refurb fleet machines, or cloud-style metal nodes.
-
-## Components
-- **dnsmasq (or equivalent)** - Provides proxy-DHCP responses pointing to the TFTP server and iPXE entrypoint.
-- **TFTP/iPXE** - Hosts the short bootstrap program that loads the Talos kernel/initrd.
-- **HTTP artefact server** - Serves Talos squashfs images, machine configurations, and the ignition-style boot scripts.
-- **Talos machine configs** - Generated with `talosctl gen config` and stored declaratively so updates can be applied repeatably.
-
-From here, the deeper dives cover DNS/TFTP plumbing, firmware requirements, and the exact iPXE/Talos hand-off.
+- [PXE / DHCP / TFTP Basics](/project-iluvatar/guides/netbooting-x86/pxe-dhcp-tftp-basics/): the proxy DHCP and TFTP on ainur, and why the Pis don't notice.
+- [UEFI vs Legacy Boot](/project-iluvatar/guides/netbooting-x86/uefi-vs-legacy-boot/): the firmware settings, with an HP ProDesk as the example.
+- [Serving Talos via PXE](/project-iluvatar/guides/netbooting-x86/serving-talos-via-pxe/): the image, the menu, and getting it to trust the lab CA.

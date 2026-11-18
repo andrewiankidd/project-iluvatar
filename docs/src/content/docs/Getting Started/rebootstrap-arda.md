@@ -1,44 +1,54 @@
 ---
 title: 🔁 Re-bootstrapping Arda
 slug: getting-started/rebootstrap-arda
-description: Putting an x86 machine back into arda, whether Omni installed it or something else did.
+description: Putting an x86 machine back into arda, whether Omni installed it, an earlier Omni did, or something else did.
 sidebar:
   order: 6
 draft: false
 ---
 
-> tl;dr - a machine Omni installed: remove it in Omni. Anything else: boot the stick, pick **Reset system disk**, and if Omni has seen it before, delete it in Omni.
+> tl;dr - the Omni that installed it is still running: remove it in Omni. Anything else: network boot it (F9 on an HP) and pick **Talos (Reset system disk)**.
 
-How hard this is depends on who installed what's on the machine's disk.
+How hard this is depends on who installed what's on the machine's disk, and whether they're still around.
 
-## A machine Omni installed
+## Omni installed it, and that Omni is still running
 
 Remove it from the cluster in Omni (*Machines*, or its cluster's machine list). Omni resets it properly: Talos wipes its whole system disk and comes back in maintenance mode, and the cluster template allocates it again. Nothing to do at the machine.
 
 ## Anything else
 
-An install Omni didn't make (an older Talos, an earlier experiment, Windows) gets in the way three times over:
+That covers an install by an Omni that's gone (ainur was rebuilt, and Omni with it), one made under a different lab CA, an older Talos, an earlier experiment, or Windows. None of them can be fixed over the network:
 
-- **It boots ahead of the USB stick**, so the stick never runs.
-- **Talos remembers it was installed** in a 1 MB partition called `META`. While `META` is there, the ISO refuses to go on (*"Talos is already installed to disk but booted from another media"*), and Omni treats the machine as installed and tries to *upgrade* it, which fails over and over (`installer exit code 7`) and holds the machine locked. Wiping the other partitions doesn't help: `META` is in use while Talos runs, so it can't be wiped over the network.
-- **An older Talos can't take the cluster's config**, so it can't join that way either: Omni's config for a newer Talos has documents the old one doesn't know.
+- **The old install only takes orders from the Omni that installed it.** Its keys went with that Omni, so nothing else can tell it to reset.
+- **It trusts the CA it was installed under.** If that CA has changed, the console shows `x509: certificate signed by unknown authority ... "Lab Root CA"` on every SideroLink attempt, and maintenance mode only listens over that link.
+- **Talos remembers it was installed**, in a 1 MB partition called `META`. While `META` is there, Omni treats the machine as installed and tries to *upgrade* it, which can fail over and over (`installer exit code 7`) and hold the machine locked.
 
-What clears all of it is Talos's own reset, from the stick's boot menu: it wipes the whole system disk, `META` included, before anything else runs.
+What clears all of it is Talos's own reset, which wipes the whole system disk, `META` included, before anything else runs. ainur serves it on the network, so there's no USB stick to make:
 
-1. **Get it to boot the stick.** USB above the internal disk in the BIOS boot order (F10 on an HP), or the one-time boot menu (F9). If the keyboard doesn't work there either, run
-    ```bash
-    ./bootstrap/arda/rebootstrap.sh 192.168.1.238
-    ```
-    with the address from its console. It wipes the old install's boot partition over the maintenance-mode API, so the disk can't boot and the firmware falls through to the stick. Then Ctrl+Alt+Del.
-2. **At the stick's boot menu, pick `Talos (Reset system disk)`.** Unlike an old install's menu, this one takes keys through a JetKVM. It wipes the disk and boots on into maintenance mode.
-3. **If Omni has seen this machine before, delete it in Omni.** The reset also wiped the token that proves the machine is the one Omni knows, so Omni turns it away: its console logs `error provisioning: ... PermissionDenied desc = unauthorized`. Delete it from *Machines* (or `omnictl delete link <its UUID>`) and it registers again within a minute.
+1. **Once per machine, set up its firmware for UEFI network boot**: [UEFI vs Legacy Boot](/project-iluvatar/guides/netbooting-x86/uefi-vs-legacy-boot/) has the HP settings.
+2. **Restart it and press F9** for the one-time boot menu. Pick **UEFI N/W - IPV4 Network**.
+3. **At ainur's menu, pick `Talos (Reset system disk: wipes it, then joins Omni)`** within ten seconds. Left alone, it boots the plain `Talos` entry, which doesn't wipe anything.
 
-Then it's a new machine: the cluster template allocates it, Omni installs Talos to the NVMe, and it reboots into the cluster.
+![ainur's network boot menu, with the reset entry selected](../../../assets/docs/guides/netbooting-x86/ipxe-reset-menu.png)
 
-:::caution[Pull the stick afterwards]
-Once it's in the cluster, take the stick out, or put the NVMe first. Booted from the stick, the reset entry is one keypress away, and it wipes the disk.
-:::
+Talos wipes the disk, boots on into maintenance mode with the current lab CA and Omni's join token, and registers itself. Then it's a new machine: the cluster template allocates it, Omni installs Talos to the NVMe, and it reboots into the cluster. The first machine becomes the control plane, every later one a worker.
 
-## Avoiding it next time
+If Omni has seen this exact machine before (the same Omni, not a rebuilt one), the reset also wiped the token that proves it's the machine Omni knows, so Omni turns it away: its console logs `error provisioning: ... PermissionDenied desc = unauthorized`. Delete it from *Machines* (or `omnictl delete link <its UUID>`) and it registers again within a minute.
 
-Start the machine from a blank disk, or from one Omni installed. If a ProDesk has had anything else on it, do the reset from the stick before it ever joins Omni, and steps 1 and 3 never come up.
+### The installed system's own menu
+
+An install Omni made has a boot menu of its own, with **Reset to maintenance mode**:
+
+![The installed Talos boot menu](../../../assets/docs/guides/netbooting-x86/talos-installed-boot-menu.png)
+
+That wipes the machine's config but keeps the install, and with it the CA and Omni address the install was made with. It helps when the same Omni is still there. After a rebuild it doesn't: the machine comes back in maintenance mode still trusting the old CA, and still unreachable.
+
+### Without network boot
+
+If a machine can't network boot, the same reset is on the Talos ISO's boot menu as **Talos (Reset system disk)**. Write the ISO ainur caches (`talos-iso`) to a stick and boot that instead. An old install that boots ahead of the stick can have its boot partition wiped from its maintenance-mode console address with `./bootstrap/arda/rebootstrap.sh <address>`, so the firmware falls through to the stick. Take the stick out once the machine is in the cluster: booted from it, the reset entry is one keypress away.
+
+## Keeping it rare
+
+- **ainur's lab CA comes from `.env`** (`AINUR_LAB_CA_CRT`, `AINUR_LAB_CA_KEY`), so a rebuilt ainur keeps the CA every machine already trusts. Leave them empty and every rebuild makes a new CA, and every arda machine needs the reset above.
+- **Omni's own state doesn't survive a rebuild yet**, so a rebuilt ainur still means resetting arda's machines. Keeping Omni's data across rebuilds is on the backlog.
+- **Start a machine from a blank disk**, or from one this Omni installed, and none of this comes up.

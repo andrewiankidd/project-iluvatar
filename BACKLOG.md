@@ -20,7 +20,17 @@ The standing rule: **nothing manual.** Start the bootstrap VM and everything els
 
 ## Active direction — prove the x86 path end to end
 
-**Status as of 2026-11-17**: built, **not yet run**. The lab is powered off.
+**Status as of 2026-11-18**: **proven**, by network boot rather than a USB stick. After ainur was rebuilt, ProDesk-0 was reset from ainur's network boot menu (**Talos (Reset system disk)**), registered with the new Omni, became `talos-default`'s control plane as `valinor-53`, and `arda-bootstrap` installed Argo CD on it. Docs: getting-started/bootstrap-arda and rebootstrap-arda, and the Netbooting x86 guides.
+
+What the first real run turned up, all fixed:
+
+- `ipxe.efi` was mounted over the TFTP volume, and the image builder's `rsync --delete` unmounted it once the volume was a local directory: *File not found*. Now copied in, and skipped by the builder's syncs.
+- The ProDesk's network card only did legacy PXE until its firmware was set to *Option ROM Launch Policy: All UEFI* and legacy support off.
+- Every ainur rebuild made a new lab CA, so the ProDesk, installed under the old one, couldn't reach the new Omni. The CA now comes from `.env`.
+- Both machine sets drew on one class and Omni put the only machine in the workers, leaving no control plane. Workers now need `kidd.network/arda-worker`, which `arda-disks` gives only once the control plane is filled.
+- Template patches deleting a control-plane taint and label failed on a worker's config. The taint delete moved under `ControlPlane:`; MetalLB ignores the label instead (`--ignore-exclude-lb`).
+
+The rest of this section is the original plan, kept for the record.
 
 The blocker that parked the project was trust: Talos machines could be made to trust the lab CA on first boot, but Omni (v1.7.2) installed Talos from a stock image and the CA was lost. Machine config patches could not help, since they arrive only after a machine registers.
 
@@ -151,6 +161,11 @@ Absent, and 2026-11-18 showed what that costs: valar-51/52 hung with no record o
 - **Plan**: Infrastructure (UniFi, JetKVMs, PDU/UPS), Lab (ainur, arda, the bootstrap VM), Exposed (game servers and anything else published: reaches nothing else), Work (the work laptop), Users, Guests, IoT (Home Assistant's devices).
 - **Watch**: netboot (option 66, TFTP, NFS, proxy DHCP) and kube-vip's ARP on `.59` all assume one segment; the Pis and the VM have to stay together, and DHCP relay or per-VLAN options decide what crosses. Plan it before moving anything.
 - Remote access is UniFi Teleport (or its plain WireGuard server); clients need the gateway as DNS for `*.kidd.network`, and the lab CA installed.
+
+### Secure Boot on arda
+
+- arda's machines run with Secure Boot off: ainur's `ipxe.efi` isn't signed with a key the firmware trusts, and the installs come from non-Secure Boot images.
+- **Fix**: Talos's Secure Boot images from the factory (a `secureboot` schematic), Sidero's keys enrolled in each machine's firmware, and a signed loader in front of iPXE for network boot. Then flip the firmware to Secure Boot on.
 
 ### The bootstrap VM's proxy DHCP never starts
 

@@ -15,7 +15,7 @@ A "VIP" (Virtual IP) is an address that doesn't permanently belong to any one ma
 
 I picked kube-vip for this because:
 
-- It runs as a DaemonSet — every node is *capable* of holding the VIP, leader election picks one at a time.
+- It runs as a DaemonSet, pinned to valar-50 (`kidd.network/role: control-plane`) beside the netboot volumes, so one node holds the VIP. It used to run on every Pi, with leader election picking one, when the volumes were Longhorn's and any node could serve them.
 - It's hostNetwork, so it can do raw ARP advertisement on the LAN interface.
 - It's been in production at far larger scales than my home lab, and the failover behaviour is well-understood.
 
@@ -102,6 +102,12 @@ spec:
               value: "true"
             - name: vip_leaderelection
               value: "true"
+            - name: vip_leaseduration
+              value: "60"
+            - name: vip_renewdeadline
+              value: "40"
+            - name: vip_retryperiod
+              value: "5"
             - name: vip_namespace
               value: "ainur-netboot"
 ```
@@ -110,7 +116,8 @@ A few env vars warrant a comment:
 
 - **`cp_enable: "true"` / `svc_enable: "false"` / `lb_enable: "false"`** — this is the slightly weird config. kube-vip can operate in "control-plane VIP" mode or "service load-balancer" mode. We don't actually have a control plane that needs a VIP (k3s clusters this small don't HA the API), but the `cp_enable` mode is the simplest one for "advertise this one address, full stop". Service-mode wants to watch `Service` objects and react to them, which isn't what we want here. So we use control-plane mode for what is, semantically, just "an address".
 - **`vip_arp: "true"`** — Layer 2 ARP-based VIP, not BGP. Fine on a home LAN; you'd want BGP if your network is more grown-up.
-- **`vip_leaderelection: "true"`** — uses K8s lease objects to decide which node holds the VIP. The losing nodes don't answer ARP for the VIP, the winner does.
+- **`vip_leaderelection: "true"`** — uses K8s lease objects to decide which node holds the VIP. The losing nodes don't answer ARP for the VIP, the winner does. Control-plane mode holds the lease even with one kube-vip (setting this to `false` doesn't stop it), and drops the VIP the moment it can't renew. Now that the VIP is pinned to valar-50 that's the only node, and the lease is what matters.
+- **`vip_leaseduration` / `vip_renewdeadline` / `vip_retryperiod`** — 60s, 40s, 5s instead of the defaults (5s, 3s, 1s). With the defaults, an API server slowed for a few seconds by valar-50's SD card (a fresh cluster pulling every image at once) made kube-vip drop the VIP and restart, taking netboot and every `*.kidd.network` name with it. The same long lease k3s's own controllers get on the SD card.
 - **`vip_interface: "eth0"`** — the LAN interface to advertise on. On a Pi this is `eth0`; on a different platform you may need to tweak. There's also a `vip_interface_auto: "true"` knob if you don't want to hardcode.
 - **Tolerations** — without these the DaemonSet would refuse to schedule on the control-plane node, which is the one most likely to hold the VIP in a single-node lab.
 

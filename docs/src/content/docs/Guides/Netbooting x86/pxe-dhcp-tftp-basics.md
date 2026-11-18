@@ -1,79 +1,65 @@
 ---
 title: PXE / DHCP / TFTP Basics
 slug: guides/netbooting-x86/pxe-dhcp-tftp-basics
-description: Wiring Talos into the broadcast storm
-draft: true
+description: Offering a boot to x86 machines without taking over the router's DHCP
+draft: false
 ---
 
-This walkthrough explains how to advertise PXE services to x86 hardware without replacing your existing router or DHCP server.
+The router keeps doing DHCP. ainur adds just the boot answer for x86 machines, from a proxy DHCP, and serves the first file they need over TFTP.
 
 ## Explanation
 
-Classic PXE on x86 expects three moving pieces:
+UEFI network boot needs three things:
 
-1. **DHCP** assigns an IP address and optionally tells the firmware where to find boot files.
-2. **TFTP** serves a tiny program (historically a PXE NBP, in our case iPXE) that knows how to fetch the real operating system kernel.
-3. **HTTP/HTTPS** serves larger artifacts such as the Talos kernel, initramfs, and squashfs root.
+1. **DHCP**, for an address and for where to boot from.
+2. **TFTP**, for a small first program. Here that's iPXE (`ipxe.efi`), which can speak HTTP and HTTPS for everything after it.
+3. **HTTP(S)**, for the boot script, then the Talos kernel and initramfs.
 
-Instead of taking over DHCP entirely, you can run dnsmasq in *proxy* mode. Your router still hands out leases, but dnsmasq listens to the same broadcast and replies with just the extra PXE options (66/67) pointing to the TFTP service. The end result: you keep your existing network stack, yet every PXE-capable box discovers the Talos bootstrap files.
+dnsmasq in *proxy* mode answers the same DHCP broadcast as the router, but hands out no addresses: its reply only carries the boot details. So the router stays in charge of addresses, and nothing on it changes.
+
+The Pis netboot too, and are untouched by it. They find their TFTP server from DHCP option 66, which the router sets to the VIP, and the proxy only answers clients announcing themselves as x86-64 UEFI.
 
 ## Implementation
 
-### 1. Deploy dnsmasq in proxy mode
+### 1. The proxy DHCP
 
-Here’s an example snippet suitable for either a bare-metal install or a containerised deployment:
+`src/manifests/ainur/pi-netboot/proxy-dhcp.yaml` runs dnsmasq on valar-50's host network, beside the VIP:
 
-```ini
-# listen on the bootstrap VLAN only
-interface=eth0
-
-# proxy-DHCP range (no actual leases handed out)
-dhcp-range=192.168.1.0,proxy
-
-# TFTP/iPXE location
-dhcp-option=66,192.168.1.66
-dhcp-boot=undionly.kpxe,bootstrap-tftp,192.168.1.66
-# Tell iPXE which script to chain once loaded
-dhcp-option=option:bootfile-name,undionly.kpxe
-dhcp-option=option:ipxe.configurl,http://192.168.1.66:8080/talos/talos.ipxe
-
-# Optional: point Talos nodes at internal DNS
-dhcp-option=6,192.168.1.3
+```
+--port=0                                   no DNS
+--dhcp-range=192.168.1.0,proxy             proxy mode: no addresses
+--dhcp-userclass=set:ipxe,iPXE             tag requests from iPXE itself
+--pxe-service=tag:!ipxe,x86-64_EFI,Talos,ipxe.efi,192.168.1.59
+--pxe-service=tag:ipxe,x86-64_EFI,Talos,http://192.168.1.59/talos/boot.ipxe
 ```
 
-- `dhcp-range ... proxy` tells dnsmasq to respond **without** serving addresses.
-- `dhcp-option=66` is the TFTP server address.
-- `dhcp-boot` names the iPXE binary that chainloads the Talos boot script.
+The firmware's first request gets `ipxe.efi` over TFTP. Once iPXE is running it asks again, and this time gets the HTTP URL of the boot script.
 
-Keep this file in version control with the rest of your bootstrap resources so that changes (new VLANs, different TFTP IP, etc.) are reviewed and documented.
+### 2. `ipxe.efi` over TFTP
 
-### 2. Expose TFTP from the bootstrap stack
+`src/manifests/ainur/pi-netboot/tftp-deployment.yaml` serves the Pis' boot files from the `pi-netboot-boot` volume. An init container copies `ipxe.efi` (from the dnsmasq image, iPXE 2.0 with HTTPS) into the same volume, and the image builder's sync into it skips `/ipxe.efi`, so a rebuild of the Pi image doesn't delete it.
 
-The example repository in this project ships a docker-compose stack with a TFTP container (`andrewkidd/tftp-server`). Once running, it can serve:
+:::note
+`ipxe.efi` used to be mounted over the volume as a single file. When the volume moved from Longhorn to a local directory, the builder's `rsync --delete` removed that mount point, which unmounts it, and x86 machines got *File not found*. Copied in among the boot files, it stays.
+:::
 
-- `undionly.kpxe` (for BIOS/Legacy clients)
-- `ipxe.efi` (for UEFI firmware)
-- `talos.ipxe` (chainloaded script that grabs kernels/initramfs over HTTP)
+### 3. Checking it
 
-If you’re running the stack on Kubernetes, mount the same directory into `/var/tftpboot` using a hostPath or RWX volume.
-
-### 3. Verify with a DHCP broadcast
-
-From any Linux box on the management network:
+From any Linux machine on the LAN:
 
 ```bash
-sudo nmap --script broadcast-dhcp-discover | grep -E 'TFTP|PXE|Boot'
+curl -s -o /tmp/ipxe.efi tftp://192.168.1.59/ipxe.efi && ls -l /tmp/ipxe.efi
+curl http://192.168.1.59/talos/boot.ipxe
 ```
 
-You should see output similar to:
+The first should be about 1.1 MB, the second a short iPXE menu. The proxy DHCP logs every PXE request it answers:
 
-```
-|     TFTP Server Name: 192.168.1.66
-|     Boot File Name: undionly.kpxe
+```bash
+kubectl -n ainur-netboot logs deploy/proxy-dhcp | grep -A8 PXEClient
 ```
 
-At this point x86 firmware should pick up the bootstrap environment the same way the Pis do—only the hand-off script differs.
+A machine trying to boot shows `vendor class: PXEClient:Arch:00007` (x86-64 UEFI), then `bootfile name: ipxe.efi`. TFTP logs each request in turn, with `sending NAK (1, File not found)` if the file isn't there.
 
 ## Next Steps
 
-With proxy DHCP and TFTP answering correctly, the next hurdle is making sure each x86 node actually *boots* the media you want. That means aligning firmware expectations (UEFI vs legacy) and pointing Talos at the right machine configs. Continue with [UEFI vs Legacy Boot](/project-iluvatar/guides/netbooting-x86/uefi-vs-legacy-boot/).
+With the server side answering, the machines have to actually ask: [UEFI vs Legacy Boot](/project-iluvatar/guides/netbooting-x86/uefi-vs-legacy-boot/).
