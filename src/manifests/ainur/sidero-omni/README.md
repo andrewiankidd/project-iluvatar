@@ -31,7 +31,7 @@ Argo CD reconciles this Application after the cert-manager and trust-manager sta
 4. **`omni` multi-SAN Certificate** is materialised by cert-manager into `omni-tls` (covers `omni.kidd.network`, `omni.kubernetes.kidd.network`, `omni.siderolink.kidd.network`).
 5. **Omni Helm chart** deploys: one pod, three Ingresses sharing `omni-tls`, three Services (main h2c, k8s-proxy https, wireguard UDP NodePort).
 6. **Cluster-template sync Job** applies the machine class and runs `omnictl cluster template sync` against the running Omni, substituting `${LAB_ROOT_CA_INDENTED}` with the contents of the lab CA before applying.
-7. **Talos schematic Job** registers a schematic with the Image Factory and points `http://192.168.1.59/talos/boot.ipxe` at it. `ainur-netboot`'s `talos-iso` Job then caches the same image as `http://bootstrap.kidd.network/talos-media/metal-amd64.iso`.
+7. **Talos schematic Job** registers a schematic with the Image Factory and points `http://192.168.1.59/talos/boot.ipxe` at it. `ainur-netboot`'s `talos-iso` CronJob checks every 5 minutes and caches the same image as `http://bootstrap.kidd.network/talos-media/metal-amd64.iso`.
 8. Omni is ready to receive Talos machines: power one on, from the network or a USB stick, and it boots straight into Omni, which allocates it to `talos-default`.
 9. **arda bootstrap Job** retries until `talos-default` is up, then installs Argo CD there with an `arda` root app for `src/manifests/arda`.
 

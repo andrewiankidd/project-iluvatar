@@ -2,8 +2,9 @@
 # and Omni join config inside), for machines that boot from USB instead of
 # the network. bootstrap-http serves it as /talos-media/metal-amd64.iso.
 #
-# Waits for the talos-ipxe ConfigMap to exist. Argo CD re-runs it after the
-# TTL, and it only downloads when the schematic has changed.
+# Every 5 minutes it compares the schematic's iso-url with the one it
+# has, and downloads only when they differ, so the ISO follows Omni's join
+# config without waiting for an Argo CD sync.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -20,43 +21,48 @@ spec:
       storage: 1Gi
 ---
 apiVersion: batch/v1
-kind: Job
+kind: CronJob
 metadata:
   name: talos-iso
 spec:
-  backoffLimit: 3
-  ttlSecondsAfterFinished: 3600
-  template:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
     spec:
-      restartPolicy: Never
-      containers:
-        - name: download
-          image: alpine:3.20
-          command:
-            - sh
-            - -c
-            - |
-              set -eu
-              url="$(cat /talos/iso-url)"
-              cd /media
-              if [ "$(cat metal-amd64.iso.url 2>/dev/null)" = "$url" ]; then
-                echo "already have $url"
-                exit 0
-              fi
-              wget -q -O metal-amd64.iso.tmp "$url"
-              mv metal-amd64.iso.tmp metal-amd64.iso
-              echo "$url" > metal-amd64.iso.url
-              echo "cached $url"
-          volumeMounts:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: download
+              image: alpine:3.20
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  url="$(cat /talos/iso-url)"
+                  cd /media
+                  if [ "$(cat metal-amd64.iso.url 2>/dev/null)" = "$url" ]; then
+                    echo "already have $url"
+                    exit 0
+                  fi
+                  wget -q -O metal-amd64.iso.tmp "$url"
+                  mv metal-amd64.iso.tmp metal-amd64.iso
+                  echo "$url" > metal-amd64.iso.url
+                  echo "cached $url"
+              volumeMounts:
+                - name: talos-ipxe
+                  mountPath: /talos
+                  readOnly: true
+                - name: media
+                  mountPath: /media
+          volumes:
             - name: talos-ipxe
-              mountPath: /talos
-              readOnly: true
+              configMap:
+                name: talos-ipxe
             - name: media
-              mountPath: /media
-      volumes:
-        - name: talos-ipxe
-          configMap:
-            name: talos-ipxe
-        - name: media
-          persistentVolumeClaim:
-            claimName: talos-media
+              persistentVolumeClaim:
+                claimName: talos-media
