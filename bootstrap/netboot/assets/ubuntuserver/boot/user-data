@@ -967,6 +967,9 @@ write_files:
 
       [Service]
       Type=oneshot
+      # The path unit fires on either path; k3s.yaml can come first, and
+      # k3s-manifests-install skips itself until the manifests dir exists.
+      ExecStartPre=/bin/sh -c 'until [ -d /var/lib/rancher/k3s/server/manifests ]; do sleep 2; done'
       ExecStart=/bin/sh -c 'systemctl start k3s-manifests-install.service tls-bootstrap.service ainur-secrets.service arda-secrets.service || true'
       # Stay active once run: k3s-ready.path re-fires whenever this unit is
       # inactive and its paths exist, so without it the dispatch loops forever.
