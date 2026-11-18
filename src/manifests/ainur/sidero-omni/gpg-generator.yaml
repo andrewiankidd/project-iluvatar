@@ -100,12 +100,16 @@ spec:
                 echo "omni-gpg already exists; skipping"
                 exit 0
               fi
-              # Wait for generated key
-              for i in $(seq 1 60); do [ -s /work/omni.asc ] && break; sleep 1; done
-              test -s /work/omni.asc
-              # Ensure a backup copy exists
-              [ -s /backup/omni.asc ] || cp /work/omni.asc /backup/omni.asc
-              b64=$(base64 -w0 /work/omni.asc 2>/dev/null || base64 /work/omni.asc)
+              # The saved key wins: a restored omni-gpg-backup (omni-volsync.yaml)
+              # holds the key Omni's restored data is encrypted with, and a new
+              # one couldn't read it. Only with no saved key is the new one used,
+              # and saved.
+              if [ ! -s /backup/omni.asc ]; then
+                for i in $(seq 1 60); do [ -s /work/omni.asc ] && break; sleep 1; done
+                test -s /work/omni.asc
+                cp /work/omni.asc /backup/omni.asc
+              fi
+              b64=$(base64 -w0 /backup/omni.asc 2>/dev/null || base64 /backup/omni.asc)
               cat <<EOF | kubectl apply -f -
               apiVersion: v1
               kind: Secret

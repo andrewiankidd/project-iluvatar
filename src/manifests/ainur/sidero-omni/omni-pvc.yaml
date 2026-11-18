@@ -1,0 +1,25 @@
+# Omni's data (/data: its etcd, machine configs and the automation key),
+# defined here rather than by the chart (values.yaml: persistence.existingClaim)
+# so it can be created from its latest backup (omni-volsync.yaml). On a fresh
+# cluster it waits, Pending, until VolSync has restored it.
+#
+# dataSourceRef only applies when the PVC is created; ../sidero-omni.yml tells
+# Argo CD not to try adding it to one that already exists.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: omni
+  namespace: ainur-sidero-omni
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn-replicated-xfs-immediate
+  resources:
+    requests:
+      storage: 20Gi
+  dataSourceRef:
+    apiGroup: volsync.backube
+    kind: ReplicationDestination
+    name: omni-restore

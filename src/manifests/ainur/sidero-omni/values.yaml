@@ -24,6 +24,9 @@ replicaCount: 1
 # default (16Gi) only if you want headroom.
 persistence:
   enabled: true
+  # Ours (omni-pvc.yaml), so it can be restored from its latest backup when
+  # created; the chart then makes none. The settings below match it.
+  existingClaim: omni
   storageClassName: longhorn-replicated-xfs-immediate
   accessModes:
     - ReadWriteOnce

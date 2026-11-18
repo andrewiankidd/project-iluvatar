@@ -29,12 +29,23 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: ainur-sidero-omni
+  # A PVC's dataSourceRef (its restore, sidero-omni/omni-volsync.yaml) can
+  # only be set when it's created: leave it alone on ones that already exist.
+  ignoreDifferences:
+    - kind: PersistentVolumeClaim
+      jsonPointers:
+        - /spec/dataSource
+        - /spec/dataSourceRef
   syncPolicy:
     syncOptions:
       - CreateNamespace=true
+      - RespectIgnoreDifferences=true
     managedNamespaceMetadata:
       labels:
         ainur.kidd.network/ca: inject
+      # VolSync's movers as root, so Omni's files keep their owners.
+      annotations:
+        volsync.backube/privileged-movers: "true"
     # Keep retrying a failed sync: a fresh cluster has to come up on
     # its own, and most failures are ordering (a CRD, webhook or
     # Secret not there yet) that resolves itself.
