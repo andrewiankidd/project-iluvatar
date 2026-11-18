@@ -53,5 +53,12 @@ write_files:
       cat >"$ARGS_DIR/K3S_COMMON_ARGS" <<'EOF'
       --kubelet-arg=eviction-hard=memory.available<750Mi,nodefs.available<0%,imagefs.available<0%,containerfs.available<0% --kubelet-arg=system-reserved=memory=1Gi --kubelet-arg=kube-reserved=memory=512Mi --kubelet-arg=image-gc-high-threshold=70 --kubelet-arg=image-gc-low-threshold=50 --kubelet-arg=eviction-pressure-transition-period=5m --kubelet-arg=serialize-image-pulls=true --kubelet-arg=container-log-max-size=5Mi --kubelet-arg=container-log-max-files=2
       EOF
+      # The SD card Pi is the server, and its etcd shares the card with the
+      # images: while it pulls many at once (a first boot) etcd slows, and with
+      # the default 15s/10s leases the controllers lose leader election and k3s
+      # exits. Longer leases ride that out.
+      cat >"$ARGS_DIR/K3S_SERVER_ARGS" <<'EOF'
+      --kube-controller-manager-arg=leader-elect-lease-duration=60s --kube-controller-manager-arg=leader-elect-renew-deadline=40s --kube-scheduler-arg=leader-elect-lease-duration=60s --kube-scheduler-arg=leader-elect-renew-deadline=40s --kube-cloud-controller-manager-arg=leader-elect-lease-duration=60s --kube-cloud-controller-manager-arg=leader-elect-renew-deadline=40s
+      EOF
 
 final_message: "Cloud-init for valar-0 complete. k3s installed with sdcard runtime."
