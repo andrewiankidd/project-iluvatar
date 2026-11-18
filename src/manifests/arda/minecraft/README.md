@@ -60,19 +60,22 @@ from the second start onward. Restart it once:
 Removing a folder removes the app but keeps its PersistentVolumeClaim
 (`preserveResourcesOnDeletion`, `Prune=false,Delete=false`).
 
-## What arda has to provide
+## What arda provides
 
-Not defined in this repo for arda yet:
+All in this repo now:
 
-- MetalLB, with a pool for the game LoadBalancer IPs. Each Service mixes TCP
-  and UDP ports on one IP.
-- Traefik as the `traefik` IngressClass, as `traefik.kube-system`, where
-  cloudflared sends the tunnel's traffic.
-- A default StorageClass, or set `persistence.storageClass` in `common/values.yaml`.
+- MetalLB (`../metallb.yml`): one LAN address, 192.168.1.58, which every
+  LoadBalancer Service shares (`metallb.io/allow-shared-ip: arda`), each on
+  its own ports. Each server's Service mixes TCP and UDP ports on it.
+- Traefik (`../traefik.yml`) as the `traefik` IngressClass, as
+  `traefik.kube-system`, where cloudflared sends the tunnel's traffic.
+- Longhorn (`../longhorn.yml`) as the default StorageClass.
 - The `cloudflare-api-token` Secret in both `external-dns` and `ddns`, and the
-  `cloudflared-tunnel` Secret in `cloudflared`; see `../external-dns.yml`,
-  `../ddns.yml` and `../cloudflared.yml`.
-- The router's port forwards above, to the LoadBalancer address.
+  `cloudflared-tunnel` Secret in `cloudflared`, from arda-bootstrap; see
+  `../external-dns.yml`, `../ddns.yml` and `../cloudflared.yml`.
+- The router's port forwards above, kept in UniFi by ainur's
+  `unifi-port-forwards` CronJob from the Service's
+  `kidd.network/port-forward: "true"`.
 
 ## Moving the creative world in
 

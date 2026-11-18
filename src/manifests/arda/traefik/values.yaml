@@ -1,0 +1,20 @@
+# Traefik chart 42.3.2 on arda (../traefik.yml).
+
+# The traefik IngressClass, as the default.
+ingressClass:
+  enabled: true
+  isDefaultClass: true
+
+# Ingresses report the Service's address, which external-dns needs before it
+# makes any record (external-dns-tunnel then points it at the tunnel anyway).
+providers:
+  kubernetesIngress:
+    publishedService:
+      enabled: true
+
+# On arda's shared 192.168.1.58 (../metallb), so the sites also answer on the
+# LAN (the chart's Service is a LoadBalancer already). Not port-forwarded:
+# from outside, the web comes in through the tunnel.
+service:
+  annotations:
+    metallb.io/allow-shared-ip: arda

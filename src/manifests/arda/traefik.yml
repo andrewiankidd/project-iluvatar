@@ -1,0 +1,33 @@
+# arda's ingress controller: the traefik IngressClass, as traefik.kube-system,
+# where cloudflared sends everything the tunnel receives (cloudflared.yml).
+# Without it the Ingresses have nowhere to go and no address, so
+# external-dns-tunnel publishes nothing for them.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: traefik
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://traefik.github.io/charts
+      chart: traefik
+      targetRevision: 42.3.2
+      helm:
+        releaseName: traefik
+        valueFiles:
+          - $values/src/manifests/arda/traefik/values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    syncOptions:
+      - ServerSideApply=true
+    automated:
+      prune: true
+      selfHeal: true
