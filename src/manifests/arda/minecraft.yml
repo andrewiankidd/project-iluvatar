@@ -33,6 +33,13 @@ spec:
         revision: main
         files:
           - path: src/manifests/arda/minecraft/servers/*/server.yaml
+      # enabled: "false" in a server.yaml switches that server off; its world
+      # stays (preserveResourcesOnDeletion), only its pod and Services go.
+      selector:
+        matchExpressions:
+          - key: enabled
+            operator: NotIn
+            values: ["false"]
   syncPolicy:
     # Removing a server folder must never take its world with it.
     preserveResourcesOnDeletion: true

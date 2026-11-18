@@ -4,6 +4,17 @@
 minecraftServer:
   motd: KiddCo Creative
   difficulty: easy
+  # Smaller than common's 6G: a few builders, no mobs to speak of. Paper,
+  # BlueMap's renders and Geyser still want a few gigabytes; 2G is where they
+  # start to struggle.
+  memory: 3G
+
+# The heap above plus the JVM's own overhead.
+resources:
+  requests:
+    memory: 3584Mi
+  limits:
+    memory: 4Gi
 
 extraEnv:
   MODE: creative

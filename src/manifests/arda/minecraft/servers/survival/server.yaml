@@ -4,3 +4,7 @@
 title: Survival
 description: A fresh survival world.
 order: "2"
+# Switched off: not played, and its 7Gi didn't fit next to creative on one
+# node. Its world (survival-minecraft-datadir) is kept; delete this line to
+# bring it back.
+enabled: "false"
