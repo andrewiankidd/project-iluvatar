@@ -93,7 +93,9 @@ spec:
                 echo "kind: TrustedRootsConfig"
                 echo "name: lab-root-ca"
                 echo "certificates: |"
-                sed 's/^/  /' /etc/omni/lab-root-ca.crt
+                # awk, not sed: the CA has no final newline, and sed would glue
+                # the --- below onto its END CERTIFICATE line.
+                awk '{print "  " $0}' /etc/omni/lab-root-ca.crt
                 echo "---"
                 omnictl jointoken machine-config | sed '1{/^---$/d}'
               } > /tmp/config.yaml
