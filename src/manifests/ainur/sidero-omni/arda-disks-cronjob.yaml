@@ -7,7 +7,10 @@
 # Every 10 minutes, for each machine in talos-default whose u-longhorn volume
 # isn't ready: wipes any SATA disk that isn't the system disk, isn't blank,
 # and has no Talos user volume on it. A disk already holding Longhorn's
-# volume is never touched. DRY_RUN=1 only says what it would wipe.
+# volume is never touched. Once the volume is ready, labels the node
+# node.longhorn.io/create-default-disk=true, which Longhorn (src/manifests/
+# arda/longhorn/values.yaml) waits for before it puts a disk there.
+# DRY_RUN=1 only says what it would do.
 #
 # Does nothing until talos-default is up.
 apiVersion: batch/v1
@@ -28,7 +31,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: prepare
-              image: alpine:3.20
+              image: alpine/kubectl:1.37.1
               env:
                 - name: OMNI_ENDPOINT
                   value: https://omni.kidd.network
@@ -54,6 +57,9 @@ spec:
                   [ -s /omni-data/automation.key ] || { echo "Omni isn't up yet"; exit 0; }
                   export OMNI_SERVICE_ACCOUNT_KEY="$(cat /omni-data/automation.key)"
                   omnictl talosconfig /tmp/talosconfig --force >/dev/null
+                  omnictl kubeconfig /tmp/kubeconfig --cluster "$CLUSTER" \
+                    --service-account --user arda-disks --force >/dev/null 2>&1 || true
+                  export KUBECONFIG=/tmp/kubeconfig
 
                   # "<id> <field value>" per resource, from talosctl's YAML.
                   fields() { awk -v f="$1" '/^---/ {if (id) print id, v; id = v = ""}
@@ -66,7 +72,16 @@ spec:
                   for m in $machines; do
                     t() { talosctl --talosconfig /tmp/talosconfig -n "$m" "$@"; }
                     phase=$(t get volumestatus u-longhorn -o yaml 2>/dev/null | sed -n '/^spec:/,$p' | awk '$1 == "phase:" {print $2; exit}')
-                    if [ "$phase" = ready ]; then echo "$m: longhorn ready"; continue; fi
+                    if [ "$phase" = ready ]; then
+                      node=$(t get hostname -o yaml | awk '$1 == "hostname:" {print $2; exit}')
+                      if [ "$(kubectl get node "$node" -o jsonpath='{.metadata.labels.node\.longhorn\.io/create-default-disk}' 2>/dev/null)" = true ]; then
+                        echo "$m: longhorn ready"
+                      else
+                        echo "$m: longhorn ready; labelling $node for Longhorn"
+                        [ "$DRY_RUN" = 1 ] || kubectl label node "$node" node.longhorn.io/create-default-disk=true --overwrite
+                      fi
+                      continue
+                    fi
                     system=$(t get systemdisk -o yaml | awk '$1 == "diskID:" {print $2}')
                     vols=$(t get discoveredvolumes -o yaml)
                     for d in $(t get disks -o yaml | fields transport | awk '$2 == "sata" {print $1}'); do

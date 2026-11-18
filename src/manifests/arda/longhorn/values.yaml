@@ -2,6 +2,11 @@
 
 defaultSettings:
   defaultDataPath: /var/mnt/longhorn
+  # Only on nodes labelled node.longhorn.io/create-default-disk=true, which
+  # ainur's arda-disks CronJob does once the SSD's volume is mounted there.
+  # Otherwise a new node's replicas land in the bare directory on the NVMe
+  # and are hidden, and fail, when Talos mounts the SSD over it.
+  createDefaultDiskLabeledNodes: true
   defaultReplicaCount: "3"
   replicaAutoBalance: best-effort
 
