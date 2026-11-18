@@ -1,54 +1,44 @@
 ---
 title: 🔁 Re-bootstrapping Arda
 slug: getting-started/rebootstrap-arda
-description: Getting an x86 machine with an old or half-finished Talos install to boot the USB stick and join Omni.
+description: Putting an x86 machine back into arda, whether Omni installed it or something else did.
 sidebar:
   order: 6
 draft: false
 ---
 
-> tl;dr - read its address off its console, run `bootstrap/arda/rebootstrap.sh <address>`, reboot it.
+> tl;dr - a machine Omni installed: remove it in Omni. Anything else: boot the stick, pick **Reset system disk**, and if Omni has seen it before, delete it in Omni.
 
-A ProDesk that has run Talos before boots that install from its NVMe, ahead of the USB stick. If it never got a config, it sits in **maintenance mode**: the console shows `STAGE Maintenance` and `SIDEROLINK n/a`, and waits.
+How hard this is depends on who installed what's on the machine's disk.
 
-That old install is a dead end:
+## A machine Omni installed
 
-- **It may not join Omni at all.** Without Omni's join settings it has no idea Omni exists.
-- **It may be too old.** Pushed Omni's join settings by hand, an older Talos shows up in Omni, but can't apply the cluster's config: Omni's config for a newer Talos has documents the old one doesn't know (`"DiscoveryServiceConfig" "v1alpha1": not registered` in Omni's log), and Omni won't upgrade it until that config applies.
-- **Its boot menu may ignore the keyboard.** Talos's own boot menu waits 2 seconds and, at least through a JetKVM, doesn't take input, so you can't pick the firmware or the stick from it.
+Remove it from the cluster in Omni (*Machines*, or its cluster's machine list). Omni resets it properly: Talos wipes its whole system disk and comes back in maintenance mode, and the cluster template allocates it again. Nothing to do at the machine.
 
-The fix is the same idea as [the SD card Pi](/project-iluvatar/getting-started/rebootstrap-ainur/#why-the-sd-card-pi-gets-left-behind): make the disk unbootable, and the firmware moves on to the USB stick.
+## Anything else
 
-## Doing it
+An install Omni didn't make (an older Talos, an earlier experiment, Windows) gets in the way three times over:
 
-1. **Plug in the USB stick** with ainur's ISO (`http://bootstrap.example.com/talos-media/metal-amd64.iso`; see [the Quickstart](/project-iluvatar/getting-started/quickstart/#omni-and-arda)).
-2. **Read its address off the console**: the `IP` line, top right.
-3. **Wipe its Talos install**:
+- **It boots ahead of the USB stick**, so the stick never runs.
+- **Talos remembers it was installed** in a 1 MB partition called `META`. While `META` is there, the ISO refuses to go on (*"Talos is already installed to disk but booted from another media"*), and Omni treats the machine as installed and tries to *upgrade* it, which fails over and over (`installer exit code 7`) and holds the machine locked. Wiping the other partitions doesn't help: `META` is in use while Talos runs, so it can't be wiped over the network.
+- **An older Talos can't take the cluster's config**, so it can't join that way either: Omni's config for a newer Talos has documents the old one doesn't know.
+
+What clears all of it is Talos's own reset, from the stick's boot menu: it wipes the whole system disk, `META` included, before anything else runs.
+
+1. **Get it to boot the stick.** USB above the internal disk in the BIOS boot order (F10 on an HP), or the one-time boot menu (F9). If the keyboard doesn't work there either, run
     ```bash
     ./bootstrap/arda/rebootstrap.sh 192.168.1.238
     ```
-    It finds the disk Talos is installed on and wipes its boot, `STATE` and `EPHEMERAL` partitions over the maintenance-mode API, which needs no credentials. Other disks (the SATA SSD Longhorn uses, the stick) are left alone.
-4. **Reboot it**: Ctrl+Alt+Del on its KVM. Maintenance mode can't be rebooted over the network.
+    with the address from its console. It wipes the old install's boot partition over the maintenance-mode API, so the disk can't boot and the firmware falls through to the stick. Then Ctrl+Alt+Del.
+2. **At the stick's boot menu, pick `Talos (Reset system disk)`.** Unlike an old install's menu, this one takes keys through a JetKVM. It wipes the disk and boots on into maintenance mode.
+3. **If Omni has seen this machine before, delete it in Omni.** The reset also wiped the token that proves the machine is the one Omni knows, so Omni turns it away: its console logs `error provisioning: ... PermissionDenied desc = unauthorized`. Delete it from *Machines* (or `omnictl delete link <its UUID>`) and it registers again within a minute.
 
-It boots the stick, the console shows the new Talos version with SideroLink connected, and it appears under *Machines* in Omni. The cluster template takes it from there: it installs to the NVMe and reboots into the cluster.
+Then it's a new machine: the cluster template allocates it, Omni installs Talos to the NVMe, and it reboots into the cluster.
 
-`talosctl` runs in a container, so Docker is all it needs.
-
-:::note
-`META`, the 1 MB partition Talos keeps its own settings in, can't be wiped while maintenance mode is using it. It doesn't need to be: without the boot partition the disk isn't bootable, and the install replaces it.
+:::caution[Pull the stick afterwards]
+Once it's in the cluster, take the stick out, or put the NVMe first. Booted from the stick, the reset entry is one keypress away, and it wipes the disk.
 :::
 
-## A machine that's already in a cluster
+## Avoiding it next time
 
-It isn't in maintenance mode, so the script refuses it. Remove it from the cluster in Omni instead: Omni resets it, wiping its disk, and it comes back in maintenance mode, ready to be allocated again.
-
-## By hand
-
-It's two `talosctl` commands. Find the partitions, then wipe the ones on the disk with the `EFI` partition:
-
-```bash
-talosctl -n 192.168.1.238 -e 192.168.1.238 get discoveredvolumes --insecure
-talosctl -n 192.168.1.238 -e 192.168.1.238 wipe disk nvme0n1p1 nvme0n1p3 nvme0n1p4 --insecure
-```
-
-Use a `talosctl` no newer than the machine's Talos: a newer one won't talk to an older Talos in maintenance mode (`API is not implemented in maintenance mode`).
+Start the machine from a blank disk, or from one Omni installed. If a ProDesk has had anything else on it, do the reset from the stick before it ever joins Omni, and steps 1 and 3 never come up.

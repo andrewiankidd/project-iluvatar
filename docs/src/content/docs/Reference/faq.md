@@ -15,7 +15,7 @@ Start the bootstrap VM, then run `bootstrap/netboot/rebootstrap.sh`. See [Re-boo
 
 ### An x86 machine boots an old Talos instead of the USB stick?
 
-Its old install boots first and sits in maintenance mode. Run `bootstrap/arda/rebootstrap.sh <its address>` and reboot it. See [Re-bootstrapping Arda](/project-iluvatar/getting-started/rebootstrap-arda/).
+Its old install boots first, and even once the stick runs, Talos and Omni treat the machine as installed. Boot the stick, pick **Reset system disk** at its boot menu, and delete the machine in Omni if Omni has seen it before. See [Re-bootstrapping Arda](/project-iluvatar/getting-started/rebootstrap-arda/).
 
 ### Why is one Pi still on an old build?
 
