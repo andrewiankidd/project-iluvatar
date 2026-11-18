@@ -27,15 +27,17 @@ spec:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
-      # iPXE for x86 machines (proxy-dhcp.yaml), mounted beside the boot files
-      # rather than written among them, which the builder syncs with --delete.
+      # iPXE for x86 machines (proxy-dhcp.yaml), copied in among the boot
+      # files. The builder's syncs into this volume skip /ipxe.efi, so its
+      # --delete leaves it. (A file mounted here instead was unmounted by that
+      # --delete once the volume was a local directory, not Longhorn's NFS.)
       initContainers:
         - name: ipxe
           image: quay.io/poseidon/dnsmasq:v0.5.0-54-g6e263b7
-          command: ["cp", "/var/lib/tftpboot/ipxe.efi", "/ipxe/"]
+          command: ["cp", "/var/lib/tftpboot/ipxe.efi", "/boot/ipxe.efi"]
           volumeMounts:
-            - name: ipxe
-              mountPath: /ipxe
+            - name: boot
+              mountPath: /boot
       containers:
         - name: tftp
           image: andrewkidd/tftp-server:v1.0.3
@@ -114,10 +116,6 @@ spec:
           volumeMounts:
             - name: boot
               mountPath: /var/tftpboot
-            - name: ipxe
-              mountPath: /var/tftpboot/ipxe.efi
-              subPath: ipxe.efi
-              readOnly: true
         # - name: dmesg-tailer
         #   image: busybox
         #   securityContext:
@@ -140,5 +138,3 @@ spec:
         - name: boot
           persistentVolumeClaim:
             claimName: pi-netboot-boot
-        - name: ipxe
-          emptyDir: {}

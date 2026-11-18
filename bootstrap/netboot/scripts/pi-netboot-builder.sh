@@ -388,7 +388,7 @@ if [[ "${COMPOSE_PROFILE,,}" == *sdcard* ]]; then
 	mount_image_partitions
 
 	echo "Syncing boot partition..."
-	rsync -ax --delete --no-owner --no-group "$BOOT_EXPORT_DIRECTORY"/ "$BOOT_MOUNT_PATH"/
+	rsync -ax --delete --no-owner --no-group --exclude=/ipxe.efi "$BOOT_EXPORT_DIRECTORY"/ "$BOOT_MOUNT_PATH"/
 	sync
 
 	echo "Syncing root partition..."
@@ -469,7 +469,7 @@ if [[ "${COMPOSE_PROFILE,,}" == *netboot* ]]; then
 	mount_image_partitions
 
 	echo "Syncing boot partition..."
-	rsync -ax --delete --no-owner --no-group "$BOOT_EXPORT_DIRECTORY"/ "$BOOT_MOUNT_PATH"/
+	rsync -ax --delete --no-owner --no-group --exclude=/ipxe.efi "$BOOT_EXPORT_DIRECTORY"/ "$BOOT_MOUNT_PATH"/
 	sync
 
 	echo "Syncing root partition..."
