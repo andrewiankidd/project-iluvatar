@@ -9,12 +9,14 @@ minecraftServer:
   # start to struggle.
   memory: 3G
 
-# The heap above plus the JVM's own overhead.
+# The heap above plus the JVM's own overhead: it runs at about 3.8Gi, as
+# the image commits the whole heap up front. Goldilocks (../../../goldilocks.yml)
+# says what it should be once it has watched it for a while.
 resources:
   requests:
-    memory: 3584Mi
-  limits:
     memory: 4Gi
+  limits:
+    memory: 5Gi
 
 extraEnv:
   MODE: creative
