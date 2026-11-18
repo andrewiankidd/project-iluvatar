@@ -5,6 +5,10 @@ description: Short answers to the things I keep forgetting.
 draft: false
 ---
 
+### Where do I start?
+
+The [Quickstart](/project-iluvatar/getting-started/quickstart/): the whole bring-up on one page. Every `.env` setting is in the [.env reference](/project-iluvatar/reference/env/).
+
 ### How do I re-bootstrap ainur?
 
 Start the bootstrap VM, then run `bootstrap/netboot/rebootstrap.sh`. See [Re-bootstrapping Ainur](/project-iluvatar/getting-started/rebootstrap-ainur/).

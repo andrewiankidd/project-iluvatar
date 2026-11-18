@@ -124,6 +124,26 @@ Considered and set aside:
 - The Pi password, k3s tokens, Dex admin hash, OIDC client secret and Homepage session key are now `AINUR_*` in the bootstrap `.env` (`ainur-secrets.sh` makes them Secrets; the builder fills user-data), not in the repo. Their values are still the old burner ones, which stay in git history.
 - **Then**: new values in `.env` and a rebootstrap. The Pis' SSH could also move from a password to a key.
 
+### Game servers on their own VLAN
+
+- Minecraft and Dragonwilds take port forwards from the internet. A hole in a server or plugin puts someone on the LAN, next to the Pis' SSH and every admin UI.
+- **Fix**: a VLAN for the game servers' traffic that can reach nothing else on the LAN.
+
+### The bootstrap VM's proxy DHCP never starts
+
+- dnsmasq in the VM fails with "port 53 already in use" (systemd-resolved holds it), so the VM never answers netboot itself; the router's DHCP option 66 has to point at it.
+- **Fix**: `port=0` in `vm/init/render-dnsmasq.sh`, so dnsmasq does DHCP only. Check what `dhcp-authoritative` does next to the router's DHCP first.
+
+### proxy-dhcp answers the Pis too
+
+- `pi-netboot/proxy-dhcp.yaml` is meant for x86 UEFI only, but it answers the Pis' requests (`PXEClient:Arch:00000`) as well. They boot anyway, from option 66.
+- **Fix**: only answer client architectures 7 and 9 (x86-64 UEFI).
+
+### One boot address
+
+- Option 66 points at the VM (`.66`) while bootstrapping and at the VIP (`.59`) after, changed by hand.
+- **Fix**: the VIP takes over `.66` once the VM steps back, so option 66 never changes.
+
 ### Renovate Bot
 
 - Every chart, image and Talos/k3s version is pinned. CVEs accumulate silently.
@@ -219,6 +239,7 @@ Deferred to "docs finalizer" stage. Notes for future-me:
 - **Per-node ephemeral join tokens** instead of one static `K3S_AGENT_TOKEN`.
 - **Self-hosted Renovate runner** on the cluster: the cluster suggests its own upgrades.
 - **A `talos-arda` docs section** comparing plain `talosctl` with the Omni path, against the Ubuntu+k3s Pi side.
+- **A public template and a private config.** The public repo keeps the code with `example.com` placeholders (`home.arpa` suits a LAN-only setup); a private repo holds the real domain, addresses and Dex users, as the `$values` source most apps already use. The domain is written into Ingresses, user-data and Omni's template today, so it first needs to become one setting. A private repo also needs a token in `.env` for Argo CD (ainur and arda), the in-cluster builder and Omni's template sync, which all clone from GitHub.
 
 ---
 

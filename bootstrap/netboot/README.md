@@ -4,6 +4,8 @@ This directory contains a Docker Compose project designed to run TFTP and NFS se
 
 Additionally, it includes optional 'builder' services to generate the necessary files for a desired OS on these servers.
 
+New here? Start with the [Quickstart](https://andrewiankidd.github.io/project-iluvatar/getting-started/quickstart/).
+
 ## Components
 The compose is made up of four containers with three different configurations
 
@@ -17,7 +19,12 @@ The compose is made up of four containers with three different configurations
 
 ## Secrets
 
-The few values the clusters need that cannot be in this public repo (Cloudflare tokens, who plays, R2 backup keys) go in `.env` as `ARDA_*` variables; see `.env.example`. The builder serves them to ainur at `/secrets/arda.env`, ainur keeps them as its `arda-secrets` Secret, and arda gets each app's Secret from there. Nothing to run by hand; the file is readable on the LAN while the VM runs.
+The values the clusters need that cannot be in this public repo go in `.env`; see `.env.example` and the [.env reference](https://andrewiankidd.github.io/project-iluvatar/reference/env/).
+
+- `AINUR_*` (the Pis' password, k3s tokens, Dex and OIDC secrets): the builder writes some into user-data and serves all of them at `/secrets/ainur.env`, which ainur makes into an `ainur-secrets` Secret in each namespace that reads one.
+- `ARDA_*` (Cloudflare tokens, who plays, R2 backup keys): served at `/secrets/arda.env`; ainur keeps them as its `arda-secrets` Secret, and arda gets each app's Secret from there.
+
+Nothing to run by hand; both files are readable on the LAN while the VM runs.
 
 ## Running
 **Warning: If you are using Windows, you must use a VM.**
