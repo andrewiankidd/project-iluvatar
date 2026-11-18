@@ -52,7 +52,8 @@ MSYS_NO_PATHCONV=1 docker run --rm -e PI_HOSTS="$PI_HOSTS" -e PI_USER="$PI_USER"
   for h in $PI_HOSTS; do
     echo "== $h"
     sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-      -o ConnectTimeout=5 -o LogLevel=ERROR "$PI_USER@$h" "sudo sh -c '\''$REMOTE'\''" \
+      -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
+      -o LogLevel=ERROR "$PI_USER@$h" "sudo sh -c '\''$REMOTE'\''" \
       || echo "($h unreachable, or dropped the connection to reboot)"
   done'
 
