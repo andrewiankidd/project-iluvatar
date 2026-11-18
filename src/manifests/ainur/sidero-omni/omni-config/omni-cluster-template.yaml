@@ -45,7 +45,8 @@ patches:
       volumeType: disk
       provisioning:
         diskSelector:
-          match: disk.transport == "sata" && !system_disk
+          # Only SATA: the NVMe is the system disk. (1.14 has no system_disk.)
+          match: disk.transport == "sata"
       filesystem:
         type: xfs
 ---
