@@ -1,6 +1,6 @@
 # arda's one LAN address for LoadBalancer Services: every Service shares it
 # (metallb.io/allow-shared-ip: arda), each on its own ports, so the router
-# forwards everything to one place (ainur's unifi-port-forwards CronJob).
+# forwards everything to one place (ainur's unifi CronJob).
 #
 # 192.168.1.50-52 are ainur's Pis and .59 ainur's VIP; .53-.56 are for arda's
 # nodes and .57 is spare. Outside UniFi's DHCP range.

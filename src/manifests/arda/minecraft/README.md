@@ -74,7 +74,7 @@ All in this repo now:
   `cloudflared-tunnel` Secret in `cloudflared`, from arda-bootstrap; see
   `../external-dns.yml`, `../ddns.yml` and `../cloudflared.yml`.
 - The router's port forwards above, kept in UniFi by ainur's
-  `unifi-port-forwards` CronJob from the Service's
+  `unifi` CronJob from the Service's
   `kidd.network/port-forward: "true"`.
 
 ## Moving the creative world in

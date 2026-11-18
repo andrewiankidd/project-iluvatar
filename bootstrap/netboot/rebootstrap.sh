@@ -31,6 +31,25 @@ if ! curl -sf --connect-timeout 3 --max-time 5 -o /dev/null "http://$BOOTSTRAP_I
   exit 1
 fi
 
+# DHCP option 66 to the VM: ainur serves netboot itself, but not while it is
+# down, and this takes it down. Its unifi CronJob points it back at ainur's
+# VIP once ainur serves netboot again. Needs ARDA_UNIFI_API_KEY; without it,
+# set option 66 to the VM by hand.
+if [ -n "${ARDA_UNIFI_API_KEY:-}" ]; then
+  MSYS_NO_PATHCONV=1 docker run --rm -e KEY="$ARDA_UNIFI_API_KEY" -e VM="$BOOTSTRAP_IP_ADDRESS" \
+    -e URL="${ARDA_UNIFI_URL:-https://192.168.1.1}" alpine:3.20 sh -c '
+    apk add -q --no-cache curl jq >/dev/null
+    api() { curl -fsSk -H "X-API-KEY: $KEY" -H "Content-Type: application/json" "$@"; }
+    base="$URL/proxy/network/api/s/default/rest/networkconf"
+    api "$base" | jq -c --arg p "${VM%.*}." ".data[] | select(.purpose == \"corporate\" and ((.ip_subnet // \"\") | startswith(\$p)))" \
+      | while read -r net; do
+        echo "option 66 on $(echo "$net" | jq -r .name): $(echo "$net" | jq -r ".dhcpd_tftp_server // \"unset\"") -> $VM"
+        api -o /dev/null -X PUT "$base/$(echo "$net" | jq -r ._id)" --data "{\"dhcpd_tftp_server\":\"$VM\"}"
+      done'
+else
+  echo "No ARDA_UNIFI_API_KEY: point DHCP option 66 at $BOOTSTRAP_IP_ADDRESS yourself." >&2
+fi
+
 # On the Pi: if it booted from its SD card, zero the card's partition table
 # and the start of its boot partition, so the firmware finds nothing to boot
 # and moves on to netboot, then reboot. wipefs is not enough: it clears only

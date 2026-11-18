@@ -28,8 +28,12 @@ The examples use `example.com`. This repo uses `kidd.network`; swap in your own 
 
 On your router (the examples are UniFi's names):
 
-- **TFTP server (DHCP option 66)**: the bootstrap VM's `BOOTSTRAP_IP_ADDRESS` while bootstrapping. Once ainur is up it serves its own netboot from its VIP (`192.168.1.59`); point option 66 there.
-- **DNS**: a local record `*.example.com → 192.168.1.59`, and DHCP handing out the router as the DNS server (UniFi: *Auto DNS Server*). That's what makes every `*.example.com` name work on the LAN, with or without the internet.
+- **TFTP server (DHCP option 66)**: the bootstrap VM's `BOOTSTRAP_IP_ADDRESS` for the first bootstrap.
+- **DHCP DNS**: the router itself (UniFi: *Auto DNS Server*), so the LAN uses its local records.
+
+On UniFi, put an API key in `.env` (`ARDA_UNIFI_API_KEY`, see the [.env reference](/project-iluvatar/reference/env/)) and the rest keeps itself: once ainur is up, its `unifi` CronJob points option 66 at ainur's VIP (`192.168.1.59`) and keeps `example.com` and `*.example.com → 192.168.1.59` in local DNS; arda's sites get exact names to arda (`192.168.1.58`) of their own, and its games their port forwards. `rebootstrap.sh` moves option 66 back to the VM when it needs to. That's what makes every `*.example.com` name work on the LAN, with or without the internet.
+
+On another router, set those yourself: option 66 to ainur's VIP once ainur is up, and the two DNS records.
 
 ### If the Pis boot from the network
 

@@ -1,0 +1,177 @@
+# The UniFi router's side of the lab, kept from here every 5 minutes so none
+# of it is set by hand:
+#
+# - ainur's names: kidd.network and *.kidd.network as A records to ainur's VIP
+#   in UniFi's local DNS. Created or corrected, never removed. arda's sites
+#   get exact names of their own (src/manifests/arda/external-dns-lan.yml),
+#   which win over the wildcard.
+# - DHCP option 66 (TFTP server) on the LAN: ainur's VIP, once ainur serves
+#   netboot (its VIP answers with the k3s leader). Until then it is left as
+#   it is: bootstrap/netboot/rebootstrap.sh points it at the bootstrap VM
+#   while ainur is down, and this points it back.
+# - arda's port forwards: one per port of every arda Service annotated
+#   kidd.network/port-forward: "true", to its LoadBalancer address
+#   (192.168.1.58, src/manifests/arda/metallb). Take the annotation off, or
+#   the Service away, and its forwards go. Only forwards it made, named
+#   "k8s <namespace>/<service> <port>/<proto>", are touched.
+#
+# DRY_RUN=1 only says what it would change. Reads ARDA_UNIFI_API_KEY (a UniFi
+# OS API key: Settings > Control Plane > Integrations) and optionally
+# ARDA_UNIFI_URL from arda-secrets, the ARDA_* values in the bootstrap VM's
+# .env. Does nothing without the key.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: unifi
+  namespace: ainur-sidero-omni
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: sync
+              image: alpine/kubectl:1.37.1
+              env:
+                - name: DOMAIN
+                  value: kidd.network
+                # Keep in step with ../pi-netboot/kube-vip.yaml.
+                - name: AINUR_VIP
+                  value: "192.168.1.59"
+                - name: OMNI_ENDPOINT
+                  value: https://omni.kidd.network
+                - name: CLUSTER
+                  value: talos-default
+                - name: UNIFI_SITE
+                  value: default
+                - name: DRY_RUN
+                  value: "0"
+                - name: OMNICTL_URL
+                  value: https://github.com/siderolabs/omni/releases/download/v1.13.3/omnictl-linux-arm64
+              envFrom:
+                - secretRef:
+                    name: arda-secrets
+                    optional: true
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  [ -n "${ARDA_UNIFI_API_KEY:-}" ] || { echo "no ARDA_UNIFI_API_KEY; nothing to do"; exit 0; }
+                  apk add --no-cache ca-certificates curl jq >/dev/null
+                  cat /etc/omni/lab-root-ca.crt >> /etc/ssl/certs/ca-certificates.crt
+
+                  # The UniFi Network app. Its certificate is the console's own
+                  # self-signed one.
+                  unifi="${ARDA_UNIFI_URL:-https://192.168.1.1}/proxy/network"
+                  api() { curl -fsSk -H "X-API-KEY: $ARDA_UNIFI_API_KEY" -H 'Content-Type: application/json' "$@"; }
+                  change() {
+                    echo "$1"
+                    [ "$DRY_RUN" = 1 ] || api -o /dev/null -X "$2" "$3" ${4:+--data "$4"}
+                  }
+
+                  # ainur's names.
+                  dns="$unifi/v2/api/site/$UNIFI_SITE/static-dns"
+                  api "$dns" > /tmp/dns.json
+                  for name in "$DOMAIN" "*.$DOMAIN"; do
+                    rec=$(jq -c --arg k "$name" '.[] | select(.key == $k and .record_type == "A")' /tmp/dns.json | head -n1)
+                    want=$(jq -nc --arg k "$name" --arg v "$AINUR_VIP" '{key: $k, record_type: "A", value: $v, enabled: true}')
+                    if [ -z "$rec" ]; then
+                      change "dns: add $name -> $AINUR_VIP" POST "$dns" "$want"
+                    elif [ "$(printf '%s' "$rec" | jq -r '"\(.value) \(.enabled)"')" != "$AINUR_VIP true" ]; then
+                      change "dns: correct $name -> $AINUR_VIP" PUT "$dns/$(printf '%s' "$rec" | jq -r ._id)" \
+                        "$(printf '%s' "$rec" | jq -c --arg v "$AINUR_VIP" '.value = $v | .enabled = true')"
+                    fi
+                  done
+
+                  # Option 66, on the LAN that holds ainur's VIP, once ainur
+                  # answers for netboot.
+                  leader=$(curl -fsS --max-time 5 "http://$AINUR_VIP/k3s/k3s-leader" 2>/dev/null | head -n1 || true)
+                  if printf '%s' "$leader" | grep -qE '^[0-9]+(\.[0-9]+){3}$'; then
+                    prefix="${AINUR_VIP%.*}."
+                    api "$unifi/api/s/$UNIFI_SITE/rest/networkconf" \
+                      | jq -c --arg p "$prefix" '.data[] | select(.purpose == "corporate" and ((.ip_subnet // "") | startswith($p)))' \
+                      | while read -r net; do
+                        if [ "$(printf '%s' "$net" | jq -r '.dhcpd_tftp_server // ""')" != "$AINUR_VIP" ]; then
+                          change "option 66: $(printf '%s' "$net" | jq -r .name) -> $AINUR_VIP" PUT \
+                            "$unifi/api/s/$UNIFI_SITE/rest/networkconf/$(printf '%s' "$net" | jq -r ._id)" \
+                            "$(jq -nc --arg v "$AINUR_VIP" '{dhcpd_tftp_server: $v}')"
+                        fi
+                      done
+                  else
+                    echo "option 66: ainur isn't serving netboot yet; leaving it"
+                  fi
+
+                  # arda's port forwards, once arda is up.
+                  arda_forwards() {
+                    [ -s /omni-data/automation.key ] || { echo "forwards: Omni isn't up yet"; return 0; }
+                    curl -fsSL -o /usr/local/bin/omnictl "$OMNICTL_URL" && chmod +x /usr/local/bin/omnictl
+                    export OMNI_SERVICE_ACCOUNT_KEY="$(cat /omni-data/automation.key)"
+                    export KUBECONFIG=/tmp/kubeconfig
+                    if ! omnictl kubeconfig "$KUBECONFIG" --cluster "$CLUSTER" \
+                        --service-account --user unifi --force >/dev/null 2>&1 \
+                      || ! kubectl get --raw /readyz >/dev/null 2>&1; then
+                      echo "forwards: $CLUSTER isn't up yet"; return 0
+                    fi
+                    # What arda wants forwarded. A Service still waiting for its
+                    # address wants nothing yet.
+                    kubectl get svc -A -o json | jq '[.items[]
+                      | select(.metadata.annotations["kidd.network/port-forward"] == "true")
+                      | (.status.loadBalancer.ingress // [])[0].ip as $ip | select($ip)
+                      | .metadata as $m | .spec.ports[]
+                      | (.protocol | ascii_downcase) as $proto
+                      | {name: "k8s \($m.namespace)/\($m.name) \(.port)/\($proto)",
+                         fwd: $ip, dst_port: (.port | tostring), fwd_port: (.port | tostring), proto: $proto}]' > /tmp/want.json
+                    pf="$unifi/api/s/$UNIFI_SITE/rest/portforward"
+                    api "$pf" | jq '[.data[] | select(.name | startswith("k8s "))]' > /tmp/have.json
+                    # Add or correct what's wanted.
+                    jq -c '.[]' /tmp/want.json | while read -r w; do
+                      name=$(printf '%s' "$w" | jq -r .name)
+                      rule=$(printf '%s' "$w" | jq -c '. + {enabled: true, pfwd_interface: "wan", src: "any", destination_ip: "any", log: false}')
+                      have=$(jq -c --arg n "$name" '.[] | select(.name == $n)' /tmp/have.json | head -n1)
+                      if [ -z "$have" ]; then
+                        change "forwards: add $name -> $(printf '%s' "$w" | jq -r .fwd)" POST "$pf" "$rule"
+                      elif [ "$(printf '%s' "$have" | jq -c '{fwd, dst_port, fwd_port, proto, enabled}')" != \
+                             "$(printf '%s' "$rule" | jq -c '{fwd, dst_port, fwd_port, proto, enabled}')" ]; then
+                        change "forwards: update $name" PUT "$pf/$(printf '%s' "$have" | jq -r ._id)" "$rule"
+                      fi
+                    done
+                    # Remove ours that nothing wants any more.
+                    jq -c --slurpfile want /tmp/want.json '.[] | select(.name as $n | $want[0] | map(.name) | index($n) | not)' /tmp/have.json \
+                      | while read -r h; do
+                        change "forwards: remove $(printf '%s' "$h" | jq -r .name)" DELETE "$pf/$(printf '%s' "$h" | jq -r ._id)"
+                      done
+                    echo "forwards: $(jq length /tmp/want.json) wanted"
+                  }
+                  arda_forwards
+              volumeMounts:
+                - name: omni-data
+                  mountPath: /omni-data
+                  readOnly: true
+                - name: lab-root-ca
+                  mountPath: /etc/omni/lab-root-ca.crt
+                  subPath: ca.crt
+                  readOnly: true
+          # For the automation key on Omni's ReadWriteOnce data volume, as in
+          # omni-cluster-template-sync-job.yaml.
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: omni
+                  topologyKey: kubernetes.io/hostname
+          volumes:
+            - name: omni-data
+              persistentVolumeClaim:
+                claimName: omni
+                readOnly: true
+            - name: lab-root-ca
+              configMap:
+                name: lab-ca

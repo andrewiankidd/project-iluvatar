@@ -25,7 +25,7 @@ The fix is to make the card unbootable. Zero its partition table and the start o
     ```bash
     ./bootstrap/netboot/vm/start.sh
     ```
-2. **Point DHCP option 66 at the VM** (`BOOTSTRAP_IP_ADDRESS`). Once ainur is up it serves netboot itself, but not while it's down, and wiping the SD card Pi takes it down. Point it back at ainur's VIP afterwards.
+2. **DHCP option 66 goes to the VM** (`BOOTSTRAP_IP_ADDRESS`). Once ainur is up it serves netboot itself, but not while it's down, and wiping the SD card Pi takes it down. With `ARDA_UNIFI_API_KEY` in `.env`, `rebootstrap.sh` does this itself, and ainur's `unifi` CronJob points it back at ainur's VIP once ainur serves netboot again. Without it, set it by hand, and back afterwards.
 3. **Re-bootstrap.** Every Pi in `PI_HOSTS`, or just the ones named:
     ```bash
     ./bootstrap/netboot/rebootstrap.sh
