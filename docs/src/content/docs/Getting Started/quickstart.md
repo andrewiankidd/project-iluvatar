@@ -69,7 +69,7 @@ Omni runs on ainur and manages the x86 Talos cluster, `talos-default`.
 1. **Log in** at `https://omni.example.com` with Dex.
 2. **Get the USB image** from `http://bootstrap.example.com/talos-media/metal-amd64.iso`. ainur builds it for you, with the lab CA and Omni's join settings already inside. Don't use Omni's own *Download Installation Media*: its image lacks the lab CA.
 3. **Write it to a USB stick** (Rufus or balenaEtcher).
-4. **On the machine**: Secure Boot off, USB first in the boot order. Boot it; no screen needed.
+4. **On the machine**: Secure Boot off, USB first in the boot order. Boot it; no screen needed. If it has run Talos before and boots that instead, see [Re-bootstrapping Arda](/project-iluvatar/getting-started/rebootstrap-arda/).
 5. **It joins Omni** and shows under *Machines*. The cluster template makes the first one the control plane and the rest workers. Omni installs Talos to the NVMe and reboots it; if it boots the stick again, put the NVMe first or pull the stick.
 6. **arda bootstraps itself**: once `talos-default` is up, a Job on ainur installs Argo CD there and points it at `src/manifests/arda`, handing each app its `ARDA_*` secret from `.env`.
 
