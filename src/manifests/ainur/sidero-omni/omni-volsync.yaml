@@ -55,6 +55,9 @@ spec:
         spec:
           serviceAccountName: omni-volsync-secrets
           restartPolicy: Never
+          # valar-50, as for the movers below.
+          nodeSelector:
+            kidd.network/role: control-plane
           containers:
             - name: secrets
               image: alpine/kubectl:1.37.1
@@ -92,6 +95,16 @@ spec:
   restic:
     repository: omni-volsync
     copyMethod: Snapshot
+    # On valar-50: the netbooted Pis keep images in a small RAM disk, and
+    # VolSync's didn't fit ("no space"); valar-50's are on its SD card.
+    moverAffinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: kidd.network/role
+                  operator: In
+                  values: [control-plane]
     volumeSnapshotClassName: longhorn-snapshot
     storageClassName: longhorn-replicated-xfs-immediate
     accessModes: [ReadWriteOnce]
@@ -117,6 +130,16 @@ spec:
   restic:
     repository: omni-gpg-backup-volsync
     copyMethod: Snapshot
+    # On valar-50: the netbooted Pis keep images in a small RAM disk, and
+    # VolSync's didn't fit ("no space"); valar-50's are on its SD card.
+    moverAffinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: kidd.network/role
+                  operator: In
+                  values: [control-plane]
     volumeSnapshotClassName: longhorn-snapshot
     storageClassName: longhorn-replicated-ext4-immediate
     accessModes: [ReadWriteOnce]
@@ -143,6 +166,16 @@ spec:
   restic:
     repository: omni-volsync
     copyMethod: Snapshot
+    # On valar-50: the netbooted Pis keep images in a small RAM disk, and
+    # VolSync's didn't fit ("no space"); valar-50's are on its SD card.
+    moverAffinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: kidd.network/role
+                  operator: In
+                  values: [control-plane]
     volumeSnapshotClassName: longhorn-snapshot
     storageClassName: longhorn-replicated-xfs-immediate
     cacheStorageClassName: longhorn-replicated-ext4-immediate
@@ -170,6 +203,16 @@ spec:
   restic:
     repository: omni-gpg-backup-volsync
     copyMethod: Snapshot
+    # On valar-50: the netbooted Pis keep images in a small RAM disk, and
+    # VolSync's didn't fit ("no space"); valar-50's are on its SD card.
+    moverAffinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: kidd.network/role
+                  operator: In
+                  values: [control-plane]
     volumeSnapshotClassName: longhorn-snapshot
     storageClassName: longhorn-replicated-ext4-immediate
     cacheStorageClassName: longhorn-replicated-ext4-immediate
