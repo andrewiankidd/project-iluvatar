@@ -2,6 +2,9 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: pi-netboot-builder
+  # A changed Job spec cannot be patched; recreate it instead.
+  annotations:
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
 spec:
   backoffLimit: 0
   template:
