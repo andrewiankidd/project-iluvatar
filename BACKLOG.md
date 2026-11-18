@@ -119,10 +119,10 @@ Considered and set aside:
 
 ## Tier 2 — Defensive depth (when bored, or after Tier 1)
 
-### Dex secrets in the public repo
+### Rotate the burner credentials
 
-- The Dex admin password is `bcrypt(ubuntu)` and the shared OIDC client secret is `dex-oidc-secret`, both in the repo.
-- **Accepted for now**: this is still dev. Rotate them once the whole loop is proven, through `.env` like the arda secrets, so they never land in git again.
+- The Pi password, k3s tokens, Dex admin hash, OIDC client secret and Homepage session key are now `AINUR_*` in the bootstrap `.env` (`ainur-secrets.sh` makes them Secrets; the builder fills user-data), not in the repo. Their values are still the old burner ones, which stay in git history.
+- **Then**: new values in `.env` and a rebootstrap. The Pis' SSH could also move from a password to a key.
 
 ### Renovate Bot
 

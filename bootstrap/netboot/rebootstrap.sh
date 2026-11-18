@@ -9,9 +9,9 @@
 #   ./rebootstrap.sh 192.168.1.50     just that one
 #
 # Settings, from the environment or .env (see .env.example):
-#   PI_HOSTS     the Pis                   default: 192.168.1.50 192.168.1.51 192.168.1.52
-#   PI_USER      their user                default: ubuntu
-#   PI_PASSWORD  its password (user-data)  default: ubuntu
+#   PI_HOSTS           the Pis                   default: 192.168.1.50 192.168.1.51 192.168.1.52
+#   PI_USER            their user                default: ubuntu
+#   AINUR_PI_PASSWORD  their password            (the same one user-data sets)
 #
 # Needs Docker: ssh and sshpass run in a container.
 # Docs: https://andrewiankidd.github.io/project-iluvatar/getting-started/rebootstrap-ainur/
@@ -23,7 +23,7 @@ if [ -f "$HERE/.env" ]; then
 fi
 PI_HOSTS="${*:-${PI_HOSTS:-192.168.1.50 192.168.1.51 192.168.1.52}}"
 PI_USER="${PI_USER:-ubuntu}"
-PI_PASSWORD="${PI_PASSWORD:-ubuntu}"
+PI_PASSWORD="${AINUR_PI_PASSWORD:?set AINUR_PI_PASSWORD in .env}"
 
 # Nothing to boot from if the VM is not serving.
 if ! curl -sf --connect-timeout 3 --max-time 5 -o /dev/null "http://$BOOTSTRAP_IP_ADDRESS/user-data"; then

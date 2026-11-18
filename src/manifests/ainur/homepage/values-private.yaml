@@ -13,16 +13,21 @@ env:
     value: https://userpage.kidd.network
   - name: HOMEPAGE_AUTH_ENABLED
     value: "true"
-  # Signs the session cookie. In the repo like Dex's client secrets for now
-  # (BACKLOG, Tier 2).
+  # Session cookie key and Dex client secret, from the ainur-secrets Secret.
   - name: HOMEPAGE_AUTH_SECRET
-    value: homepage-session-secret-change-me-0001
+    valueFrom:
+      secretKeyRef:
+        name: ainur-secrets
+        key: AINUR_HOMEPAGE_AUTH_SECRET
   - name: HOMEPAGE_OIDC_ISSUER
     value: https://dex.kidd.network
   - name: HOMEPAGE_OIDC_CLIENT_ID
     value: homepage
   - name: HOMEPAGE_OIDC_CLIENT_SECRET
-    value: dex-oidc-secret
+    valueFrom:
+      secretKeyRef:
+        name: ainur-secrets
+        key: AINUR_OIDC_CLIENT_SECRET
   - name: HOMEPAGE_OIDC_NAME
     value: kidd.network
   - name: HOMEPAGE_OIDC_AUTO_LOGIN

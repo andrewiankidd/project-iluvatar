@@ -307,6 +307,17 @@ unmount_image_partitions
 #endregion mount image and export files
 
 #region copy assets
+# Fills ${AINUR_*} placeholders in a file with the AINUR_* values from .env,
+# which keeps the Pis' password and k3s tokens out of the repo.
+fill_secrets() {
+	local file="$1" name content
+	content=$(cat "$file")
+	for name in $(env | grep -o '^AINUR_[A-Z0-9_]*'); do
+		content="${content//\$\{$name\}/"${!name}"}"
+	done
+	printf '%s\n' "$content" > "$file"
+}
+
 copy_assets() {
   local OVERLAY_TARGET="$1"
   echo "Copying assets from '$ASSETS_DIRECTORY' ($OVERLAY_TARGET overlays)"
@@ -334,7 +345,13 @@ copy_assets() {
 				echo "No overlay found. Copying base file for '$rel'"
 				rsync -xar --inplace --progress "$f" "$dest"
 			fi
+			[ "$rel" = "user-data" ] && fill_secrets "$dest"
 		done
+		# A missing AINUR_* value would leave a blank password or k3s token.
+		if missing=$(grep -o '\${AINUR_[A-Z0-9_]*}' "$BOOT_EXPORT_DIRECTORY/user-data" 2>/dev/null | sort -u | tr '\n' ' ') && [ -n "$missing" ]; then
+			echo "Error: user-data needs these from .env (or the ainur-secrets Secret): $missing"
+			exit 1
+		fi
 	fi
 
 	# copy os assets (no overlay support yet)
@@ -548,6 +565,13 @@ if env | grep -q '^ARDA_'; then
 	echo "Writing ARDA_* secrets to '$BOOT_EXPORT_DIRECTORY/secrets/arda.env'"
 	mkdir -p "$BOOT_EXPORT_DIRECTORY/secrets"
 	env | grep '^ARDA_' | sort > "$BOOT_EXPORT_DIRECTORY/secrets/arda.env"
+fi
+# The same for AINUR_*, which ainur-secrets.sh makes into ainur's Secrets. The
+# in-cluster builder has them too (from ainur-secrets), so it serves them on.
+if env | grep -q '^AINUR_'; then
+	echo "Writing AINUR_* secrets to '$BOOT_EXPORT_DIRECTORY/secrets/ainur.env'"
+	mkdir -p "$BOOT_EXPORT_DIRECTORY/secrets"
+	env | grep '^AINUR_' | sort > "$BOOT_EXPORT_DIRECTORY/secrets/ainur.env"
 fi
 #endregion secrets
 

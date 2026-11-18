@@ -70,6 +70,14 @@ extraVolumeMounts:
 # NOTE: do NOT override service.main.annotations here. The chart default
 # (traefik.ingress.kubernetes.io/service.serversscheme: h2c) is required for
 # Traefik to talk h2c to the backend.
+# Omni reads this over config.auth.oidc.clientSecret.
+env:
+  - name: OMNI_AUTH_OIDC_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: ainur-secrets
+        key: AINUR_OIDC_CLIENT_SECRET
+
 service:
   main:
     type: ClusterIP
@@ -197,11 +205,8 @@ config:
       enabled: true
       providerURL: https://dex.kidd.network
       clientID: omni
-      # Plaintext for now — same secret used by Headlamp and Argo CD as the
-      # Dex static client secret. See BACKLOG Tier 1 "SOPS for secrets":
-      # this should move to additionalConfigSources + a SOPS-encrypted Secret
-      # before the next public-repo commit if the value rotates.
-      clientSecret: dex-oidc-secret
+      # The client secret is OMNI_AUTH_OIDC_CLIENT_SECRET (env, below), from
+      # the ainur-secrets Secret.
       scopes:
         - openid
         - profile

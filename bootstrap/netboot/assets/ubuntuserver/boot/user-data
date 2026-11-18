@@ -10,7 +10,7 @@ package_upgrade: false
 
 users:
   - name: ubuntu
-    plain_text_passwd: ubuntu
+    plain_text_passwd: ${AINUR_PI_PASSWORD}
     lock_passwd: false
     shell: /bin/bash
     sudo: ALL=(ALL) NOPASSWD:ALL
@@ -455,8 +455,8 @@ write_files:
         echo "[token] using agent token from $AGENT_TOKEN_PATH"
       fi
       # Final defaults if nothing on disk or env
-      : "${K3S_TOKEN:=my-cluster-token}"
-      : "${K3S_AGENT_TOKEN:=my-agent-token}"
+      : "${K3S_TOKEN:=${AINUR_K3S_TOKEN}}"
+      : "${K3S_AGENT_TOKEN:=${AINUR_K3S_AGENT_TOKEN}}"
       # Base args kept minimal; netboot overlays (if any) appended below
       K3S_COMMON_ARGS=""
       # Keep non-netboot defaults; netboot-specific adds (e.g., --etcd-disable-snapshots) come via overlays
@@ -714,7 +714,7 @@ write_files:
                 name: Dex
                 issuer: https://dex.kidd.network
                 clientID: argocd
-                clientSecret: $oidc.dex.clientSecret
+                clientSecret: $ainur-secrets:AINUR_OIDC_CLIENT_SECRET
                 usernameClaim: email
                 groupsClaim: groups
                 requestedScopes:
@@ -725,11 +725,6 @@ write_files:
               policy.csv: |
                 g, admin@kidd.network, role:admin
               scopes: '[groups, email]'
-            secret:
-              # Additional keys to inject into argocd-secret
-              extra:
-                # Argo CD Dex OIDC client secret (must match Dex staticClients[].secret)
-                oidc.dex.clientSecret: dex-oidc-secret
 
   - path: /etc/k3s-manifests/22-argocd-apps.helm.yaml
     permissions: '0644'
@@ -894,6 +889,50 @@ write_files:
       ExecStart=/usr/local/sbin/arda-secrets.sh
       RemainAfterExit=yes
 
+  # The AINUR_* values from the bootstrap VM's .env (pi-netboot-builder.sh):
+  # the ainur-secrets Secret in each namespace that reads one (Dex, Argo CD,
+  # Omni, Homepage, and the in-cluster builder), and headlamp-oidc in the shape
+  # Headlamp's chart expects. Only the VM serves the file.
+  - path: /usr/local/sbin/ainur-secrets.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      url="${CLOUD_INIT_BASE_URL:-http://bootstrap.kidd.network}/secrets/ainur.env"
+      f="$(mktemp)"
+      trap 'rm -f "$f"' EXIT
+      if ! curl -sfL --connect-timeout 3 --max-time 10 "$url" -o "$f"; then
+        echo "[ainur-secrets] none at $url; leaving ainur-secrets as it is"
+        exit 0
+      fi
+      put() {
+        k3s kubectl create namespace "$1" --dry-run=client -o yaml | k3s kubectl apply -f -
+        k3s kubectl -n "$1" create secret generic "$2" "${@:3}" --dry-run=client -o yaml \
+          | k3s kubectl label --local -f - app.kubernetes.io/part-of=argocd -o yaml \
+          | k3s kubectl apply -f -
+      }
+      for ns in ainur-netboot ainur-dex argocd ainur-sidero-omni ainur-homepage; do
+        put "$ns" ainur-secrets --from-env-file="$f"
+      done
+      put ainur-headlamp headlamp-oidc \
+        --from-literal=OIDC_CLIENT_ID=headlamp \
+        --from-literal=OIDC_CLIENT_SECRET="$(grep '^AINUR_OIDC_CLIENT_SECRET=' "$f" | cut -d= -f2-)" \
+        --from-literal=OIDC_ISSUER_URL=https://dex.kidd.network \
+        --from-literal=OIDC_SCOPES="openid profile email"
+
+  - path: /etc/systemd/system/ainur-secrets.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=ainur secrets from the bootstrap VM
+      Wants=k3s.service
+      After=k3s.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/ainur-secrets.sh
+      RemainAfterExit=yes
+
   - path: /etc/systemd/system/k3s-manifests-install.service
     permissions: '0644'
     content: |
@@ -921,7 +960,7 @@ write_files:
 
       [Service]
       Type=oneshot
-      ExecStart=/bin/sh -c 'systemctl start k3s-manifests-install.service tls-bootstrap.service arda-secrets.service || true'
+      ExecStart=/bin/sh -c 'systemctl start k3s-manifests-install.service tls-bootstrap.service ainur-secrets.service arda-secrets.service || true'
       # Stay active once run: k3s-ready.path re-fires whenever this unit is
       # inactive and its paths exist, so without it the dispatch loops forever.
       RemainAfterExit=yes

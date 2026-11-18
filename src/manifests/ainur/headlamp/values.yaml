@@ -7,15 +7,21 @@ rbac:
 
 config:
   inCluster: true
+  # Client ID, secret, issuer and scopes come from the headlamp-oidc Secret
+  # (user-data: ainur-secrets.sh); the rest are HEADLAMP_CONFIG_* below, which
+  # the chart's external-secret mode does not pass on itself.
   oidc:
-    clientID: "headlamp"
-    clientSecret: "dex-oidc-secret"
-    issuerURL: "https://dex.kidd.network"
-    scopes: "openid profile email"
-    callbackURL: "https://headlamp.kidd.network/oidc-callback"
-    useAccessToken: true
+    secret:
+      create: false
+    externalSecret:
+      enabled: true
+      name: headlamp-oidc
 
 env:
+  - name: HEADLAMP_CONFIG_OIDC_CALLBACK_URL
+    value: "https://headlamp.kidd.network/oidc-callback"
+  - name: HEADLAMP_CONFIG_OIDC_USE_ACCESS_TOKEN
+    value: "true"
   - name: SSL_CERT_DIR
     value: /etc/ssl/local-ca
 volumes:

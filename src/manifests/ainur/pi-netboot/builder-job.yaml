@@ -78,6 +78,9 @@ spec:
           envFrom:
             - configMapRef:
                 name: pi-netboot-env
+            # AINUR_* for user-data (user-data: ainur-secrets.sh makes it).
+            - secretRef:
+                name: ainur-secrets
           volumeMounts:
             - name: repo
               mountPath: /mnt/netboot
