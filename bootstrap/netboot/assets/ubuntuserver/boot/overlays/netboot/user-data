@@ -93,7 +93,7 @@ write_files:
       --snapshotter=fuse-overlayfs --kubelet-arg=eviction-hard=memory.available<750Mi,nodefs.available<0%,imagefs.available<0%,containerfs.available<0% --kubelet-arg=system-reserved=memory=1Gi --kubelet-arg=kube-reserved=memory=512Mi --kubelet-arg=image-gc-high-threshold=70 --kubelet-arg=image-gc-low-threshold=50 --kubelet-arg=eviction-pressure-transition-period=5m --kubelet-arg=serialize-image-pulls=true --kubelet-arg=container-log-max-size=5Mi --kubelet-arg=container-log-max-files=2
       EOF
       # Server args overlay
-      echo "--etcd-disable-snapshots --disable=local-storage" >"$ARGS_DIR/K3S_SERVER_ARGS"
+      echo "--disable=local-storage" >"$ARGS_DIR/K3S_SERVER_ARGS"
       # Agent args overlay
       echo "--node-label=kidd.network/boot=netboot" >"$ARGS_DIR/K3S_AGENT_ARGS"
 

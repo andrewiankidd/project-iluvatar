@@ -84,7 +84,7 @@ Cloud-init config lives in `bootstrap/netboot/assets/ubuntuserver/boot/user-data
 ### Orchestration: K3s
 ![k3s logo](../../../assets/docs/architecture/k3s.png)
 
-K3s is a lightweight, production-grade Kubernetes distribution designed for environments where full Kubernetes is too heavy. It bundles the core Kubernetes components into a single small binary, replaces heavier dependencies with simpler alternatives (like using SQLite by default instead of etcd), and trims out non-essential features.
+K3s is a lightweight, production-grade Kubernetes distribution designed for environments where full Kubernetes is too heavy. It bundles the core Kubernetes components into a single small binary, replaces heavier dependencies with simpler alternatives (like using SQLite by default instead of etcd), and trims out non-essential features. ainur keeps that SQLite default: it has one server, and etcd's constant small writes on the SD card stalled the API whenever the card was busy.
 
 Resource usage is low enough for edge devices, small VMs, and embedded systems, while still supporting standard Kubernetes APIs, Helm charts, and controllers.
 

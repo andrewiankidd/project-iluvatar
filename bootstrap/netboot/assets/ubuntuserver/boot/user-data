@@ -466,8 +466,11 @@ write_files:
       : "${K3S_AGENT_TOKEN:=${AINUR_K3S_AGENT_TOKEN}}"
       # Base args kept minimal; netboot overlays (if any) appended below
       K3S_COMMON_ARGS=""
-      # Keep non-netboot defaults; netboot-specific adds (e.g., --etcd-disable-snapshots) come via overlays
-      K3S_SERVER_ARGS=" --cluster-init --node-label=kidd.network/role=control-plane --token ${K3S_TOKEN}" # --disable=servicelb
+      # One server, so k3s's default SQLite datastore, not etcd (--cluster-init,
+      # which is for several servers; the netbooted Pis can't hold a datastore).
+      # etcd's constant small writes on the SD card stalled the API whenever
+      # the card was busy. Overlays add their own server args.
+      K3S_SERVER_ARGS=" --node-label=kidd.network/role=control-plane --token ${K3S_TOKEN}" # --disable=servicelb
       K3S_AGENT_ARGS=" --node-label=kidd.network/role=worker --token ${K3S_AGENT_TOKEN}"
       # Append any staged overlays from previous steps (e.g., netboot args)
       ARGS_DIR="/run/k3s-bootstrap"

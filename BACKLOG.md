@@ -56,29 +56,22 @@ What changed:
 
 ## Next direction — stateless nodes, data that survives a rebuild
 
-**Status as of 2026-11-17**: designed, not built. After `talos-default` is up.
+**Status as of 2026-11-18**: done, another way. Data survives a rebuild by restoring each volume from R2, not by restoring the cluster's datastore.
 
-Today a re-bootstrap throws everything away. The NVMe drives keep Longhorn's replicas, but the new cluster can't use them: what makes a replica a volume (which volume it belongs to, which copies are in sync, which PVC it serves) lives in etcd, and a fresh etcd sees only orphaned folders. Longhorn won't adopt them, and shouldn't: it can't tell a stale copy from a current one.
+A re-bootstrap still starts every cluster from an empty datastore, but each volume worth keeping is backed up to R2 nightly by VolSync (restic, from a Longhorn snapshot) and created *from* its latest backup: the PVC's `dataSourceRef` names a ReplicationDestination, so it waits, Pending, until its data is back, and a brand-new one starts empty.
 
-The design: **etcd snapshots in S3, restored by any fresh cluster that finds one.**
+- **arda: every Longhorn volume**, chart-made ones included, wired by a Kyverno policy (`src/manifests/arda/kyverno-policies/volsync.yaml`). Tested end to end: write, back up, delete, recreate, same data back. Longhorn's own R2 backups are gone.
+- **ainur: Omni's two volumes** (`src/manifests/ainur/sidero-omni/omni-volsync.yaml`): its state, and the GPG key it's encrypted with. Everything else on ainur rebuilds from Git and `.env`.
+- **The GPG key is restored, not regenerated**: `gpg-generator.yaml` now uses the saved key when there is one.
+- **Netbooted Pis keep their node password**: derived from the agent token and hostname, so they rejoin after a reboot without anything stored.
+- **ainur's k3s uses SQLite**, not etcd. It has one server (the netbooted Pis can't hold a datastore), and etcd's constant small writes on the SD card stalled the API whenever the card was busy. With volumes restored by VolSync, there's no datastore snapshot to keep.
+- **Nodes stay stateless.** The SD card Pi can be re-flashed at will; the NVMe is Longhorn's alone.
 
-- **Nodes stay stateless.** OS from netboot or the SD card, etcd on the RAM disk, as now. Nothing on a node needs keeping, and the SD card Pi can be re-flashed at will.
-- **The NVMe is Longhorn's alone**, data only, replicated across the Pis. PVCs are declared in Git.
-- **The index lives in a bucket.** k3s saves etcd snapshots to S3 on a schedule (`--etcd-s3`, `--etcd-snapshot-schedule-cron`). Before k3s starts on a server with an empty datastore, a step looks in the bucket: if there's a snapshot it restores the latest (`--cluster-reset --cluster-reset-restore-path=<latest>`), if not it's a first boot. Restored, Longhorn's records point at the replicas still on the NVMe (each disk keeps an ID that matches), and the PVCs bind to the same data.
-- **arda the same way**: Omni can back up each cluster's etcd to S3 itself.
-
-What it needs:
-
-1. **A fixed k3s server token**, in `.env` like the `ARDA_*` values. Snapshots are encrypted with it; a random token per bootstrap can't read the last one.
-2. **Fresh snapshots.** `rebootstrap.sh` takes one before it reboots anything (as arda-local backs up before stopping), plus a schedule. Anything made after the last snapshot comes back orphaned; most other drift heals itself, since Argo CD re-applies Git.
-3. **Node passwords.** k3s records a password per node in etcd, and keeps the node's copy on the node. A netbooted Pi forgets its copy, so a restored cluster would turn it away. Keep the file on the NVMe, or clear the recorded passwords once after a restore.
-4. **A LAN S3 target for offline.** k3s writes to one target; R2 works today. Offline, it becomes an S3 server on the LAN, with R2 as the off-site copy.
-5. **The Omni GPG key restored, not regenerated.** `gpg-generator.yaml` makes a new key every time and only ever writes its backup, so Omni's restored state would be unreadable. Restore it from the backup when there is one.
-
-Still not covered: re-flashing the control plane takes the VIP down while it netboots (kube-vip's leader election goes through its API server), so that re-flash still needs the bootstrap VM serving netboot. It now comes back as the same cluster rather than a new one. With that, rebuilding the Pi image in the cluster on demand (re-run the builder Job; the SD card Pi checks the image hash on a timer) becomes worth doing.
+Open: rebuilding the control plane still takes the VIP down while it netboots, so that re-flash needs the bootstrap VM serving netboot (`rebootstrap.sh` now points DHCP option 66 at it and ainur's `unifi` CronJob points it back).
 
 Considered and set aside:
 
+- **etcd snapshots in S3**, restored by a fresh cluster before k3s starts (`--etcd-s3`, `--cluster-reset-restore-path`), so Longhorn's records point at the replicas still on the NVMe. The original design here. Needs a fixed server token, snapshots fresh enough, a LAN S3 target offline, and etcd, which the SD card couldn't carry. Restoring the volumes themselves turned out simpler.
 - **Keeping etcd on the NVMe**, with all three Pis as control planes. Works, and keeps the VIP up through any one reboot, but the nodes stop being stateless and the bootstrap scripts change throughout.
 - **Static local volumes at fixed paths.** Survive a rebuild with no snapshot, but give up Longhorn's replication.
 - **Back up, rebuild, restore the volumes** (Longhorn system backup). Throws away the replicas on every rebuild.
