@@ -1,11 +1,8 @@
 # Longhorn on arda: the default storage class, on each node's SATA SSD (a
 # Talos user volume at /var/mnt/longhorn, from the cluster template in
-# src/manifests/ainur/sidero-omni/omni-config), backed up daily to Cloudflare
-# R2 (longhorn/recurring-jobs.yaml).
-#
-# Reads the r2-backup Secret, which arda-bootstrap-job.yaml makes from the
-# ARDA_BACKUP_* values in the bootstrap VM's .env. The arda-backups bucket is
-# made in Cloudflare with the R2 token.
+# src/manifests/ainur/sidero-omni/omni-config), and the in-cluster snapshots
+# VolSync backs up from (longhorn/snapshot-class.yaml). Backups to R2 are
+# VolSync's (volsync.yml), not Longhorn's.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -29,7 +26,7 @@ spec:
       targetRevision: main
       path: src/manifests/arda/longhorn
       directory:
-        include: "{recurring-jobs.yaml,snapshot-class.yaml}"
+        include: snapshot-class.yaml
     - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
       targetRevision: main
       ref: values

@@ -101,12 +101,6 @@ spec:
                 fi
                 put dragonwilds dragonwilds "$@"
               fi
-              if [ -n "${ARDA_BACKUP_ACCESS_KEY_ID:-}" ]; then
-                put longhorn-system r2-backup \
-                  --from-literal=AWS_ACCESS_KEY_ID="$ARDA_BACKUP_ACCESS_KEY_ID" \
-                  --from-literal=AWS_SECRET_ACCESS_KEY="${ARDA_BACKUP_SECRET_ACCESS_KEY:-}" \
-                  --from-literal=AWS_ENDPOINTS="${ARDA_BACKUP_ENDPOINT:-}"
-              fi
               # Every volume's backups (src/manifests/arda/kyverno-policies/volsync.yaml):
               # one restic repository per volume under volsync/ in the
               # arda-backups bucket, all with the same password.

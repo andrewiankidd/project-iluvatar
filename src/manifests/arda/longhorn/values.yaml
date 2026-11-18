@@ -10,11 +10,6 @@ defaultSettings:
   defaultReplicaCount: "3"
   replicaAutoBalance: best-effort
 
-# R2 speaks S3; "auto" is its only region.
-defaultBackupStore:
-  backupTarget: s3://arda-backups@auto/
-  backupTargetCredentialSecret: r2-backup
-
 persistence:
   defaultClass: true
   defaultClassReplicaCount: 3
