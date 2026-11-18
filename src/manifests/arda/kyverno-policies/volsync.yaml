@@ -142,7 +142,7 @@ spec:
               # The last 5 whatever their day, too: a backup run straight after
               # a failed restore must not prune the good one from earlier that day.
               retain:
-                last: 5
+                last: "5"   # a string, unlike the others (VolSync's CRD)
                 daily: 7
                 weekly: 4
                 monthly: 6
