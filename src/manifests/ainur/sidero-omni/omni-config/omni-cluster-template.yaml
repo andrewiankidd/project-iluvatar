@@ -15,18 +15,13 @@ patches:
       name: lab-root-ca
       certificates: |
         ${LAB_ROOT_CA_INDENTED}
-  # The NVMe drive, whatever its size; the SATA SSD is Longhorn's. Talos 1.14
-  # takes this from UnattendedInstallConfig, whose default is /dev/sda (the
-  # SATA SSD here); machine.install is ignored. Wiped, so whatever was on the
-  # NVMe before (an old Talos, Windows) doesn't stop the install.
+  # The NVMe drive, whatever its size; the SATA SSD is Longhorn's.
   - name: install-nvme
     inline:
-      apiVersion: v1alpha1
-      kind: UnattendedInstallConfig
-      provisioning:
-        diskSelector:
-          match: disk.transport == "nvme"
-        wipe: true
+      machine:
+        install:
+          diskSelector:
+            type: nvme
   # Workloads on the control plane too, so one machine is already a cluster
   # and every node's SSD counts for Longhorn.
   # Talos 1.14 dropped cluster.allowSchedulingOnControlPlanes: the
