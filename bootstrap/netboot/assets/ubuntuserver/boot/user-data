@@ -196,15 +196,40 @@ write_files:
         printf '%s\n' '#!/bin/sh' 'exec /usr/local/bin/k3s kubectl "$@"' > "$KUBECTL"
         chmod 0755 "$KUBECTL"
       fi
-      # Create a local root CA once and persist on the host; use for API OIDC and cert-manager CA Issuer
+      # The lab root CA, for API OIDC and cert-manager's CA Issuer. It comes
+      # from .env (AINUR_LAB_CA_CRT and AINUR_LAB_CA_KEY, served by the
+      # builder with the other AINUR_* values), so a rebuilt ainur keeps the
+      # CA every device and every arda machine already trusts. A CA made
+      # here instead lives only on this Pi's disk, and a re-flash loses it.
       CA_CRT=/etc/rancher/k3s/oidc/lab-ca.crt
       CA_KEY=/etc/k3s-certs/lab-ca.key
+      env_file="$(mktemp)"
+      for base in "http://${BOOTSTRAP_IP_ADDRESS}" "${CLOUD_INIT_BASE_URL:-http://bootstrap.kidd.network}"; do
+        curl -sfL --connect-timeout 3 --max-time 10 "$base/secrets/ainur.env" -o "$env_file" && break
+      done
+      crt="$(grep '^AINUR_LAB_CA_CRT=' "$env_file" 2>/dev/null | cut -d= -f2- | tr -d "'\"" || true)"
+      key="$(grep '^AINUR_LAB_CA_KEY=' "$env_file" 2>/dev/null | cut -d= -f2- | tr -d "'\"" || true)"
+      rm -f "$env_file"
+      umask 077
+      if [ -n "$crt" ] && [ -n "$key" ]; then
+        echo "$crt" | base64 -d > "$CA_CRT.new"
+        echo "$key" | base64 -d > "$CA_KEY.new"
+        if [ "$("$OPENSSL" x509 -noout -pubkey -in "$CA_CRT.new" | sha256sum)" = \
+             "$("$OPENSSL" pkey -pubout -in "$CA_KEY.new" | sha256sum)" ]; then
+          mv "$CA_CRT.new" "$CA_CRT"; mv "$CA_KEY.new" "$CA_KEY"
+          echo "[tls-bootstrap] lab CA from .env"
+        else
+          rm -f "$CA_CRT.new" "$CA_KEY.new"
+          echo "[tls-bootstrap] WARNING: AINUR_LAB_CA_CRT and AINUR_LAB_CA_KEY don't match; ignoring them"
+        fi
+      fi
       if [ ! -s "$CA_CRT" ] || [ ! -s "$CA_KEY" ]; then
-        umask 077
+        echo "[tls-bootstrap] WARNING: no lab CA in .env; making a new one, which a rebuild won't keep"
         "$OPENSSL" genrsa -out "$CA_KEY" 4096
         "$OPENSSL" req -x509 -new -nodes -key "$CA_KEY" -sha256 -days 3650 \
           -subj "/CN=Lab Root CA" -addext "basicConstraints=critical,CA:true" -out "$CA_CRT"
       fi
+      umask 022
 
       # Namespaces are created by ArgoCD/Helm (CreateNamespace=true)
 
@@ -1003,9 +1028,14 @@ write_files:
           | k3s kubectl label --local -f - app.kubernetes.io/part-of=argocd -o yaml \
           | k3s kubectl apply -f -
       }
-      for ns in ainur-netboot ainur-dex argocd ainur-sidero-omni ainur-homepage; do
-        put "$ns" ainur-secrets --from-env-file="$f"
+      # The lab CA's key stays out of everything but the netboot builder,
+      # which has to serve it on to the next ainur (gen-lab-certs.sh).
+      put ainur-netboot ainur-secrets --from-env-file="$f"
+      grep -v '^AINUR_LAB_CA_' "$f" > "$f.apps"
+      for ns in ainur-dex argocd ainur-sidero-omni ainur-homepage; do
+        put "$ns" ainur-secrets --from-env-file="$f.apps"
       done
+      rm -f "$f.apps"
       put ainur-headlamp headlamp-oidc \
         --from-literal=OIDC_CLIENT_ID=headlamp \
         --from-literal=OIDC_CLIENT_SECRET="$(grep '^AINUR_OIDC_CLIENT_SECRET=' "$f" | cut -d= -f2-)" \

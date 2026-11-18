@@ -54,6 +54,7 @@ The builder writes the first three into the Pis' cloud-init. A script in cloud-i
 | `AINUR_DEX_ADMIN_HASH` | bcrypt hash of Dex's `admin@` password: `htpasswd -nbBC 10 "" 'password' \| tr -d ':\n'` |
 | `AINUR_OIDC_CLIENT_SECRET` | The client secret Dex shares with Argo CD, Headlamp, Omni and Homepage. |
 | `AINUR_HOMEPAGE_AUTH_SECRET` | Homepage's session cookie key, 32 characters or more. |
+| `AINUR_LAB_CA_CRT`, `AINUR_LAB_CA_KEY` | The lab root CA, each a PEM file as one line of base64 (`base64 -w0`). With them, a rebuilt ainur keeps the CA your devices and the arda machines already trust; without them it makes a new one on its first boot, and every arda machine has to be reset to trust it. Leave them empty for the very first bootstrap, then copy that CA in: `.env.example` has the commands. Only the netboot builder's copy of `ainur-secrets` keeps the key. |
 
 ## arda secrets
 
