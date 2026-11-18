@@ -369,6 +369,13 @@ write_files:
       else
         echo "[leader] remote leader not found at $LEADER_URL"
       fi
+      # A netbooted Pi has nowhere to share a claim, so electing itself makes a
+      # cluster of one. Wait for the SD card Pi's ainur to name the leader
+      # instead; k3s-bootstrap.service retries every 10s.
+      if [ ! -s "$LEADER_PATH" ] && grep -qw 'root=/dev/nfs' /proc/cmdline; then
+        echo "[leader] netbooted and no leader served yet; retrying"
+        exit 1
+      fi
       if REMOTE_AGENT_TOKEN=$(curl -sfL --connect-timeout 3 --max-time 5 "$AGENT_TOKEN_URL" | head -n1); then
         if [ -n "$REMOTE_AGENT_TOKEN" ]; then
           echo "[token] remote agent token found; syncing to $AGENT_TOKEN_PATH"

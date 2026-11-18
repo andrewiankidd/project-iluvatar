@@ -25,7 +25,8 @@ The fix is to make the card unbootable. Zero its partition table and the start o
     ```bash
     ./bootstrap/netboot/vm/start.sh
     ```
-2. **Re-bootstrap.** Every Pi in `PI_HOSTS`, or just the ones named:
+2. **Point DHCP option 66 at the VM** (`BOOTSTRAP_IP_ADDRESS`). Once ainur is up it serves netboot itself, but not while it's down, and wiping the SD card Pi takes it down. Point it back at ainur's VIP afterwards.
+3. **Re-bootstrap.** Every Pi in `PI_HOSTS`, or just the ones named:
     ```bash
     ./bootstrap/netboot/rebootstrap.sh
     ./bootstrap/netboot/rebootstrap.sh 192.168.1.50
@@ -35,7 +36,9 @@ For each Pi it SSHes in, and if `/` is on the SD card, zeroes the card's first 8
 
 :::note
 `wipefs` is not enough. It only clears the partition table's two-byte signature, which the Pi firmware ignores: the Pi boots the kernel from the card anyway, and Linux, which does check the signature, can't find its root partition and stops in the initramfs.
-::: The SD card Pi reboots twice: once into netboot to be flashed, then onto the card.
+:::
+
+The SD card Pi reboots twice: once into netboot to be flashed, then onto the card. That's about 10 minutes, and it becomes the k3s server. The netbooted Pis wait for it: they learn the leader from ainur (`bootstrap.<domain>/k3s/k3s-leader`) and won't elect themselves, which would make each its own cluster.
 
 The Pis are `192.168.1.50`-`52` with the `ubuntu` user from user-data unless `.env` says otherwise (`PI_HOSTS`, `PI_USER`, `PI_PASSWORD`; see `.env.example`). `ssh` and `sshpass` run in a throwaway container, so Docker is all it needs.
 
