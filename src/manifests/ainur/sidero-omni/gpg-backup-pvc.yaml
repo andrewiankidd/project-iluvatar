@@ -1,10 +1,12 @@
+# Wave -2, with omni-gpg-init, its only user: local-path makes a volume
+# only once a pod using it is scheduled (omni-pvc.yaml).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: omni-gpg-backup
   namespace: ainur-sidero-omni
   annotations:
-    argocd.argoproj.io/sync-wave: "-3"
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     ainur.kidd.network/workload: sidero-omni
     ainur.kidd.network/volume: gpg-backup
