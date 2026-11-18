@@ -62,6 +62,9 @@ Netboot is awesome, but RAM disks are not bottomless.
   - Move k3s `data-dir` to real disk on the control plane, keep `/var/log` small tmpfs.
   - Pin image tags (no `latest`) and use `IfNotPresent` so we don’t re‑pull constantly.
   - Keep heavy DaemonSets off the control plane.
+- The SD card Pi kept its images in RAM too, to spare the card. They grew to 9 GB of its 16 and k3s started restarting; they live on the card now (a pull is a write, running isn't), with only logs and pods' scratch space in RAM.
+- Setting the kubelet's `eviction-hard` replaces its defaults, so naming only disk thresholds silently turned off eviction for memory: a full Pi just wedged (SSH accepting and dropping connections) instead of evicting a pod. `memory.available` is named again, with `system-reserved` and `kube-reserved` keeping room for the system and the kubelet.
+- The netbooted Pis have no disk for images (the NVMe is Longhorn's), so their k3s RAM disk is capped at 40% of RAM, and image GC keeps it under that.
 
 Guide: [Cluster Ops & Footprint](/project-iluvatar/guides/declarative-cluster/1-k3s/)
 

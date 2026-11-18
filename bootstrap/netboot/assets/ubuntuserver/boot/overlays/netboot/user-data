@@ -27,7 +27,10 @@ write_files:
           echo "$line" >> /etc/fstab
         fi
       }
-      add_fstab_once 'tmpfs /var/lib/rancher/k3s tmpfs defaults,size=60%,mode=0755 0 0' '/var/lib/rancher/k3s'
+      # k3s, images included, in RAM: there's no disk for it (the NVMe is
+      # Longhorn's). Capped well short of RAM; the kubelet's image GC (70%, to
+      # 50%) keeps it there.
+      add_fstab_once 'tmpfs /var/lib/rancher/k3s tmpfs defaults,size=40%,mode=0755 0 0' '/var/lib/rancher/k3s'
       add_fstab_once 'tmpfs /var/lib/kubelet tmpfs defaults,size=10% 0 0' '/var/lib/kubelet'
       add_fstab_once 'tmpfs /var/log tmpfs defaults,size=1% 0 0' '/var/log'
       mount -a || true
@@ -82,9 +85,12 @@ write_files:
       echo "[args] staging netboot-specific K3S_* argument overlays"
       ARGS_DIR="/run/k3s-bootstrap"
       mkdir -p "$ARGS_DIR"
-      # Common args suited for netboot/ephemeral filesystems
+      # Common args suited for netboot/ephemeral filesystems. Setting
+      # eviction-hard replaces the kubelet's defaults, memory's included, so
+      # memory is named here: pods are evicted before the Pi runs out, and the
+      # reservations keep room for the system, SSH and the kubelet.
       cat >"$ARGS_DIR/K3S_COMMON_ARGS" <<'EOF'
-      --snapshotter=fuse-overlayfs --kubelet-arg=eviction-hard=nodefs.available<0%,imagefs.available<0%,containerfs.available<0% --kubelet-arg=image-gc-high-threshold=70 --kubelet-arg=image-gc-low-threshold=50 --kubelet-arg=eviction-pressure-transition-period=5m --kubelet-arg=serialize-image-pulls=true --kubelet-arg=container-log-max-size=5Mi --kubelet-arg=container-log-max-files=2
+      --snapshotter=fuse-overlayfs --kubelet-arg=eviction-hard=memory.available<750Mi,nodefs.available<0%,imagefs.available<0%,containerfs.available<0% --kubelet-arg=system-reserved=memory=1Gi --kubelet-arg=kube-reserved=memory=512Mi --kubelet-arg=image-gc-high-threshold=70 --kubelet-arg=image-gc-low-threshold=50 --kubelet-arg=eviction-pressure-transition-period=5m --kubelet-arg=serialize-image-pulls=true --kubelet-arg=container-log-max-size=5Mi --kubelet-arg=container-log-max-files=2
       EOF
       # Server args overlay
       echo "--etcd-disable-snapshots --disable=local-storage" >"$ARGS_DIR/K3S_SERVER_ARGS"
