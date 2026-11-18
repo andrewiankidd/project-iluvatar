@@ -96,7 +96,9 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
-  # Prepare NVMe disk for Longhorn data (idempotent: only formats uninitialized devices)
+  # Prepare the NVMe for persistent volumes (idempotent: only formats uninitialized
+  # devices). ainur's go on valar-50's, through local-path (the k3s server's
+  # --default-local-storage-path); the netbooted Pis' stay free.
   - path: /usr/local/sbin/nvme-prepare.sh
     permissions: '0755'
     content: |
@@ -143,7 +145,7 @@ write_files:
       fi
 
       UUID=$(blkid -s UUID -o value "$DEV")
-      MNT="${LONGHORN_MNT:-/var/lib/longhorn/disks/nvme1}"
+      MNT="${NVME_MNT:-/var/mnt/nvme}"
       mkdir -p "$MNT"
       if ! grep -q "$UUID" /etc/fstab; then
         echo "UUID=$UUID $MNT xfs noatime,nodiratime,discard 0 2" >> /etc/fstab
@@ -166,7 +168,7 @@ write_files:
     permissions: '0644'
     content: |
       [Unit]
-      Description=Prepare NVMe disk for Longhorn data
+      Description=Prepare the NVMe for persistent volumes
       Wants=local-fs.target
       After=local-fs.target
       Before=k3s-bootstrap.service
@@ -470,7 +472,7 @@ write_files:
       # which is for several servers; the netbooted Pis can't hold a datastore).
       # etcd's constant small writes on the SD card stalled the API whenever
       # the card was busy. Overlays add their own server args.
-      K3S_SERVER_ARGS=" --node-label=kidd.network/role=control-plane --token ${K3S_TOKEN}" # --disable=servicelb
+      K3S_SERVER_ARGS=" --node-label=kidd.network/role=control-plane --default-local-storage-path=/var/mnt/nvme/local-path --token ${K3S_TOKEN}" # --disable=servicelb
       K3S_AGENT_ARGS=" --node-label=kidd.network/role=worker --token ${K3S_AGENT_TOKEN}"
       # Append any staged overlays from previous steps (e.g., netboot args)
       ARGS_DIR="/run/k3s-bootstrap"
@@ -556,6 +558,30 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
+  # Priorities, for when a Pi runs short of memory: the kubelet evicts lower
+  # ones first, and the scheduler pre-empts them to place higher ones.
+  # ainur-critical is what the cluster and arda depend on (cert-manager,
+  # trust-manager, Dex, Omni); ainur-optional is what can wait (Homepage).
+  # Argo CD uses Kubernetes' own system-cluster-critical. Anything unset is 0.
+  - path: /etc/k3s-manifests/00-priority-classes.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: scheduling.k8s.io/v1
+      kind: PriorityClass
+      metadata:
+        name: ainur-critical
+      value: 1000000
+      description: What ainur and arda depend on; evicted last.
+      ---
+      apiVersion: scheduling.k8s.io/v1
+      kind: PriorityClass
+      metadata:
+        name: ainur-optional
+      value: -1000
+      preemptionPolicy: Never
+      description: Nice to have; evicted first, and never displaces anything.
+
   # Install cert-manager via k3s HelmChart
   - path: /etc/k3s-manifests/00-cert-manager.helm.yaml
     permissions: '0644'
@@ -574,6 +600,8 @@ write_files:
         valuesContent: |
           installCRDs: true
           replicaCount: 1
+          global:
+            priorityClassName: ainur-critical
 
   # Install trust-manager to distribute CA bundles
   - path: /etc/k3s-manifests/01-trust-manager.helm.yaml
@@ -591,6 +619,7 @@ write_files:
         targetNamespace: cert-manager
         createNamespace: true
         valuesContent: |
+          priorityClassName: ainur-critical
           secretTargets:
             enabled: true
             authorizedSecrets:

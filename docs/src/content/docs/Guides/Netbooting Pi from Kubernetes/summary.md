@@ -15,7 +15,7 @@ Over this section I:
 
 - moved TFTP, NFS, and HTTP from a host-based Docker setup into in-cluster hostNetwork DaemonSets;
 - fronted them with a kube-vip Virtual IP so the LAN sees a single, stable boot address;
-- backed them with Longhorn RWX PVCs so any node can serve any file at any time;
+- backed them with Longhorn RWX PVCs so any node could serve any file, and later swapped those for local-path on valar-50, with everything pinned beside it, when Longhorn proved too heavy for the netbooted Pis;
 - staged Ubuntu images into those PVCs via a one-shot `Job` that sparse-clones this repo;
 - made the HTTP pod serve both cloud-init NoCloud data *and* the k3s leader IP / agent-token, so freshly netbooted Pis have everything they need to join the cluster they just booted from.
 

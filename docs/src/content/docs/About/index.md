@@ -26,7 +26,7 @@ A little Tolkien‑flavored nerdiness:
 
 - In the Ainulindalë, Ilúvatar sings the world into being; the Ainur join the song and shape it.
 - Same vibe here: this repo (Iluvatar) starts the music - it brings the first node(s) to life and lays down the platform.
-- Then Ainur - the cluster and its controllers (Argo CD, Longhorn, Omni, etc.) - pick up the melody and bring the rest of the lab into existence, continuously.
+- Then Ainur - the cluster and its controllers (Argo CD, Omni, etc.) - pick up the melody and bring the rest of the lab into existence, continuously.
 
 It’s infrastructure as music: one theme, many parts, everything in harmony (on a few tiny computers).
 

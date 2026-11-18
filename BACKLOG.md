@@ -10,7 +10,7 @@ The standing rule: **nothing manual.** Start the bootstrap VM and everything els
 
 - Self-reproducing bootstrap loop (ouroboros). The cluster hosts the netboot stack that boots the cluster.
 - Everything declarative from cloud-init → k3s HelmChart manifests → Argo CD app-of-apps. Almost no imperative state.
-- Honest separation of "stateless ephemeral nodes" from "stateful cluster" via Longhorn + selectable persistence. Not yet across a rebuild: see "Next direction".
+- Honest separation of "stateless ephemeral nodes" from "stateful cluster": arda's volumes on Longhorn, backed up to R2; ainur's few on valar-50's NVMe (local-path). See "Next direction".
 - SSO + private CA chain auto-wires across apps with zero manual `kubectl label` steps.
 - The same forked containers (`andrewkidd/nfs-server`, `andrewkidd/tftp-server`) used by both the bootstrap VM and the in-cluster netboot stack.
 - Minecraft is one folder per server (ApplicationSet), and who plays is in a Secret, not the repo.
@@ -61,13 +61,19 @@ What changed:
 A re-bootstrap still starts every cluster from an empty datastore, but each volume worth keeping is backed up to R2 nightly by VolSync (restic, from a Longhorn snapshot) and created *from* its latest backup: the PVC's `dataSourceRef` names a ReplicationDestination, so it waits, Pending, until its data is back, and a brand-new one starts empty.
 
 - **arda: every Longhorn volume**, chart-made ones included, wired by a Kyverno policy (`src/manifests/arda/kyverno-policies/volsync.yaml`). Tested end to end: write, back up, delete, recreate, same data back. Longhorn's own R2 backups are gone.
-- **ainur: Omni's two volumes** (`src/manifests/ainur/sidero-omni/omni-volsync.yaml`): its state, and the GPG key it's encrypted with. Everything else on ainur rebuilds from Git and `.env`.
+- **ainur: nothing, for now.** Omni's volumes were backed up the same way until 2026-11-18, when ainur dropped Longhorn (below) and VolSync with it. A rebuilt ainur starts Omni empty, and arda's machines re-register.
 - **The GPG key is restored, not regenerated**: `gpg-generator.yaml` now uses the saved key when there is one.
 - **Netbooted Pis keep their node password**: derived from the agent token and hostname, so they rejoin after a reboot without anything stored.
-- **ainur's k3s uses SQLite**, not etcd. It has one server (the netbooted Pis can't hold a datastore), and etcd's constant small writes on the SD card stalled the API whenever the card was busy. With volumes restored by VolSync, there's no datastore snapshot to keep.
-- **Nodes stay stateless.** The SD card Pi can be re-flashed at will; the NVMe is Longhorn's alone.
+- **ainur's k3s uses SQLite**, not etcd. It has one server (the netbooted Pis can't hold a datastore), and etcd's constant small writes on the SD card stalled the API whenever the card was busy. With nothing on ainur worth restoring, there's no datastore snapshot to keep.
+- **Nodes stay stateless.** The SD card Pi can be re-flashed at will; the NVMe holds only volumes.
+- **ainur has no Longhorn.** Its volumes (netboot files, Omni) are local-path on valar-50's NVMe, `/var/mnt/nvme/local-path`, with Omni, the netboot servers and the VIP pinned beside them. Longhorn's pods and 2 GB of images filled the netbooted Pis' RAM disks, and the replication couldn't outlive valar-50, the only k3s server, anyway.
+- **Two PriorityClasses** on ainur, `ainur-critical` and `ainur-optional`, so a Pi short of memory evicts Homepage before Omni. Headlamp's chart has no setting for one, so it stays at 0.
 
-Open: rebuilding the control plane still takes the VIP down while it netboots, so that re-flash needs the bootstrap VM serving netboot (`rebootstrap.sh` now points DHCP option 66 at it and ainur's `unifi` CronJob points it back).
+Open:
+
+- **Omni's state on a rebuild.** local-path names each volume's directory after its PVC's UID, so a rebuilt cluster makes new, empty ones and leaves the old directories on the NVMe. A static PV at a fixed path (or VolSync back, to R2 or a LAN S3) would carry Omni over; the old directories need clearing either way.
+- **valar-51/52's NVMe** sit unused, and valar-50's still holds Longhorn's old replicas under `/var/mnt/nvme`.
+- Rebuilding the control plane still takes the VIP down while it netboots, so that re-flash needs the bootstrap VM serving netboot (`rebootstrap.sh` now points DHCP option 66 at it and ainur's `unifi` CronJob points it back).
 
 Considered and set aside:
 

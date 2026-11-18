@@ -27,10 +27,17 @@ write_files:
           echo "$line" >> /etc/fstab
         fi
       }
-      # k3s, images included, in RAM: there's no disk for it (the NVMe is
-      # Longhorn's). Capped well short of RAM; the kubelet's image GC (70%, to
-      # 50%) keeps it there.
-      add_fstab_once 'tmpfs /var/lib/rancher/k3s tmpfs defaults,size=40%,mode=0755 0 0' '/var/lib/rancher/k3s'
+      # k3s, images included, in RAM: a netbooted Pi has no disk for it.
+      # 60% of RAM; the kubelet's image GC (70%, to 50%) keeps it under that,
+      # and containerd drops each image's compressed copy once unpacked
+      # (below), which kept about 700 MB of duplicates here.
+      add_fstab_once 'tmpfs /var/lib/rancher/k3s tmpfs defaults,size=60%,mode=0755 0 0' '/var/lib/rancher/k3s'
+      mount -a || true
+      # k3s's generated containerd config imports drop-ins from here, merged
+      # key by key, so this only adds to the images section.
+      mkdir -p /var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d
+      printf "[plugins.'io.containerd.cri.v1.images']\n  discard_unpacked_layers = true\n" \
+        > /var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d/discard-layers.toml
       add_fstab_once 'tmpfs /var/lib/kubelet tmpfs defaults,size=10% 0 0' '/var/lib/kubelet'
       add_fstab_once 'tmpfs /var/log tmpfs defaults,size=1% 0 0' '/var/log'
       mount -a || true

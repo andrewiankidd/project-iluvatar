@@ -15,8 +15,11 @@ spec:
         app: netboot
         component: http
     spec:
-      # nodeSelector:
-      #   kidd.network/role: "control-plane"
+      # ainur keeps its state on valar-50 (local-path on its NVMe).
+      nodeSelector:
+        kidd.network/role: "control-plane"
+      # The VIP and netbooting the other Pis: evicted last.
+      priorityClassName: ainur-critical
       tolerations:
         - key: node-role.kubernetes.io/master
           operator: Exists

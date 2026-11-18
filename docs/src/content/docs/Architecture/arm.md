@@ -77,7 +77,7 @@ Cloud-init config lives in `bootstrap/netboot/assets/ubuntuserver/boot/user-data
 
 - **Base OS + SSH prep**: sets the hostname deterministically, installs core packages (NFS/iSCSI/XFS tooling, zstd, etc.), and regenerates SSH host keys on first boot.
 - **Netboot image stamping**: idempotently writes the staged OS image to disk (dd/zstd) and records the hash so repeat boots skip re-flashing.
-- **NVMe prep for Longhorn**: partitions and formats the first NVMe disk as XFS, mounts it under `/var/lib/longhorn/disks/nvme1`, and enables trim.
+- **NVMe prep**: formats the first NVMe disk as XFS if it has no filesystem, mounts it at `/var/mnt/nvme`, and enables trim. On the k3s server (valar-50) it holds every persistent volume, through k3s's local-path provisioner (`--default-local-storage-path=/var/mnt/nvme/local-path`).
 - **k3s bootstrap orchestration**: leader/agent election via `k3s-*-scripts`, optional token fetch from the bootstrap HTTP site, installs k3s (`v1.37.2+k3s1`, pinned) as server or agent, and restarts until the API is ready.
 - **TLS/PKI bootstrap**: generates a local root CA, seeds cert-manager/trust-manager manifests, configures kube-apiserver OIDC flags, and publishes the CA ConfigMap for apps (plus an optional CA download site).
 
@@ -107,7 +107,7 @@ This application is made of several key components:
  - **bootstrap-http** - Nginx web server that hosts the custom `cloud-init` cloud config files to pre-configure the OS with at boot
  - **tftp-server** - TFTP file server for hosting the Pi's boot partition files
  - **nfs-server** - NFS file server for hosting the Pis root partition files
- - **kube-vip** - A virtual IP to make sure services are always available at the same address regardless of which physical node they're running on
+ - **kube-vip** - A virtual IP the LAN boots from. It, and everything above, runs on valar-50 alone (`kidd.network/role: control-plane`), next to the volumes they serve
 
 Defined at [`src/manifests/ainur/pi-netboot.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/pi-netboot.yml)
 
@@ -126,18 +126,18 @@ Defined at [`src/manifests/ainur/pi-netboot.yml`](https://github.com/andrewianki
 - **Trusted CA**: mounts the injected `lab-ca` ConfigMap for outbound TLS.
 - **Sync-wave** after Dex so authentication is ready first.
 
-#### Longhorn
-[`src/manifests/ainur/longhorn.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/longhorn.yml)
-- **Helm chart** with Pi-friendly values (node selectors/taints).
-- **StorageClass** defaulted for workloads; CSI node runs on all Pis.
-- **Ingress** for UI/manager with local TLS.
-- **Backends** land on the NVMe/XFS disks prepared by cloud-init.
+#### Storage: local-path
+ainur ran Longhorn until 2026-11. Its volumes were small (the netboot files and Omni's state), and Longhorn's own pods and images cost the 8 GB netbooted Pis more than the replication was worth, so every volume is now k3s's built-in local-path on valar-50's NVMe, with the pods that use them pinned there. Longhorn lives on arda, where the data is.
+
+#### Priorities
+Two PriorityClasses, created by cloud-init before any chart: `ainur-critical` (cert-manager, trust-manager, Dex, Omni, kube-vip and the netboot servers) and `ainur-optional` (Homepage). Argo CD uses Kubernetes' own `system-cluster-critical`. A Pi short of memory evicts the optional pods first and the critical ones last.
 
 #### Sidero Omni
 [`src/manifests/ainur/sidero-omni.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/sidero-omni.yml)
 - **Helm chart** from SideroLabs with repo-side overrides.
 - **Ingress** for the Omni UI/API with local TLS and CA injection.
 - **GPG/PKI assets** provisioned via bundled PVC and generator manifests.
+- **On valar-50**, with its volumes, at `ainur-critical`.
 - **Future Talos/PXE** management to converge with the netboot stack.
 
 #### Cert download site

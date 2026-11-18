@@ -32,10 +32,10 @@ To replace it with cluster-native equivalents I needed:
 
 1. **A stable single IP that Pis can be told to boot from.** Pi firmware and DHCP next-server expect one address, not a list of pods. → **kube-vip** advertises a Virtual IP at the node layer.
 2. **A way to serve UDP-heavy, port-pinned protocols.** Plain Kubernetes `Service` load-balancing does not play nicely with rpcbind and TFTP's port-range expectations. → All three services run as **hostNetwork DaemonSets**.
-3. **Replicated storage that any node can mount.** Boot files need to be on the same disk that's "currently serving the VIP". → **Longhorn RWX PVCs**.
+3. **Storage on the node serving the VIP.** Boot files need to be on the same disk that's "currently serving the VIP". → **local-path PVCs on valar-50's NVMe, with the VIP and the servers pinned there.** (This was Longhorn RWX volumes at first, so any node could serve; [Storage & PVCs](./storage-and-pvcs/) says why it isn't now.)
 4. **A way to fetch and stage the Ubuntu image declaratively.** → **A one-shot Job** that clones this repo and runs the existing build scripts against PVCs.
 
-The result is a small but interlocking system: a VIP for stability, hostNetwork pods for protocol compatibility, RWX PVCs for storage portability, and a Job for image freshness.
+The result is a small but interlocking system: a VIP for stability, hostNetwork pods for protocol compatibility, PVCs on the node that serves them, and a Job for image freshness.
 
 ```mermaid
 flowchart LR
@@ -45,7 +45,7 @@ flowchart LR
     end
     Pi -->|1. DHCP discover| DHCP
     DHCP -->|2. Boot from 192.168.1.59| Pi
-    subgraph CLUSTER[K3s Cluster — every node]
+    subgraph CLUSTER[K3s Cluster — valar-50]
         VIP[kube-vip<br/>192.168.1.59]
         TFTP[TFTP DaemonSet<br/>hostNetwork, UDP 69+5000-5010]
         NFS[NFS DaemonSet<br/>hostNetwork, UDP/TCP 111,2049,32767]
@@ -55,7 +55,7 @@ flowchart LR
     Pi -.->|4. NFS root mount| NFS
     Pi -.->|5. cloud-init NoCloud| HTTP
     VIP -.- TFTP & NFS & HTTP
-    subgraph STORAGE[Longhorn RWX PVCs]
+    subgraph STORAGE[local-path PVCs, valar-50's NVMe]
         BOOT[pi-netboot-boot<br/>128Mi]
         OS[pi-netboot-os<br/>5Gi]
     end
@@ -78,8 +78,8 @@ flowchart LR
 | Piece | Where it lives | What it does |
 |-------|----------------|--------------|
 | [kustomization](../../../../../../src/manifests/ainur/pi-netboot/kustomization.yaml) | `src/manifests/ainur/pi-netboot/` | Composes the whole stack as one Argo CD source path. |
-| [PVCs](../../../../../../src/manifests/ainur/pi-netboot/pvcs.yaml) | 6 RWX volumes | Boot, OS, NFS state, download, extracted, output. |
-| [kube-vip](../../../../../../src/manifests/ainur/pi-netboot/kube-vip.yaml) | DaemonSet | Advertises the VIP on every node. |
+| [PVCs](../../../../../../src/manifests/ainur/pi-netboot/pvcs.yaml) | 6 local-path volumes | Boot, OS, NFS state, download, extracted, output. |
+| [kube-vip](../../../../../../src/manifests/ainur/pi-netboot/kube-vip.yaml) | DaemonSet | Advertises the VIP, from valar-50. |
 | [Builder Job](../../../../../../src/manifests/ainur/pi-netboot/builder-job.yaml) | One-shot Job | Clones repo, runs the build pipeline, stages files into the boot/OS PVCs. |
 | [TFTP DaemonSet](../../../../../../src/manifests/ainur/pi-netboot/tftp-deployment.yaml) | hostNetwork DaemonSet | Serves boot files on UDP 69 + 5000-5010. |
 | [NFS DaemonSet](../../../../../../src/manifests/ainur/pi-netboot/nfs-deployment.yaml) | hostNetwork DaemonSet | Serves the root filesystem on the usual NFS3 ports. |
@@ -89,10 +89,10 @@ flowchart LR
 ## Flow at a Glance
 
 1. **Argo CD syncs the `pi-netboot` Application** ([src/manifests/ainur/pi-netboot.yml](../../../../../../src/manifests/ainur/pi-netboot.yml)), which applies the kustomization above into the `ainur-netboot` namespace.
-2. **PVCs are provisioned** by Longhorn (RWX, ext4).
+2. **PVCs are provisioned** by local-path, on valar-50's NVMe, when the first pod using each one starts.
 3. **kube-vip pods start as a DaemonSet** and one of them claims the VIP via ARP.
 4. **The builder Job runs**, sparse-clones this repo, runs `bootstrap/netboot/scripts/*` against the PVCs, and exits.
-5. **TFTP, NFS, HTTP DaemonSets** come up on hostNetwork on every node, all bound to the same ports.
+5. **TFTP, NFS, HTTP DaemonSets** come up on hostNetwork on valar-50 (`kidd.network/role: control-plane`).
 6. A Pi powers on with DHCP option 66 pointing at the VIP and boots through the chain.
 
 ## Caveats & "I Learned This The Spicy Way"

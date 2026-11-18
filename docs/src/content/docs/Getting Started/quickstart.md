@@ -53,10 +53,10 @@ To move that Pi onto a newer build later, see [Re-bootstrapping Ainur](/project-
 Power the Pis on. On first boot each one:
 
 1. Fetches its kernel over TFTP and runs from an NFS root in RAM (or from its SD card).
-2. Runs cloud-init from the VM: hostname, its NVMe for Longhorn, and the lab CA.
+2. Runs cloud-init from the VM: hostname, its NVMe (persistent volumes, on the k3s server), and the lab CA.
 3. Elects a leader. The first Pi becomes the k3s server, the rest join as agents.
 4. Installs cert-manager, trust-manager and Argo CD, plus the `AINUR_*` secrets from `.env`.
-5. Lets Argo CD bring up the rest from Git: Longhorn, Dex, Headlamp, Omni, Homepage, and the netboot stack, so ainur now serves its own netboot.
+5. Lets Argo CD bring up the rest from Git: Dex, Headlamp, Omni, Homepage, and the netboot stack, so ainur now serves its own netboot.
 
 Then check:
 

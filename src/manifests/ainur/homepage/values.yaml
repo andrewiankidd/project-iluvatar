@@ -31,3 +31,6 @@ persistence:
     name: lab-ca
     mountPath: /etc/ssl/local-ca
     readOnly: true
+
+# Eviction and scheduling priority (user-data: 00-priority-classes.yaml).
+priorityClassName: ainur-optional

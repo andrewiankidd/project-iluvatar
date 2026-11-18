@@ -33,8 +33,9 @@ spec:
           volumeMounts:
             - name: repo
               mountPath: /mnt/netboot
-      # nodeSelector:
-      #   kidd.network/role: "control-plane"
+      # ainur keeps its state on valar-50 (local-path on its NVMe).
+      nodeSelector:
+        kidd.network/role: "control-plane"
       tolerations:
         - key: node-role.kubernetes.io/master
           operator: Exists

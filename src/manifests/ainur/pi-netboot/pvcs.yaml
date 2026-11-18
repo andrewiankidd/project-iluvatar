@@ -7,8 +7,8 @@ metadata:
     ainur.kidd.network/volume: boot
 spec:
   accessModes:
-    - ReadWriteMany
-  storageClassName: longhorn-replicated-ext4-immediate
+    - ReadWriteOnce
+  storageClassName: local-path
   resources:
     requests:
       storage: 128Mi
@@ -22,8 +22,8 @@ metadata:
     ainur.kidd.network/volume: os
 spec:
   accessModes:
-    - ReadWriteMany
-  storageClassName: longhorn-replicated-ext4-immediate
+    - ReadWriteOnce
+  storageClassName: local-path
   resources:
     requests:
       storage: 5Gi
@@ -37,8 +37,8 @@ metadata:
     ainur.kidd.network/volume: nfs-state
 spec:
   accessModes:
-    - ReadWriteMany
-  storageClassName: longhorn-replicated-ext4-immediate
+    - ReadWriteOnce
+  storageClassName: local-path
   resources:
     requests:
       storage: 1Gi
@@ -52,8 +52,8 @@ metadata:
     ainur.kidd.network/volume: download
 spec:
   accessModes:
-    - ReadWriteMany
-  storageClassName: longhorn-replicated-ext4-immediate
+    - ReadWriteOnce
+  storageClassName: local-path
   resources:
     requests:
       storage: 2Gi
@@ -67,8 +67,8 @@ metadata:
     ainur.kidd.network/volume: extracted
 spec:
   accessModes:
-    - ReadWriteMany
-  storageClassName: longhorn-replicated-ext4-immediate
+    - ReadWriteOnce
+  storageClassName: local-path
   resources:
     requests:
       storage: 5Gi
@@ -82,8 +82,8 @@ metadata:
     ainur.kidd.network/volume: output
 spec:
   accessModes:
-    - ReadWriteMany
-  storageClassName: longhorn-replicated-ext4-immediate
+    - ReadWriteOnce
+  storageClassName: local-path
   resources:
     requests:
       storage: 2Gi

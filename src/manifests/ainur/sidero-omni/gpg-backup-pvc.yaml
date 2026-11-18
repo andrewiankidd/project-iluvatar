@@ -11,13 +11,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: longhorn-replicated-ext4-immediate
+  storageClassName: local-path
   resources:
     requests:
       storage: 16Mi
-  # The etcd encryption key's saved copy, restored before the key job runs
-  # (omni-volsync.yaml), so Omni gets the key its restored data needs.
-  dataSourceRef:
-    apiGroup: volsync.backube
-    kind: ReplicationDestination
-    name: omni-gpg-backup-restore

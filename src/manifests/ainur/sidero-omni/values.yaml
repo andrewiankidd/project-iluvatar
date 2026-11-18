@@ -24,10 +24,9 @@ replicaCount: 1
 # default (16Gi) only if you want headroom.
 persistence:
   enabled: true
-  # Ours (omni-pvc.yaml), so it can be restored from its latest backup when
-  # created; the chart then makes none. The settings below match it.
+  # Ours (omni-pvc.yaml); the chart then makes none. The settings below match it.
   existingClaim: omni
-  storageClassName: longhorn-replicated-xfs-immediate
+  storageClassName: local-path
   accessModes:
     - ReadWriteOnce
   size: 20Gi
@@ -243,3 +242,10 @@ config:
         privateKeySource: file:///omni.asc
     sqlite:
       path: /data/secondary-storage/sqlite.db
+
+# --- Placement and priority ----------------------------------------------
+# On valar-50, with its data (local-path on its NVMe), and among the last
+# things evicted if memory runs short.
+nodeSelector:
+  kidd.network/role: control-plane
+priorityClassName: ainur-critical

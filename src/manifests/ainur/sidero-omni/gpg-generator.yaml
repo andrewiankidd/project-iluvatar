@@ -51,8 +51,9 @@ spec:
     spec:
       serviceAccountName: omni-gpg-init
       restartPolicy: Never
-      # nodeSelector:
-      #   kidd.network/role: "worker"
+      # valar-50, where omni-gpg-backup lives (local-path on its NVMe).
+      nodeSelector:
+        kidd.network/role: control-plane
       volumes:
         - name: work
           emptyDir: {}
@@ -82,7 +83,7 @@ spec:
               EOF
               gpg --batch --gen-key /work/gen-batch
               gpg --batch --pinentry-mode loopback --passphrase "" --export-secret-keys --armor omni-etcd@local > /work/omni.asc
-              # Backup into Longhorn PVC (don't overwrite if already present)
+              # Backup into the omni-gpg-backup PVC (don't overwrite if already present)
               [ -s /backup/omni.asc ] || cp /work/omni.asc /backup/omni.asc
           volumeMounts:
             - name: work
@@ -100,10 +101,9 @@ spec:
                 echo "omni-gpg already exists; skipping"
                 exit 0
               fi
-              # The saved key wins: a restored omni-gpg-backup (omni-volsync.yaml)
-              # holds the key Omni's restored data is encrypted with, and a new
-              # one couldn't read it. Only with no saved key is the new one used,
-              # and saved.
+              # The saved key wins: omni-gpg-backup holds the key Omni's data
+              # is encrypted with, and a new one couldn't read it. Only with no
+              # saved key is the new one used, and saved.
               if [ ! -s /backup/omni.asc ]; then
                 for i in $(seq 1 60); do [ -s /work/omni.asc ] && break; sleep 1; done
                 test -s /work/omni.asc

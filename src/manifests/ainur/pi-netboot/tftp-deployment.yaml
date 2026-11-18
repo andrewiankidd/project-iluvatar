@@ -13,6 +13,11 @@ spec:
         app: netboot
         component: tftp
     spec:
+      # valar-50: its state and the VIP live there.
+      nodeSelector:
+        kidd.network/role: "control-plane"
+      # The VIP and netbooting the other Pis: evicted last.
+      priorityClassName: ainur-critical
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       tolerations:

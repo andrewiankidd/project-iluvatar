@@ -42,3 +42,6 @@ service:
 envFrom:
   - secretRef:
       name: ainur-secrets
+
+# Eviction and scheduling priority (user-data: 00-priority-classes.yaml).
+priorityClassName: ainur-critical

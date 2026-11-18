@@ -14,8 +14,8 @@ metadata:
     ainur.kidd.network/volume: talos-media
 spec:
   accessModes:
-    - ReadWriteMany
-  storageClassName: longhorn-replicated-ext4-immediate
+    - ReadWriteOnce
+  storageClassName: local-path
   resources:
     requests:
       storage: 1Gi
@@ -35,6 +35,9 @@ spec:
       template:
         spec:
           restartPolicy: Never
+          # valar-50, where talos-media lives (local-path on its NVMe).
+          nodeSelector:
+            kidd.network/role: "control-plane"
           containers:
             - name: download
               image: alpine:3.20

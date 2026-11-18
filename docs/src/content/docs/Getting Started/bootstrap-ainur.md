@@ -18,7 +18,7 @@ draft: true
 - Argo CD to continuously sync what’s in Git to what runs on the cluster.
 - Dex (OIDC) for single sign‑on that everything trusts.
 - Headlamp for human‑friendly visibility into the cluster.
-- Longhorn for replicated, node‑independent storage.
+- Persistent volumes on one Pi's NVMe (local-path), after a spell with Longhorn.
 - Omni to manage and eventually PXE‑provision other machines.
 
 This page is the story and the vibes. Deep details live in the guides so I can keep this readable. If you want the “how”, follow the links as you go.
@@ -47,7 +47,7 @@ See also: [Flashing Image & Cloud Config](#flashing-image-cloud-config), [First�
 When I added another node as a worker, I used nodeSelectors to keep noisy stuff on workers and keep the control plane lean:
 
 - Global nodeSelector points manager/UI workloads to workers.
-- Longhorn:
+- Longhorn (at the time, see below):
   - system‑managed components (engine‑image, instance‑manager) only on workers.
   - CSI node plugin runs on all nodes so volumes can mount anywhere.
 
@@ -64,11 +64,11 @@ Netboot is awesome, but RAM disks are not bottomless.
   - Keep heavy DaemonSets off the control plane.
 - The SD card Pi kept its images in RAM too, to spare the card. They grew to 9 GB of its 16 and k3s started restarting; they live on the card now (a pull is a write, running isn't), with only logs and pods' scratch space in RAM.
 - Setting the kubelet's `eviction-hard` replaces its defaults, so naming only disk thresholds silently turned off eviction for memory: a full Pi just wedged (SSH accepting and dropping connections) instead of evicting a pod. `memory.available` is named again, with `system-reserved` and `kube-reserved` keeping room for the system and the kubelet.
-- The netbooted Pis have no disk for images (the NVMe is Longhorn's), so their k3s RAM disk is capped at 40% of RAM, and image GC keeps it under that.
+- The netbooted Pis keep their images in RAM, capped at 60% of it, with image GC keeping them under that. containerd normally keeps each image's compressed download next to the unpacked copy; on a RAM disk that was 700 MB of duplicates, so it's told to drop them (`discard_unpacked_layers`).
 
 Guide: [Cluster Ops & Footprint](/project-iluvatar/guides/declarative-cluster/1-k3s/)
 
-## NVMe + Longhorn (persistent storage)
+## NVMe + Longhorn (persistent storage), and then not
 
 I added NVMe to the worker(s) and let Longhorn take over as the replicated datastore.
 
@@ -77,6 +77,8 @@ I added NVMe to the worker(s) and let Longhorn take over as the replicated datas
 - Auto‑rebalance: `best‑effort` so replicas spread across both workers.
 
 Guide: [Longhorn Setup](/project-iluvatar/guides/declarative-cluster/longhorn/)
+
+It didn't last. ainur's volumes are a few gigabytes of netboot files and Omni's state, and Longhorn's manager, engine and CSI pods, with about 2 GB of images, were too much for the 8 GB netbooted Pis: their RAM disks filled and nothing new could pull. ainur now uses k3s's own local-path on valar-50's NVMe, with Omni, the netboot servers and the VIP pinned to valar-50 beside it. That gives up surviving valar-50's loss, which the single k3s server never could anyway. Longhorn moved to arda, which has the disks and the data that need it.
 
 ## SSO + Ingress (nice URLs, one login)
 
@@ -106,7 +108,7 @@ Guide: [Omni Basics](/project-iluvatar/guides/omni/)
 
 - Cut the tether completely: have the Pi control plane self‑host TFTP/NFS and act as PXE proxy.
 - Omni + Talos PXE for x86 workers.
-- Add observability (Loki/Grafana) and backups (Velero / Longhorn backup target).
+- Add observability (Loki/Grafana).
 
 ![TODO – milestone collage placeholder](../../../assets/todo.png)
 
