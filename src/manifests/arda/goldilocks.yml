@@ -1,0 +1,38 @@
+# What arda's workloads should reserve, from what they actually use: the
+# VPA recommender measures each workload (through metrics-server), and
+# Goldilocks shows its suggestions per namespace. Read-only: nothing is
+# resized automatically.
+#
+# The dashboard has no login, so it has no Ingress: arda's only web route is
+# the public tunnel. Until arda has a LAN one, reach it with
+#   kubectl -n goldilocks port-forward svc/goldilocks-dashboard 8080:80
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: goldilocks
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://charts.fairwinds.com/stable
+      chart: goldilocks
+      targetRevision: 11.2.1
+      helm:
+        valueFiles:
+          - $values/src/manifests/arda/goldilocks/values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: goldilocks
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      # The VPA CRDs are large.
+      - ServerSideApply=true
+    automated:
+      prune: true
+      selfHeal: true
