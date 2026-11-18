@@ -11,6 +11,9 @@ kind: Application
 metadata:
   name: longhorn
   namespace: argocd
+  annotations:
+    # Before anything with a volume: see kyverno-policies.yml.
+    argocd.argoproj.io/sync-wave: "-3"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
@@ -26,7 +29,7 @@ spec:
       targetRevision: main
       path: src/manifests/arda/longhorn
       directory:
-        include: recurring-jobs.yaml
+        include: "{recurring-jobs.yaml,snapshot-class.yaml}"
     - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
       targetRevision: main
       ref: values

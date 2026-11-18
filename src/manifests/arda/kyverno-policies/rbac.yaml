@@ -1,0 +1,30 @@
+# What volsync.yaml needs Kyverno to be allowed to do, added to its own
+# ClusterRoles by their aggregation labels.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:volsync:background
+  labels:
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+rules:
+  - apiGroups: [volsync.backube]
+    resources: [replicationsources, replicationdestinations]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:volsync:admission
+  labels:
+    rbac.kyverno.io/aggregate-to-admission-controller: "true"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [volsync-r2]
+    verbs: [get]

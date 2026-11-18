@@ -63,28 +63,14 @@ spec:
               kubectl wait --for condition=established --timeout=120s \
                 crd/applications.argoproj.io
 
-              kubectl apply -f - <<EOF
-              apiVersion: argoproj.io/v1alpha1
-              kind: Application
-              metadata:
-                name: arda
-                namespace: argocd
-              spec:
-                project: default
-                source:
-                  repoURL: https://github.com/andrewiankidd/project-iluvatar.git
-                  targetRevision: main
-                  path: src/manifests/arda
-                destination:
-                  server: https://kubernetes.default.svc
-                  namespace: argocd
-                syncPolicy:
-                  automated:
-                    prune: true
-                    selfHeal: true
-              EOF
+              # An Application's health is its apps' health, so arda's sync
+              # waves wait for each wave to be Healthy: Longhorn, snapshots,
+              # VolSync and Kyverno's policies before anything with a volume,
+              # or that volume wouldn't restore (src/manifests/arda/kyverno-policies.yml).
+              kubectl -n argocd patch configmap argocd-cm --type merge -p '{"data":{"resource.customizations.health.argoproj.io_Application":"hs = {}\nhs.status = \"Progressing\"\nhs.message = \"\"\nif obj.status ~= nil and obj.status.health ~= nil then\n  hs.status = obj.status.health.status\n  if obj.status.health.message ~= nil then\n    hs.message = obj.status.health.message\n  end\nend\nreturn hs\n"}}'
 
-              # Each app's Secret, from whichever ARDA_* values are set.
+              # Each app's Secret, from whichever ARDA_* values are set, before
+              # the apps: VolSync's above all, which a volume needs as it's made.
               put() {
                 ns=$1; name=$2; shift 2
                 kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
@@ -121,6 +107,37 @@ spec:
                   --from-literal=AWS_SECRET_ACCESS_KEY="${ARDA_BACKUP_SECRET_ACCESS_KEY:-}" \
                   --from-literal=AWS_ENDPOINTS="${ARDA_BACKUP_ENDPOINT:-}"
               fi
+              # Every volume's backups (src/manifests/arda/kyverno-policies/volsync.yaml):
+              # one restic repository per volume under volsync/ in the
+              # arda-backups bucket, all with the same password.
+              if [ -n "${ARDA_BACKUP_ACCESS_KEY_ID:-}" ] && [ -n "${ARDA_VOLSYNC_PASSWORD:-}" ]; then
+                put volsync-system volsync-r2 \
+                  --from-literal=AWS_ACCESS_KEY_ID="$ARDA_BACKUP_ACCESS_KEY_ID" \
+                  --from-literal=AWS_SECRET_ACCESS_KEY="${ARDA_BACKUP_SECRET_ACCESS_KEY:-}" \
+                  --from-literal=RESTIC_PASSWORD="$ARDA_VOLSYNC_PASSWORD" \
+                  --from-literal=RESTIC_REPOSITORY_BASE="s3:${ARDA_BACKUP_ENDPOINT:-}/arda-backups/volsync"
+              fi
+
+              kubectl apply -f - <<EOF
+              apiVersion: argoproj.io/v1alpha1
+              kind: Application
+              metadata:
+                name: arda
+                namespace: argocd
+              spec:
+                project: default
+                source:
+                  repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+                  targetRevision: main
+                  path: src/manifests/arda
+                destination:
+                  server: https://kubernetes.default.svc
+                  namespace: argocd
+                syncPolicy:
+                  automated:
+                    prune: true
+                    selfHeal: true
+              EOF
           volumeMounts:
             - name: omni-data
               mountPath: /omni-data

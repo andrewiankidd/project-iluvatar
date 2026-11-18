@@ -1,0 +1,30 @@
+# CSI volume snapshots on arda: the VolumeSnapshot CRDs and their controller,
+# which Longhorn's CSI driver needs before anything can snapshot a volume.
+# VolSync backs each volume up from a snapshot (volsync.yml), so a live world
+# is never copied mid-write. The class is longhorn/snapshot-class.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: snapshot-controller
+  namespace: argocd
+  annotations:
+    # Before anything with a volume: see kyverno-policies.yml.
+    argocd.argoproj.io/sync-wave: "-3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://piraeus.io/helm-charts
+    chart: snapshot-controller
+    targetRevision: 5.4.0
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: snapshot-controller
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,0 +1,29 @@
+# arda's Kyverno policies (kyverno-policies/): every Longhorn PVC backed up
+# and restorable through VolSync (volsync.yml).
+#
+# Order matters on a fresh cluster: a PVC only restores if the policy is in
+# place when the PVC is created. So the sync waves run Longhorn and snapshots
+# (-3), then VolSync and Kyverno (-2), then this (-1), then every app (0);
+# arda-bootstrap makes Argo CD wait for each wave to be Healthy.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno-policies
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/kyverno-policies
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kyverno
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

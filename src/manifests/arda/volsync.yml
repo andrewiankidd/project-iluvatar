@@ -1,0 +1,32 @@
+# Backups of every arda volume to Cloudflare R2, and restores from them:
+# VolSync, with restic. Kyverno (kyverno-policies.yml) gives each Longhorn
+# PVC a nightly ReplicationSource and a ReplicationDestination it fills from
+# when created, so a rebuilt cluster comes back with its data.
+#
+# Longhorn still stores and replicates the volumes; this is what gets them
+# off-site and back.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: volsync
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://backube.github.io/helm-charts
+    chart: volsync
+    targetRevision: 0.17.0
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: volsync-system
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    automated:
+      prune: true
+      selfHeal: true
