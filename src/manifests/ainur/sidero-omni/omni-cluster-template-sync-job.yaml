@@ -53,7 +53,8 @@ spec:
 
               export LAB_ROOT_CA_INDENTED
               LAB_ROOT_CA_INDENTED="$(sed '2,$s/^/        /' /etc/omni/lab-root-ca.crt)"
-              envsubst < "$CONFIG_PATH/omni-cluster-template.yaml" > /tmp/omni-cluster-template.rendered.yaml
+              # Only this variable: the template has $patch keys envsubst would blank.
+              envsubst '${LAB_ROOT_CA_INDENTED}' < "$CONFIG_PATH/omni-cluster-template.yaml" > /tmp/omni-cluster-template.rendered.yaml
 
               omnictl apply -f "$CONFIG_PATH/machine-class.yaml"
               omnictl cluster template sync \
