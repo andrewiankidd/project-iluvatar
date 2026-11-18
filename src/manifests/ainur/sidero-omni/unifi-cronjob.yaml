@@ -9,6 +9,9 @@
 #   netboot (its VIP answers with the k3s leader). Until then it is left as
 #   it is: bootstrap/netboot/rebootstrap.sh points it at the bootstrap VM
 #   while ainur is down, and this points it back.
+# - arda's nodes: a DHCP reservation for each machine in Omni, from
+#   NODE_IPS, and the hostname valinor-<last octet> (an Omni machine patch).
+#   Old Nodes left NotReady by a rename are removed.
 # - arda's port forwards: one per port of every arda Service annotated
 #   kidd.network/port-forward: "true", to its LoadBalancer address
 #   (192.168.1.58, src/manifests/arda/metallb). Take the annotation off, or
@@ -44,6 +47,13 @@ spec:
                 # Keep in step with ../pi-netboot/kube-vip.yaml.
                 - name: AINUR_VIP
                   value: "192.168.1.59"
+                # arda's nodes: reserved from here in order, and named
+                # <prefix>-<last octet>. 192.168.1.50-52 are ainur's Pis, .58
+                # arda's games (src/manifests/arda/metallb), .59 ainur's VIP.
+                - name: NODE_IPS
+                  value: 192.168.1.53 192.168.1.54 192.168.1.55 192.168.1.56
+                - name: NODE_PREFIX
+                  value: valinor
                 - name: OMNI_ENDPOINT
                   value: https://omni.kidd.network
                 - name: CLUSTER
@@ -108,17 +118,87 @@ spec:
                     echo "option 66: ainur isn't serving netboot yet; leaving it"
                   fi
 
+                  # The rest is arda's, through Omni.
+                  [ -s /omni-data/automation.key ] || { echo "arda: Omni isn't up yet"; exit 0; }
+                  curl -fsSL -o /usr/local/bin/omnictl "$OMNICTL_URL" && chmod +x /usr/local/bin/omnictl
+                  export OMNI_SERVICE_ACCOUNT_KEY="$(cat /omni-data/automation.key)"
+                  export KUBECONFIG=/tmp/kubeconfig
+                  arda_up=1
+                  omnictl kubeconfig "$KUBECONFIG" --cluster "$CLUSTER" \
+                      --service-account --user unifi --force >/dev/null 2>&1 \
+                    && kubectl get --raw /readyz >/dev/null 2>&1 || arda_up=0
+
+                  # arda's nodes: each Omni machine gets a DHCP reservation from
+                  # NODE_IPS, named for it, and the hostname valinor-<last octet>
+                  # (a machine-level Omni patch). The address takes effect at
+                  # its next DHCP renewal or reboot; a node renamed after it has
+                  # Longhorn data orphans that data, as Longhorn knows disks by
+                  # node name.
+                  arda_nodes() {
+                    users="$unifi/api/s/$UNIFI_SITE/rest/user"
+                    api "$users" | jq '.data' > /tmp/users.json
+                    omnictl get machinestatus -o json 2>/dev/null | jq -s -c '.[]
+                      | {id: .metadata.id, hostname: (.spec.network.hostname // ""),
+                         mac: ([.spec.network.networklinks[]? | select(.linuxname | test("^en|^eth")) | .hardwareaddress][0] // "")}
+                      | select(.mac != "")' > /tmp/machines.jsonl
+                    while read -r m; do
+                      id=$(printf '%s' "$m" | jq -r .id); mac=$(printf '%s' "$m" | jq -r .mac)
+                      ip=$(jq -r --arg mac "$mac" '.[] | select(.mac == $mac and .use_fixedip == true) | .fixed_ip' /tmp/users.json | head -n1)
+                      case " $NODE_IPS " in *" $ip "*) ;; *) ip="" ;; esac
+                      if [ -z "$ip" ]; then
+                        for candidate in $NODE_IPS; do
+                          jq -e --arg ip "$candidate" 'any(.[]; .use_fixedip == true and .fixed_ip == $ip)' /tmp/users.json >/dev/null && continue
+                          ip=$candidate; break
+                        done
+                        [ -n "$ip" ] || { echo "nodes: no free address in NODE_IPS for $id"; continue; }
+                        name="$NODE_PREFIX-${ip##*.}"
+                        reservation=$(jq -nc --arg ip "$ip" --arg n "$name" '{use_fixedip: true, fixed_ip: $ip, name: $n}')
+                        client=$(jq -r --arg mac "$mac" '.[] | select(.mac == $mac) | ._id' /tmp/users.json | head -n1)
+                        if [ -n "$client" ]; then
+                          change "nodes: reserve $ip for $mac as $name" PUT "$users/$client" "$reservation"
+                        else
+                          change "nodes: reserve $ip for $mac as $name" POST "$users" "$(printf '%s' "$reservation" | jq -c --arg mac "$mac" '.mac = $mac')"
+                        fi
+                        # So the next machine doesn't get the same one.
+                        jq --arg mac "$mac" --arg ip "$ip" '. + [{mac: $mac, use_fixedip: true, fixed_ip: $ip}]' /tmp/users.json > /tmp/u && mv /tmp/u /tmp/users.json
+                      fi
+                      name="$NODE_PREFIX-${ip##*.}"
+                      [ "$(printf '%s' "$m" | jq -r .hostname)" = "$name" ] && continue
+                      echo "nodes: $id is $(printf '%s' "$m" | jq -r .hostname); naming it $name"
+                      [ "$DRY_RUN" = 1 ] && continue
+                      printf '%s\n' \
+                        "metadata:" \
+                        "  namespace: default" \
+                        "  type: ConfigPatches.omni.sidero.dev" \
+                        "  id: 300-hostname-$id" \
+                        "  labels:" \
+                        "    omni.sidero.dev/machine: $id" \
+                        "spec:" \
+                        "  data: |" \
+                        "    apiVersion: v1alpha1" \
+                        "    kind: HostnameConfig" \
+                        "    auto:" \
+                        "      \$patch: delete" \
+                        "    hostname: $name" > /tmp/hostname.yaml
+                      omnictl apply -f /tmp/hostname.yaml >/dev/null
+                    done < /tmp/machines.jsonl
+                    # A renamed node leaves its old Node behind, NotReady:
+                    # remove those that are no machine's hostname any more.
+                    [ "$arda_up" = 1 ] || return 0
+                    jq -r .hostname /tmp/machines.jsonl > /tmp/hostnames
+                    kubectl get nodes -o json | jq -r '.items[]
+                      | select(any(.status.conditions[]; .type == "Ready" and .status != "True")) | .metadata.name' \
+                      | while read -r node; do
+                        grep -qx "$node" /tmp/hostnames && continue
+                        echo "nodes: remove stale Node $node"
+                        [ "$DRY_RUN" = 1 ] || kubectl delete node "$node"
+                      done
+                  }
+                  arda_nodes
+
                   # arda's port forwards, once arda is up.
                   arda_forwards() {
-                    [ -s /omni-data/automation.key ] || { echo "forwards: Omni isn't up yet"; return 0; }
-                    curl -fsSL -o /usr/local/bin/omnictl "$OMNICTL_URL" && chmod +x /usr/local/bin/omnictl
-                    export OMNI_SERVICE_ACCOUNT_KEY="$(cat /omni-data/automation.key)"
-                    export KUBECONFIG=/tmp/kubeconfig
-                    if ! omnictl kubeconfig "$KUBECONFIG" --cluster "$CLUSTER" \
-                        --service-account --user unifi --force >/dev/null 2>&1 \
-                      || ! kubectl get --raw /readyz >/dev/null 2>&1; then
-                      echo "forwards: $CLUSTER isn't up yet"; return 0
-                    fi
+                    [ "$arda_up" = 1 ] || { echo "forwards: $CLUSTER isn't up yet"; return 0; }
                     # What arda wants forwarded. A Service still waiting for its
                     # address wants nothing yet.
                     kubectl get svc -A -o json | jq '[.items[]
