@@ -5,6 +5,19 @@ kubernetes:
 talos:
   # Keep in step with TALOS_VERSION in ../talos-schematic-job.yaml.
   version: v1.14.5
+# Every machine's Talos extensions; Omni upgrades a machine in place (one
+# reboot) when this changes. The whole list, not additions: it replaces what
+# the machine booted with. Keep in step with EXTENSIONS in
+# ../talos-schematic-job.yaml, the image new machines boot.
+#   intel-ucode                 CPU microcode
+#   iscsi-tools, util-linux-tools   Longhorn
+#   i915                        the Intel GPU's driver and firmware, for Quick
+#                               Sync transcodes (src/manifests/arda/media)
+systemExtensions:
+  - siderolabs/i915
+  - siderolabs/intel-ucode
+  - siderolabs/iscsi-tools
+  - siderolabs/util-linux-tools
 patches:
   # Already in the image the machines boot (../talos-schematic-job.yaml);
   # repeated here so it stays in every cluster member's config regardless.

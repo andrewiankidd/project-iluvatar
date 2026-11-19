@@ -1,0 +1,60 @@
+# The generic device plugin on every arda node (../generic-device-plugin.yml).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: generic-device-plugin
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: generic-device-plugin
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: generic-device-plugin
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: generic-device-plugin
+    spec:
+      priorityClassName: system-node-critical
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: generic-device-plugin
+          # main at f7c3291 (2026-10-26); the project tags commits, not releases.
+          image: ghcr.io/squat/generic-device-plugin:f7c3291
+          args:
+            # The GPU's nodes as one device, handed to up to four pods at
+            # once (Jellyfin and Plex share it; a transcode is a session on
+            # the GPU, not the whole of it).
+            - --device
+            - |
+              name: dri
+              groups:
+                - count: 4
+                  paths:
+                    - path: /dev/dri/renderD*
+                    - path: /dev/dri/card*
+            - --device
+            - |
+              name: tun
+              groups:
+                - count: 10
+                  paths:
+                    - path: /dev/net/tun
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: device-plugin
+              mountPath: /var/lib/kubelet/device-plugins
+            - name: dev
+              mountPath: /dev
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
+      volumes:
+        - name: device-plugin
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+        - name: dev
+          hostPath:
+            path: /dev

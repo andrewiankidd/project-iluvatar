@@ -133,12 +133,10 @@ spec:
               port: health
             periodSeconds: 30
             failureThreshold: 4
-          volumeMounts:
-            - name: tun
-              mountPath: /dev/net/tun
           resources:
             requests: { cpu: 20m, memory: 48Mi }
-            limits: { memory: 128Mi }
+            # /dev/net/tun, from the generic device plugin (../generic-device-plugin.yml).
+            limits: { memory: 128Mi, squat.ai/tun: "1" }
       containers:
         - name: qbittorrent
           image: lscr.io/linuxserver/qbittorrent:5.1.4-r3-ls453
@@ -168,10 +166,6 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: media
-        - name: tun
-          hostPath:
-            path: /dev/net/tun
-            type: CharDevice
 ---
 apiVersion: v1
 kind: Service

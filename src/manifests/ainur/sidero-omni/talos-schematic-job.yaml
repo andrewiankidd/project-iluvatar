@@ -66,9 +66,12 @@ spec:
               value: https://factory.talos.dev
             - name: PXE_URL
               value: https://pxe.factory.talos.dev
-            # iscsi-tools and util-linux-tools are what Longhorn needs.
+            # iscsi-tools and util-linux-tools are what Longhorn needs; i915
+            # the Intel GPU's driver, for Quick Sync. Keep in step with
+            # systemExtensions in omni-config/omni-cluster-template.yaml,
+            # which is what machines already installed get.
             - name: EXTENSIONS
-              value: siderolabs/intel-ucode siderolabs/iscsi-tools siderolabs/util-linux-tools
+              value: siderolabs/i915 siderolabs/intel-ucode siderolabs/iscsi-tools siderolabs/util-linux-tools
             - name: OMNICTL_URL
               value: https://github.com/siderolabs/omni/releases/download/v1.13.3/omnictl-linux-arm64
           command:
