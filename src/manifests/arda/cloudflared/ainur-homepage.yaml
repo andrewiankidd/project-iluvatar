@@ -38,6 +38,10 @@ endpoints:
   # ainur's VIP (kube-vip, src/manifests/ainur/pi-netboot/kube-vip.yaml).
   - addresses:
       - 192.168.1.59
+    # Traefik only uses endpoints marked ready; nothing marks a hand-made one.
+    conditions:
+      ready: true
+      serving: true
 ---
 apiVersion: traefik.io/v1alpha1
 kind: ServersTransport
