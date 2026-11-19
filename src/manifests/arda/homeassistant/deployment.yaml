@@ -1,0 +1,146 @@
+# Home Assistant (the container image), its /config on Longhorn, and the
+# Ingress.
+#
+# /config is a Longhorn volume: everything made in the UI lives there
+# (.storage, the SQLite history, automations.yaml and friends). Argo never
+# prunes or deletes it, and VolSync backs it up nightly like every Longhorn
+# volume. configuration.yaml is laid over it from Git.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: config
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: homeassistant
+  labels:
+    app: homeassistant
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume, and one owner of port 8123
+  selector:
+    matchLabels:
+      app: homeassistant
+  template:
+    metadata:
+      labels:
+        app: homeassistant
+    spec:
+      # On the node's own network, so discovery works: mDNS and SSDP are
+      # multicast on the LAN, which a pod network never sees. Home Assistant
+      # listens on arda's node address (192.168.1.53:8123), which is also
+      # what the Service points at. Cluster DNS still, for *.svc names.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # The files configuration.yaml includes, made if missing (Home
+      # Assistant only makes them when it makes configuration.yaml itself).
+      initContainers:
+        - name: includes
+          image: ghcr.io/home-assistant/home-assistant:2026.11.2
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /config/themes
+              for f in automations.yaml scripts.yaml scenes.yaml; do
+                [ -e "/config/$f" ] || echo '[]' > "/config/$f"
+              done
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
+      containers:
+        - name: homeassistant
+          image: ghcr.io/home-assistant/home-assistant:2026.11.2
+          env:
+            - name: TZ
+              value: Europe/London
+          ports:
+            - name: http
+              containerPort: 8123
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: configuration
+              mountPath: /config/configuration.yaml
+              subPath: configuration.yaml
+              readOnly: true
+          # The first start installs integrations' requirements; give it time.
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket:
+              port: http
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests: { cpu: 100m, memory: 512Mi }
+            limits: { memory: 2Gi }
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: config
+        - name: configuration
+          configMap:
+            name: homeassistant-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: homeassistant
+spec:
+  selector:
+    app: homeassistant
+  ports:
+    - name: http
+      port: 8123
+      targetPort: http
+---
+# LAN only (arda's Traefik, with its lab-CA certificate); no tunnel until the
+# companion app needs it away from home. No Dex in front: see
+# ../homeassistant.yml.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: homeassistant
+  annotations:
+    # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: private
+    gethomepage.dev/group: Apps
+    gethomepage.dev/name: Home Assistant
+    gethomepage.dev/description: The house
+    gethomepage.dev/icon: home-assistant.png
+    gethomepage.dev/href: https://homeassistant.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: homeassistant.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: homeassistant
+                port:
+                  name: http

@@ -1,0 +1,34 @@
+# Home Assistant's configuration.yaml, from Git (kustomization.yaml makes it a
+# ConfigMap, mounted over /config/configuration.yaml). Only what should be
+# declarative lives here; integrations, devices, users, dashboards and the
+# history are made in the UI and kept in the volume (/config/.storage and the
+# database), which VolSync backs up.
+#
+# Settings put here are locked in the UI: leave out the name, location, units
+# and time zone, which onboarding asks for.
+
+# The usual set: the frontend, onboarding, discovery (zeroconf, ssdp, dhcp),
+# Assist, history, energy, the companion apps' mobile_app, and the rest.
+default_config:
+
+frontend:
+  themes: !include_dir_merge_named themes
+
+# Edited from the UI, which writes these files (the Deployment makes them
+# if missing).
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+homeassistant:
+  internal_url: https://homeassistant.kidd.network
+
+# Behind arda's Traefik, which connects from its pod address. Without this,
+# Home Assistant answers every proxied request (they all carry
+# X-Forwarded-For) with a 400.
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 10.244.0.0/16   # arda's pods
+  ip_ban_enabled: true
+  login_attempts_threshold: 10
