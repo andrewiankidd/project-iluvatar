@@ -43,6 +43,11 @@ provider:
 sources:
   - ingress
 
+# Except an Ingress that opts out: one serving a name that already points at
+# ainur on the LAN (../cloudflared/ainur-homepage.yaml).
+extraArgs:
+  - --annotation-filter=kidd.network/lan-dns!=false
+
 domainFilters:
   - kidd.network
 

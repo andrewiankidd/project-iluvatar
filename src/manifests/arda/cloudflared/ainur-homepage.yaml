@@ -1,0 +1,78 @@
+# kidd.network and homepage.kidd.network on the internet: ainur's public
+# Homepage (no login; only what isn't marked private), through arda's
+# tunnel, since ainur has none of its own. The tunnel hands every host to
+# arda's Traefik (config.yaml), and this Ingress sends these two on to
+# ainur's Traefik at its VIP, which serves them as on the LAN.
+#
+# external-dns-tunnel publishes the two names (kidd.network/tunnel); arda's
+# LAN DNS leaves them alone (kidd.network/lan-dns: "false"), since on the
+# LAN they already point at ainur, kept by ainur's unifi CronJob.
+#
+# The hop to ainur is HTTPS on the LAN without checking ainur's certificate:
+# arda's Traefik doesn't hold the lab CA. The internet side is Cloudflare's.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ainur-homepage
+  annotations:
+    traefik.ingress.kubernetes.io/service.serversscheme: https
+    traefik.ingress.kubernetes.io/service.serverstransport: cloudflared-ainur@kubernetescrd
+spec:
+  ports:
+    - name: https
+      port: 443
+      targetPort: 443
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: ainur-homepage
+  labels:
+    kubernetes.io/service-name: ainur-homepage
+addressType: IPv4
+ports:
+  - name: https
+    port: 443
+    protocol: TCP
+endpoints:
+  # ainur's VIP (kube-vip, src/manifests/ainur/pi-netboot/kube-vip.yaml).
+  - addresses:
+      - 192.168.1.59
+---
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: ainur
+spec:
+  insecureSkipVerify: true
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ainur-homepage
+  annotations:
+    kidd.network/tunnel: "true"
+    kidd.network/lan-dns: "false"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ainur-homepage
+                port:
+                  name: https
+    - host: homepage.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ainur-homepage
+                port:
+                  name: https

@@ -10,6 +10,14 @@ metadata:
   name: portal
   annotations:
     kidd.network/tunnel: "true"
+    # On the public Homepage at kidd.network (copied to ainur's by its
+    # arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Games
+    gethomepage.dev/name: Minecraft
+    gethomepage.dev/description: The servers, and their 3D maps
+    gethomepage.dev/icon: mdi-minecraft
+    gethomepage.dev/href: https://minecraft.kidd.network
 spec:
   ingressClassName: traefik
   rules:

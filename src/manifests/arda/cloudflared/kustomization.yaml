@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: cloudflared
 resources:
   - deployment.yaml
+  - ainur-homepage.yaml
 configMapGenerator:
   # Hashed name: editing the config rolls the Deployment.
   - name: cloudflared
