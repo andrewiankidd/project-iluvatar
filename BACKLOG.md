@@ -131,6 +131,15 @@ Considered and set aside:
 - **No build cache**: each job's image layers are an emptyDir, gone when it ends. The chart can use an S3 cache; an R2 bucket would do.
 - Jobs reserve 1 GiB and may use 4 GiB on a 16 GB machine Minecraft mostly fills; two Cypress jobs at once can push the games' pods towards eviction. Watch it in Goldilocks.
 
+### Obsidian (built 2026-11-19)
+
+- `src/manifests/arda/obsidian.yml`: CouchDB 3.5 for the Self-hosted LiveSync plugin at `obsidian-sync.kidd.network` (public through the tunnel, and on the LAN), and linuxserver/obsidian in the browser at `obsidian.kidd.network` (LAN only). User `obsidian`, password `ARDA_OBSIDIAN_PASSWORD`, for both. Checked: public HTTPS (Cloudflare's certificate), LAN HTTPS (lab CA), writes and reads, CORS for `app://obsidian.md`, the browser login.
+- **Left to do, in the apps**: install LiveSync in each vault and point it at the server (`couchdb.yaml` has the settings), with end-to-end encryption on. The browser Obsidian's vault can use `http://couchdb.obsidian.svc:5984`.
+- **Trade-off**: CouchDB is on the internet with one admin login, no Dex in front: the Obsidian apps can't do an OIDC login. A long random password, and LiveSync's encryption so the server only holds ciphertext. A non-admin CouchDB user per vault would narrow it further.
+- **Watch**: at home, phones reach arda's lab-CA certificate, not Cloudflare's. iOS trusts the lab CA once its profile is installed and fully trusted; Android apps ignore user-installed CAs unless the app opts in, so the Obsidian app on Android may refuse to sync on Wi-Fi. If so: a LAN DNS opt-out can't help (the `*.kidd.network` wildcard sends it to ainur), so the way out is a UniFi forward of that one name to public DNS.
+- **LAN HTTPS** for all of arda came with it: a `*.kidd.network` certificate from ainur's cert-manager (`ainur/sidero-omni/arda-lan-certificate.yaml`), copied to arda by `arda-bootstrap` hourly and served by arda's Traefik by default. Before, arda's sites answered at home with Traefik's self-signed certificate.
+- **Fixed on the way**: external-dns-lan had been crash-looping since `e520a2f` (external-dns 0.23 rejects `!=` in `--annotation-filter`), so no LAN records changed for two hours. Now `notin (false)`.
+
 ### More workloads
 
 - Planned on the x86 page, none built: Jellyfin, Paperless, Bitwarden, Crafty, LlamaGPT. Each would be an Argo CD app under `src/manifests/arda` storing its data on Longhorn, with any secrets coming from `.env`.
