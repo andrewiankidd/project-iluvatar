@@ -81,6 +81,11 @@ spec:
                 kubectl -n "$ns" create secret generic "$name" "$@" \
                   --dry-run=client -o yaml | kubectl apply -f -
               }
+              # The lab CA, for arda's metrics and logs collectors to trust
+              # ainur's Prometheus and Loki (src/manifests/arda/monitoring).
+              # The chart reads its other optional fields from the same
+              # Secret, so they're here, empty.
+              put monitoring ainur-telemetry --from-file=ca.crt=/etc/omni/lab-root-ca.crt                 --from-literal=cert= --from-literal=key= --from-literal=tenantId=
               if [ -n "${ARDA_CLOUDFLARE_API_TOKEN:-}" ]; then
                 put external-dns cloudflare-api-token --from-literal=api-token="$ARDA_CLOUDFLARE_API_TOKEN"
                 put ddns cloudflare-api-token --from-literal=api-token="$ARDA_CLOUDFLARE_API_TOKEN"

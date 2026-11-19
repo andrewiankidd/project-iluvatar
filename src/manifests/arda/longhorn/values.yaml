@@ -16,3 +16,9 @@ persistence:
 
 preUpgradeChecker:
   jobEnabled: false
+
+# Longhorn's metrics, for ainur's Prometheus (via arda's agent, ../monitoring):
+# a faulted volume alerts.
+metrics:
+  serviceMonitor:
+    enabled: true
