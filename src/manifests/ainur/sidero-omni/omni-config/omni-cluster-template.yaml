@@ -80,3 +80,13 @@ kind: Workers
 machineClass:
   name: arda-workers
   size: unlimited
+# The workers' own list, replacing the cluster's: i915 too, the Intel GPU's
+# driver for Quick Sync transcodes (src/manifests/arda/media). On the
+# workers first: with it, valinor-53 (the control plane) hard-reset two
+# minutes into every boot (2026-11-19, BACKLOG.md "Media"), and a worker
+# going down doesn't take the cluster with it.
+systemExtensions:
+  - siderolabs/i915
+  - siderolabs/intel-ucode
+  - siderolabs/iscsi-tools
+  - siderolabs/util-linux-tools
