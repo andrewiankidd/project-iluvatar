@@ -23,7 +23,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [secrets]
-    verbs: [get, create, patch, update]
+    verbs: [get, create, patch, update, delete]
   - apiGroups: [apps]
     resources: [deployments]
     resourceNames: [headlamp]
