@@ -7,6 +7,9 @@ metadata:
     kubernetes.io/ingress.class: "traefik"
     cert-manager.io/cluster-issuer: "local-ca"
     gethomepage.dev/enabled: "true"
+    # LAN only: the lab CA is for the LAN's own certificates; through Cloudflare
+    # every site has a valid one.
+    gethomepage.dev/instance: private
     gethomepage.dev/group: Lab
     gethomepage.dev/name: Lab CA
     gethomepage.dev/description: Trust this lab's certificates
