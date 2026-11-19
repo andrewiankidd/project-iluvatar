@@ -11,9 +11,9 @@
 # Settings, from the environment or .env (see .env.example):
 #   PI_HOSTS           the Pis                   default: 192.168.1.50 192.168.1.51 192.168.1.52
 #   PI_USER            their user                default: ubuntu
-#   AINUR_PI_PASSWORD  their password            (the same one user-data sets)
+#   AINUR_PUSH_KEY     the key they trust       (they have no password)
 #
-# Needs Docker: ssh and sshpass run in a container.
+# Needs Docker: ssh runs in a container.
 # Docs: https://andrewiankidd.github.io/project-iluvatar/getting-started/rebootstrap-ainur/
 set -euo pipefail
 
@@ -23,7 +23,7 @@ if [ -f "$HERE/.env" ]; then
 fi
 PI_HOSTS="${*:-${PI_HOSTS:-192.168.1.50 192.168.1.51 192.168.1.52}}"
 PI_USER="${PI_USER:-ubuntu}"
-PI_PASSWORD="${AINUR_PI_PASSWORD:?set AINUR_PI_PASSWORD in .env}"
+PUSH_KEY="${AINUR_PUSH_KEY:?set AINUR_PUSH_KEY in .env}"
 
 # Nothing to boot from if the VM is not serving.
 if ! curl -sf --connect-timeout 3 --max-time 5 -o /dev/null "http://$BOOTSTRAP_IP_ADDRESS/user-data"; then
@@ -66,11 +66,12 @@ systemctl reboot
 '
 
 MSYS_NO_PATHCONV=1 docker run --rm -e PI_HOSTS="$PI_HOSTS" -e PI_USER="$PI_USER" \
-  -e SSHPASS="$PI_PASSWORD" -e REMOTE="$remote" alpine:3.20 sh -c '
-  apk add -q --no-cache openssh-client sshpass
+  -e PUSH_KEY="$PUSH_KEY" -e REMOTE="$remote" alpine:3.20 sh -c '
+  apk add -q --no-cache openssh-client
+  echo "$PUSH_KEY" | base64 -d > /key && chmod 600 /key
   for h in $PI_HOSTS; do
     echo "== $h"
-    sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    ssh -i /key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
       -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
       -o LogLevel=ERROR "$PI_USER@$h" "sudo sh -c '\''$REMOTE'\''" \
       || echo "($h unreachable, or dropped the connection to reboot)"

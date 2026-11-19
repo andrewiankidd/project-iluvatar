@@ -36,14 +36,11 @@ spec:
             - |
               test -d /boot || exit 1
               test -f /mnt/k3s/k3s-leader
-              test -f /mnt/k3s/k3s-agent-token
           volumeMounts:
             - name: boot
               mountPath: /boot
             - name: k3s-leader
               mountPath: /mnt/k3s/k3s-leader
-            - name: k3s-agent-token
-              mountPath: /mnt/k3s/k3s-agent-token
       containers:
         - name: nginx
           image: nginx:alpine
@@ -57,8 +54,7 @@ spec:
                 - sh
                 - -c
                 - |
-                  test -f /usr/share/nginx/html/k3s/k3s-leader && \
-                  test -f /usr/share/nginx/html/k3s/k3s-agent-token
+                  test -f /usr/share/nginx/html/k3s/k3s-leader
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 2
@@ -66,11 +62,10 @@ spec:
           volumeMounts:
             - name: boot
               mountPath: /usr/share/nginx/html
+            # The k3s server's address, for a netbooted Pi to join. Not its
+            # token: secrets-pusher.yaml hands that over SSH.
             - name: k3s-leader
               mountPath: /usr/share/nginx/html/k3s/k3s-leader
-              readOnly: true
-            - name: k3s-agent-token
-              mountPath: /usr/share/nginx/html/k3s/k3s-agent-token
               readOnly: true
             # /talos/boot.ipxe, written by sidero-omni's talos-schematic Job.
             - name: talos-ipxe
@@ -87,10 +82,6 @@ spec:
         - name: k3s-leader
           hostPath:
             path: /tmp/k3s/k3s-leader
-            type: File
-        - name: k3s-agent-token
-          hostPath:
-            path: /tmp/k3s/k3s-agent-token
             type: File
         - name: talos-ipxe
           configMap:

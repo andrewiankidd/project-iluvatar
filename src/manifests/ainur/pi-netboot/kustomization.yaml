@@ -11,6 +11,7 @@ resources:
   - http-service.yaml
   - http-ingress.yaml
   - builder-job.yaml
+  - secrets-pusher.yaml
   - kube-vip.yaml
   - proxy-dhcp.yaml
   - talos-iso.yaml

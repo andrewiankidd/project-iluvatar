@@ -2,7 +2,12 @@
 
 hostname: valar
 
-ssh_pwauth: true
+# No passwords, and no secrets: this file and the SD card image are both
+# served on the LAN. The only way in is the push key (AINUR_PUSH_PUBKEY, its
+# public half), which push-secrets.sh uses to hand a booting Pi its k3s
+# tokens and ainur its Secrets.
+ssh_pwauth: false
+disable_root: true
 
 package_update: true
 
@@ -10,8 +15,9 @@ package_upgrade: false
 
 users:
   - name: ubuntu
-    plain_text_passwd: ${AINUR_PI_PASSWORD}
-    lock_passwd: false
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ${AINUR_PUSH_PUBKEY}
     shell: /bin/bash
     sudo: ALL=(ALL) NOPASSWD:ALL
     groups: sudo,adm
@@ -197,19 +203,20 @@ write_files:
         chmod 0755 "$KUBECTL"
       fi
       # The lab root CA, for API OIDC and cert-manager's CA Issuer. It comes
-      # from .env (AINUR_LAB_CA_CRT and AINUR_LAB_CA_KEY, served by the
-      # builder with the other AINUR_* values), so a rebuilt ainur keeps the
-      # CA every device and every arda machine already trusts. A CA made
-      # here instead lives only on this Pi's disk, and a re-flash loses it.
+      # from .env (AINUR_LAB_CA_CRT and AINUR_LAB_CA_KEY, pushed with the
+      # other AINUR_* values by the bootstrap VM's push-secrets.sh), so a
+      # rebuilt ainur keeps the CA every device and every arda machine
+      # already trusts. A CA made here instead lives only on this Pi's disk,
+      # and a re-flash loses it.
       CA_CRT=/etc/rancher/k3s/oidc/lab-ca.crt
       CA_KEY=/etc/k3s-certs/lab-ca.key
-      env_file="$(mktemp)"
-      for base in "http://${BOOTSTRAP_IP_ADDRESS}" "${CLOUD_INIT_BASE_URL:-http://bootstrap.kidd.network}"; do
-        curl -sfL --connect-timeout 3 --max-time 10 "$base/secrets/ainur.env" -o "$env_file" && break
-      done
+      env_file=/run/ainur/ainur.env
+      if [ ! -s "$env_file" ] && { [ ! -s "$CA_CRT" ] || [ ! -s "$CA_KEY" ]; }; then
+        echo "[tls-bootstrap] no lab CA yet, and nothing pushed; retrying"
+        exit 1
+      fi
       crt="$(grep '^AINUR_LAB_CA_CRT=' "$env_file" 2>/dev/null | cut -d= -f2- | tr -d "'\"" || true)"
       key="$(grep '^AINUR_LAB_CA_KEY=' "$env_file" 2>/dev/null | cut -d= -f2- | tr -d "'\"" || true)"
-      rm -f "$env_file"
       umask 077
       if [ -n "$crt" ] && [ -n "$key" ]; then
         echo "$crt" | base64 -d > "$CA_CRT.new"
@@ -354,6 +361,15 @@ write_files:
       ip -brief addr || true
       ip route || true
 
+      # Installed already: the SD card Pi, rebooting. Its k3s starts itself,
+      # and installing again would wait for a push no one may be making (the
+      # tokens are pushed, not kept in the image). A netbooted Pi starts from
+      # nothing every boot, so it never gets here.
+      if [ -f /etc/systemd/system/k3s.service ] || [ -f /etc/systemd/system/k3s-agent.service ]; then
+        echo "[k3s-bootstrap] k3s already installed; nothing to do"
+        exit 0
+      fi
+
       # Orchestrate: discover and run k3s-<nn>-*.sh in order
       shopt -s nullglob
       scripts=(/usr/local/bin/k3s-[0-9][0-9]-*.sh)
@@ -384,10 +400,9 @@ write_files:
       AGENT_TOKEN_PATH="/tmp/k3s/k3s-agent-token"
       CLOUD_INIT_BASE_URL="${CLOUD_INIT_BASE_URL:-http://bootstrap.kidd.network}"
       LEADER_URL="${CLOUD_INIT_BASE_URL%/}/k3s/k3s-leader"
-      AGENT_TOKEN_URL="${CLOUD_INIT_BASE_URL%/}/k3s/k3s-agent-token"
       echo "[paths] USER=$U"
       echo "[paths] LEADER_FILE=$LEADER_PATH TOKEN_PATH=$TOKEN_PATH AGENT_TOKEN_PATH=$AGENT_TOKEN_PATH"
-      echo "[http] LEADER_URL=$LEADER_URL AGENT_TOKEN_URL=$AGENT_TOKEN_URL"
+      echo "[http] LEADER_URL=$LEADER_URL"
       if REMOTE_LEADER=$(curl -sfL --connect-timeout 3 --max-time 5 "$LEADER_URL" | head -n1); then
         if [ -n "$REMOTE_LEADER" ]; then
           echo "[leader] remote leader found: $REMOTE_LEADER"
@@ -403,13 +418,15 @@ write_files:
         echo "[leader] netbooted and no leader served yet; retrying"
         exit 1
       fi
-      if REMOTE_AGENT_TOKEN=$(curl -sfL --connect-timeout 3 --max-time 5 "$AGENT_TOKEN_URL" | head -n1); then
-        if [ -n "$REMOTE_AGENT_TOKEN" ]; then
-          echo "[token] remote agent token found; syncing to $AGENT_TOKEN_PATH"
-          printf '%s\n' "$REMOTE_AGENT_TOKEN" > "$AGENT_TOKEN_PATH" || true
-        fi
-      else
-        echo "[token] remote agent token not found at $AGENT_TOKEN_URL"
+      # The k3s tokens are pushed, never served: say this Pi is waiting for
+      # them, and how it booted (the SD card Pi becomes the server, so it
+      # needs the server token too), and come back in 10s. push-secrets.sh
+      # (the bootstrap VM, or ainur's secrets-pusher) writes /run/ainur/k3s.env.
+      if [ ! -s /run/ainur/k3s.env ]; then
+        mkdir -p /run/ainur; chmod 700 /run/ainur
+        if grep -qw 'root=/dev/nfs' /proc/cmdline; then echo netboot; else echo sd; fi > /run/ainur/awaiting-push
+        echo "[token] waiting for the k3s tokens to be pushed; retrying"
+        exit 1
       fi
       if [ -f "$LEADER_PATH" ]; then
         echo "[leader] existing file detected"; ls -l "$LEADER_PATH" || true; echo "[leader] content: $(head -n1 "$LEADER_PATH" 2>/dev/null || true)"
@@ -488,8 +505,11 @@ write_files:
         K3S_AGENT_TOKEN="$(tr -d '\n' < "$AGENT_TOKEN_PATH")"
         echo "[token] using agent token from $AGENT_TOKEN_PATH"
       fi
-      # Final defaults if nothing on disk or env
-      : "${K3S_TOKEN:=${AINUR_K3S_TOKEN}}"
+      # Otherwise the pushed ones (k3s-10 waited for them). A netbooted Pi
+      # gets only the agent token.
+      # shellcheck disable=SC1091
+      . /run/ainur/k3s.env
+      : "${K3S_TOKEN:=${AINUR_K3S_TOKEN:-}}"
       : "${K3S_AGENT_TOKEN:=${AINUR_K3S_AGENT_TOKEN}}"
       # Base args kept minimal; netboot overlays (if any) appended below
       K3S_COMMON_ARGS=""
@@ -947,36 +967,31 @@ write_files:
         install -D -m0644 "$f" "$dst/$b"
       done
 
-  # The ARDA_* values from the bootstrap VM's .env (pi-netboot-builder.sh) as
-  # the arda-secrets Secret, which arda-bootstrap-job.yaml hands out on arda.
-  # Only the VM serves the file, so later boots leave the Secret as it is.
+  # The ARDA_* values from the bootstrap VM's .env, pushed to
+  # /run/ainur/arda.env by its push-secrets.sh, as the arda-secrets Secret,
+  # which arda-bootstrap-job.yaml hands out on arda. The pusher starts this
+  # whenever .env changes; with nothing pushed (a reboot, the VM off), the
+  # Secret stays as it is.
   - path: /usr/local/sbin/arda-secrets.sh
     permissions: '0755'
     content: |
       #!/bin/bash
       set -euo pipefail
-      f="$(mktemp)"
-      trap 'rm -f "$f"' EXIT
-      # The builder that made this image first: on a fresh ainur,
-      # bootstrap.kidd.network is ainur itself and isn't serving yet.
-      for base in "http://${BOOTSTRAP_IP_ADDRESS}" "${CLOUD_INIT_BASE_URL:-http://bootstrap.kidd.network}"; do
-        url="$base/secrets/arda.env"
-        if curl -sfL --connect-timeout 3 --max-time 10 "$url" -o "$f"; then found=1; break; fi
-      done
-      if [ -z "${found:-}" ]; then
-        echo "[arda-secrets] none served; leaving arda-secrets as it is"
+      f=/run/ainur/arda.env
+      if [ ! -s "$f" ]; then
+        echo "[arda-secrets] nothing pushed; leaving arda-secrets as it is"
         exit 0
       fi
-      echo "[arda-secrets] from $url"
       k3s kubectl create namespace ainur-sidero-omni --dry-run=client -o yaml | k3s kubectl apply -f -
       k3s kubectl -n ainur-sidero-omni create secret generic arda-secrets \
         --from-env-file="$f" --dry-run=client -o yaml | k3s kubectl apply -f -
+      echo "[arda-secrets] applied"
 
   - path: /etc/systemd/system/arda-secrets.service
     permissions: '0644'
     content: |
       [Unit]
-      Description=arda secrets from the bootstrap VM
+      Description=arda secrets, as pushed by the bootstrap VM
       Wants=k3s.service
       After=k3s.service
       # The k3s server only: agents have no kubeconfig to apply them with.
@@ -986,67 +1001,49 @@ write_files:
       Type=oneshot
       ExecStart=/usr/local/sbin/arda-secrets.sh
 
-  # Again every 10 minutes, so a value added to .env reaches ainur without a
-  # reboot. Applying the same values again changes nothing.
-  - path: /etc/systemd/system/arda-secrets.timer
-    permissions: '0644'
-    content: |
-      [Unit]
-      Description=Re-read the arda secrets from the bootstrap VM
-
-      [Timer]
-      OnCalendar=*:0/10
-
-      [Install]
-      WantedBy=timers.target
-
-  # The AINUR_* values from the bootstrap VM's .env (pi-netboot-builder.sh):
-  # the ainur-secrets Secret in each namespace that reads one (Dex, Argo CD,
-  # Omni, Homepage, and the in-cluster builder), and headlamp-oidc in the shape
-  # Headlamp's chart expects. Only the VM serves the file.
+  # The AINUR_* values, pushed to /run/ainur/ainur.env the same way: the
+  # ainur-secrets Secret in each namespace that reads one (Dex, Argo CD, Omni,
+  # Homepage, monitoring, and netboot's builder and pusher), and headlamp-oidc
+  # in the shape Headlamp's chart expects.
   - path: /usr/local/sbin/ainur-secrets.sh
     permissions: '0755'
     content: |
       #!/bin/bash
       set -euo pipefail
-      f="$(mktemp)"
-      trap 'rm -f "$f"' EXIT
-      # The builder that made this image first: on a fresh ainur,
-      # bootstrap.kidd.network is ainur itself and isn't serving yet.
-      for base in "http://${BOOTSTRAP_IP_ADDRESS}" "${CLOUD_INIT_BASE_URL:-http://bootstrap.kidd.network}"; do
-        url="$base/secrets/ainur.env"
-        if curl -sfL --connect-timeout 3 --max-time 10 "$url" -o "$f"; then found=1; break; fi
-      done
-      if [ -z "${found:-}" ]; then
-        echo "[ainur-secrets] none served; leaving ainur-secrets as it is"
+      f=/run/ainur/ainur.env
+      if [ ! -s "$f" ]; then
+        echo "[ainur-secrets] nothing pushed; leaving ainur-secrets as it is"
         exit 0
       fi
-      echo "[ainur-secrets] from $url"
       put() {
         k3s kubectl create namespace "$1" --dry-run=client -o yaml | k3s kubectl apply -f -
         k3s kubectl -n "$1" create secret generic "$2" "${@:3}" --dry-run=client -o yaml \
           | k3s kubectl label --local -f - app.kubernetes.io/part-of=argocd -o yaml \
           | k3s kubectl apply -f -
       }
-      # The lab CA's key stays out of everything but the netboot builder,
-      # which has to serve it on to the next ainur (gen-lab-certs.sh).
-      put ainur-netboot ainur-secrets --from-env-file="$f"
-      grep -v '^AINUR_LAB_CA_' "$f" > "$f.apps"
+      tmp="$(mktemp -d)"
+      trap 'rm -rf "$tmp"' EXIT
+      # The lab CA's key goes nowhere: gen-lab-certs.sh has already made it
+      # cert-manager's. The push key only to netboot, whose secrets-pusher
+      # hands netbooted Pis their k3s agent token with it.
+      grep -v '^AINUR_LAB_CA_' "$f" > "$tmp/netboot"
+      grep -v '^AINUR_PUSH_KEY=' "$tmp/netboot" > "$tmp/apps"
+      put ainur-netboot ainur-secrets --from-env-file="$tmp/netboot"
       for ns in ainur-dex argocd ainur-sidero-omni ainur-homepage ainur-monitoring; do
-        put "$ns" ainur-secrets --from-env-file="$f.apps"
+        put "$ns" ainur-secrets --from-env-file="$tmp/apps"
       done
-      rm -f "$f.apps"
       put ainur-headlamp headlamp-oidc \
         --from-literal=OIDC_CLIENT_ID=headlamp \
         --from-literal=OIDC_CLIENT_SECRET="$(grep '^AINUR_OIDC_CLIENT_SECRET=' "$f" | cut -d= -f2-)" \
         --from-literal=OIDC_ISSUER_URL=https://dex.kidd.network \
         --from-literal=OIDC_SCOPES="openid profile email"
+      echo "[ainur-secrets] applied"
 
   - path: /etc/systemd/system/ainur-secrets.service
     permissions: '0644'
     content: |
       [Unit]
-      Description=ainur secrets from the bootstrap VM
+      Description=ainur secrets, as pushed by the bootstrap VM
       Wants=k3s.service
       After=k3s.service
       # The k3s server only: agents have no kubeconfig to apply them with.
@@ -1055,20 +1052,6 @@ write_files:
       [Service]
       Type=oneshot
       ExecStart=/usr/local/sbin/ainur-secrets.sh
-
-  # Again every 10 minutes, so a value added to .env reaches ainur without a
-  # reboot. Applying the same values again changes nothing.
-  - path: /etc/systemd/system/ainur-secrets.timer
-    permissions: '0644'
-    content: |
-      [Unit]
-      Description=Re-read the ainur secrets from the bootstrap VM
-
-      [Timer]
-      OnCalendar=*:0/10
-
-      [Install]
-      WantedBy=timers.target
 
   - path: /etc/systemd/system/k3s-manifests-install.service
     permissions: '0644'
@@ -1134,7 +1117,6 @@ runcmd:
   - [ systemctl, enable, --now, ssh-prepare.service ]
   - [ systemctl, enable, --now, nvme-prepare.service ]
   - [ systemctl, enable, --now, k3s-bootstrap.service, k3s-ready.path ]
-  - [ systemctl, enable, --now, ainur-secrets.timer, arda-secrets.timer ]
 
 final_message: "Cloud-init for valar-0 complete."
 

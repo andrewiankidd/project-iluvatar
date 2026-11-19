@@ -307,15 +307,13 @@ unmount_image_partitions
 #endregion mount image and export files
 
 #region copy assets
-# Fills ${AINUR_*} placeholders in a file with the AINUR_* values from .env,
-# which keeps the Pis' password and k3s tokens out of the repo; and
-# ${BOOTSTRAP_IP_ADDRESS}, so a Pi can find this builder's /secrets.
+# Fills user-data's one placeholder, ${AINUR_PUSH_PUBKEY}: the public half of
+# the key push-secrets.sh hands the Pis their secrets with. Nothing secret
+# goes in: user-data is served to every Pi, and is in the SD card image.
 fill_secrets() {
-	local file="$1" name content
+	local file="$1" content
 	content=$(cat "$file")
-	for name in $(env | grep -o '^AINUR_[A-Z0-9_]*') BOOTSTRAP_IP_ADDRESS; do
-		content="${content//\$\{$name\}/"${!name}"}"
-	done
+	content="${content//\$\{AINUR_PUSH_PUBKEY\}/"${AINUR_PUSH_PUBKEY:-}"}"
 	printf '%s\n' "$content" > "$file"
 }
 
@@ -348,9 +346,14 @@ copy_assets() {
 			fi
 			if [ "$rel" = "user-data" ]; then fill_secrets "$dest"; fi
 		done
-		# A missing AINUR_* value would leave a blank password or k3s token.
-		if missing=$(grep -o '\${AINUR_[A-Z0-9_]*}' "$BOOT_EXPORT_DIRECTORY/user-data" 2>/dev/null | sort -u | tr '\n' ' ') && [ -n "$missing" ]; then
-			echo "Error: user-data needs these from .env (or the ainur-secrets Secret): $missing"
+		# Without the key no one could get in, nor push the k3s tokens.
+		if [ -z "${AINUR_PUSH_PUBKEY:-}" ]; then
+			echo "Error: AINUR_PUSH_PUBKEY isn't set (.env, or the ainur-secrets Secret); see .env.example"
+			exit 1
+		fi
+		# Anything else of .env's in user-data would be served to the LAN.
+		if leaked=$(grep -o '\${\(AINUR\|ARDA\)_[A-Z0-9_]*}' "$BOOT_EXPORT_DIRECTORY/user-data" 2>/dev/null | sort -u | tr '\n' ' ') && [ -n "$leaked" ]; then
+			echo "Error: user-data asks for $leaked; secrets are pushed (push-secrets.sh), never put in the image"
 			exit 1
 		fi
 	fi
@@ -559,21 +562,9 @@ fi
 #endregion netboot
 
 #region secrets
-# The ARDA_* values from .env, served at /secrets/arda.env for ainur to make
-# its arda-secrets Secret from (user-data: arda-secrets.sh). Only the bootstrap
-# VM has them; the in-cluster builder has none, and its sync removes the file.
-if env | grep -q '^ARDA_'; then
-	echo "Writing ARDA_* secrets to '$BOOT_EXPORT_DIRECTORY/secrets/arda.env'"
-	mkdir -p "$BOOT_EXPORT_DIRECTORY/secrets"
-	env | grep '^ARDA_' | sort > "$BOOT_EXPORT_DIRECTORY/secrets/arda.env"
-fi
-# The same for AINUR_*, which ainur-secrets.sh makes into ainur's Secrets. The
-# in-cluster builder has them too (from ainur-secrets), so it serves them on.
-if env | grep -q '^AINUR_'; then
-	echo "Writing AINUR_* secrets to '$BOOT_EXPORT_DIRECTORY/secrets/ainur.env'"
-	mkdir -p "$BOOT_EXPORT_DIRECTORY/secrets"
-	env | grep '^AINUR_' | sort > "$BOOT_EXPORT_DIRECTORY/secrets/ainur.env"
-fi
+# Secrets are pushed to the Pis (push-secrets.sh), not served. Remove what
+# builds before 2026-11-19 served at /secrets.
+rm -rf "$BOOT_EXPORT_DIRECTORY/secrets"
 #endregion secrets
 
 # wait for sd.img copy to finish

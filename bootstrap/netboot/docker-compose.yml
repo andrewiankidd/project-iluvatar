@@ -89,6 +89,27 @@ services:
       - "80:80"
     restart: unless-stopped
 
+  # Hands the Pis their secrets over SSH (scripts/push-secrets.sh): the k3s
+  # tokens to a booting Pi, and .env's AINUR_*/ARDA_* to ainur, again whenever
+  # .env changes. Nothing secret is served over HTTP or in an image.
+  pi-secrets-pusher:
+    image: alpine:3.20
+    container_name: pi-secrets-pusher
+    network_mode: host
+    profiles:
+      - netboot
+      - debian-netboot
+    environment:
+      PUSH_MODE: full
+      PUSH_ENV_FILE: /run/push/.env
+      # Only to find this /24; the rest is read from .env every round.
+      BOOTSTRAP_IP_ADDRESS: ${BOOTSTRAP_IP_ADDRESS}
+    volumes:
+      - ./.env:/run/push/.env:ro
+      - ./scripts/push-secrets.sh:/push-secrets.sh:ro
+    command: ["sh", "-c", "apk add -q --no-cache openssh-client-default && exec sh /push-secrets.sh"]
+    restart: unless-stopped
+
   # Optional builder for creating Debian structure files on the servers
   pi-netboot-builder:
     container_name: pi-netboot-builder
