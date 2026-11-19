@@ -38,12 +38,9 @@ packages:
   - parted
 
 write_files:
-  # Cloud-init: stop cloud-final on failure to allow emergency.target
-  - path: /etc/systemd/system/cloud-final.service.d/stop-on-fail.conf
-    permissions: '0644'
-    content: |
-      [Unit]
-      OnFailure=emergency.target
+  # No OnFailure=emergency.target on cloud-final: the Pis have no password,
+  # so an emergency shell can't be logged into, and it stops sshd, so the
+  # push key can't get in either. A failed stage leaves the Pi running.
 
   # Ensure TUN module is loaded
   - path: /etc/modules-load.d/tun.conf
