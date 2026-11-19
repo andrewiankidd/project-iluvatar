@@ -1,7 +1,6 @@
 # Obsidian in a browser: linuxserver/obsidian, the desktop app on a Selkies
-# remote desktop, at obsidian.kidd.network on the LAN. Its login is user
-# "obsidian" with ARDA_OBSIDIAN_PASSWORD (the obsidian Secret). Not on the
-# tunnel: it is a whole desktop, so it stays home.
+# remote desktop, at obsidian.kidd.network, at home and through the tunnel.
+# The Dex login guards it (../oauth2-proxy.yml); it has no login of its own.
 #
 # Its vaults and settings live in /config. To share notes with the other
 # devices, install Self-hosted LiveSync in its vault and point it at
@@ -46,13 +45,6 @@ spec:
               value: "1000"
             - name: TZ
               value: Europe/London
-            - name: CUSTOM_USER
-              value: obsidian
-            - name: PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: obsidian
-                  key: password
           ports:
             # Plain HTTP; Traefik in front does the HTTPS the browser side needs.
             - name: http
@@ -95,6 +87,8 @@ kind: Ingress
 metadata:
   name: web
   annotations:
+    kidd.network/tunnel: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
     # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
     gethomepage.dev/enabled: "true"
     gethomepage.dev/instance: private

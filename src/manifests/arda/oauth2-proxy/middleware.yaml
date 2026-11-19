@@ -1,0 +1,17 @@
+# What an Ingress names to sit behind the Dex login:
+#   traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
+#
+# Traefik asks oauth2-proxy about each request: logged in, it goes through
+# (with the user's name and email as X-Auth-Request-* headers); not, the
+# browser is sent to the login.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: dex
+spec:
+  forwardAuth:
+    address: http://oauth2-proxy.oauth2-proxy.svc/
+    trustForwardHeader: true
+    authResponseHeaders:
+      - X-Auth-Request-User
+      - X-Auth-Request-Email

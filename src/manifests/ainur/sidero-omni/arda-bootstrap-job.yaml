@@ -30,6 +30,13 @@ spec:
               value: https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.1/manifests/install.yaml
             - name: OMNICTL_URL
               value: https://github.com/siderolabs/omni/releases/download/v1.13.3/omnictl-linux-arm64
+            # Dex's client secret, for arda's oauth2-proxy (Dex's "arda" client).
+            - name: AINUR_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ainur-secrets
+                  key: AINUR_OIDC_CLIENT_SECRET
+                  optional: true
           envFrom:
             - secretRef:
                 name: arda-secrets
@@ -117,7 +124,15 @@ spec:
                   --from-literal=runner-token="$ARDA_GITLAB_RUNNER_TOKEN" \
                   --from-literal=runner-registration-token=
               fi
-              # Obsidian's CouchDB and browser login (src/manifests/arda/obsidian.yml).
+              # The Dex login in front of arda's sites (src/manifests/arda/oauth2-proxy.yml):
+              # Dex's client secret, and the lab CA that dex.kidd.network's
+              # certificate is from.
+              if [ -n "${AINUR_OIDC_CLIENT_SECRET:-}" ]; then
+                put oauth2-proxy dex \
+                  --from-literal=client-secret="$AINUR_OIDC_CLIENT_SECRET" \
+                  --from-file=ca.crt=/etc/omni/lab-root-ca.crt
+              fi
+              # Obsidian's CouchDB login (src/manifests/arda/obsidian.yml).
               if [ -n "${ARDA_OBSIDIAN_PASSWORD:-}" ]; then
                 put obsidian obsidian --from-literal=password="$ARDA_OBSIDIAN_PASSWORD"
               fi

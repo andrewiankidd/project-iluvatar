@@ -1,0 +1,32 @@
+# dex.kidd.network on the internet: ainur's Dex, the one login for every
+# site, through arda's tunnel like ainur's public Homepage
+# (ainur-homepage.yaml, whose Service and ServersTransport this shares). A
+# site published through the tunnel with a Dex login needs the login page
+# reachable from outside too.
+#
+# The same address everywhere, so Dex's issuer doesn't change: at home it is
+# ainur, with the lab CA's certificate; outside, Cloudflare's. arda's LAN DNS
+# leaves it alone (kidd.network/lan-dns: "false").
+#
+# Dex has no rate limit or second factor of its own: on the internet, its
+# passwords are the whole defence.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ainur-dex
+  annotations:
+    kidd.network/tunnel: "true"
+    kidd.network/lan-dns: "false"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: dex.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ainur-homepage
+                port:
+                  name: https

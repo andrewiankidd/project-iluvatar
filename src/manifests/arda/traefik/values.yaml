@@ -14,6 +14,20 @@ providers:
     # For an Ingress that sends a host on to ainur by name
     # (../cloudflared/ainur-homepage.yaml).
     allowExternalNameServices: true
+  # So any Ingress can use the Dex login, the Middleware in the oauth2-proxy
+  # namespace (../oauth2-proxy/middleware.yaml).
+  kubernetesCRD:
+    allowCrossNamespace: true
+
+# The tunnel arrives on plain HTTP from cloudflared's pods; believe what
+# they say the visitor used (X-Forwarded-Proto: https), so a login sends the
+# browser back to an https:// address. Only pod addresses are trusted, not
+# the LAN.
+ports:
+  web:
+    forwardedHeaders:
+      trustedIPs:
+        - 10.244.0.0/16
 
 # On arda's shared 192.168.1.58 (../metallb), so the sites also answer on the
 # LAN (the chart's Service is a LoadBalancer already). Not port-forwarded:

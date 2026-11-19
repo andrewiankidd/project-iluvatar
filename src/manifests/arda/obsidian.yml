@@ -6,14 +6,16 @@
 #                                so phones sync away from home; CouchDB's own
 #                                login guards it.
 #   obsidian.kidd.network        Obsidian in a browser (linuxserver/obsidian),
-#                                on the LAN only, behind a login. Its vault
+#                                at home and through the tunnel, behind the
+#                                Dex login (oauth2-proxy.yml). Its vault
 #                                syncs through the same CouchDB.
 #
 # Reads the obsidian Secret (password), from ARDA_OBSIDIAN_PASSWORD in the
 # bootstrap VM's .env, handed out by
-# src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml. It is CouchDB's
-# admin password (user "obsidian") and the browser login's. Without it both
-# pods wait in CreateContainerConfigError.
+# src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml: CouchDB's admin
+# password (user "obsidian"). CouchDB can't use Dex: the Obsidian apps sync
+# with a username and password, not a browser login. Without the Secret,
+# CouchDB waits in CreateContainerConfigError.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

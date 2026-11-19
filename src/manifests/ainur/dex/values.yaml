@@ -29,6 +29,13 @@ config:
       public: true
       redirectURIs:
         - https://grafana.kidd.network/login/generic_oauth
+    # The login in front of arda's sites (src/manifests/arda/oauth2-proxy.yml):
+    # one client for all of them, its callback on auth.kidd.network.
+    - id: arda
+      name: arda
+      secretEnv: AINUR_OIDC_CLIENT_SECRET
+      redirectURIs:
+        - https://auth.kidd.network/oauth2/callback
     - id: argocd
       name: argocd
       secretEnv: AINUR_OIDC_CLIENT_SECRET
