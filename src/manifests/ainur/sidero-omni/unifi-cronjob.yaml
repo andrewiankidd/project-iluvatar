@@ -120,7 +120,11 @@ spec:
 
                   # The rest is arda's, through Omni.
                   [ -s /omni-data/automation.key ] || { echo "arda: Omni isn't up yet"; exit 0; }
-                  curl -fsSL -o /usr/local/bin/omnictl "$OMNICTL_URL" && chmod +x /usr/local/bin/omnictl
+                  # omnictl and talosctl from the omni-tools volume, fetched once per
+                  # version: not 72 MB into the SD card and from GitHub on every run.
+                  fetch() { f="/tools/$(echo "$2" | sha256sum | cut -c1-12)-$1"; [ -s "$f" ] ||
+                    { curl -fsSL -o "$f.$$" "$2" && chmod +x "$f.$$" && mv "$f.$$" "$f"; }; ln -sf "$f" "/usr/local/bin/$1"; }
+                  fetch omnictl "$OMNICTL_URL" && chmod +x /usr/local/bin/omnictl
                   export OMNI_SERVICE_ACCOUNT_KEY="$(cat /omni-data/automation.key)"
                   export KUBECONFIG=/tmp/kubeconfig
                   arda_up=1
@@ -231,6 +235,8 @@ spec:
                   }
                   arda_forwards
               volumeMounts:
+                - name: tools
+                  mountPath: /tools
                 - name: omni-data
                   mountPath: /omni-data
                   readOnly: true
@@ -248,6 +254,9 @@ spec:
                       app.kubernetes.io/name: omni
                   topologyKey: kubernetes.io/hostname
           volumes:
+            - name: tools
+              persistentVolumeClaim:
+                claimName: omni-tools
             - name: omni-data
               persistentVolumeClaim:
                 claimName: omni

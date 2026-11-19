@@ -41,7 +41,11 @@ spec:
               set -eu
               apk add --no-cache ca-certificates curl
               cat /etc/omni/lab-root-ca.crt >> /etc/ssl/certs/ca-certificates.crt
-              curl -fsSL -L "$OMNICTL_URL" -o /usr/local/bin/omnictl
+              # omnictl and talosctl from the omni-tools volume, fetched once per
+              # version: not 72 MB into the SD card and from GitHub on every run.
+              fetch() { f="/tools/$(echo "$2" | sha256sum | cut -c1-12)-$1"; [ -s "$f" ] ||
+                { curl -fsSL -o "$f.$$" "$2" && chmod +x "$f.$$" && mv "$f.$$" "$f"; }; ln -sf "$f" "/usr/local/bin/$1"; }
+              fetch omnictl "$OMNICTL_URL"
               chmod +x /usr/local/bin/omnictl
               # On a fresh ainur, Omni can start well after this Job: wait for it to
               # write its key and answer, rather than spend the retries and fail.
@@ -142,6 +146,8 @@ spec:
                     selfHeal: true
               EOF
           volumeMounts:
+            - name: tools
+              mountPath: /tools
             - name: omni-data
               mountPath: /omni-data
               readOnly: true
@@ -159,6 +165,9 @@ spec:
                   app.kubernetes.io/name: omni
               topologyKey: kubernetes.io/hostname
       volumes:
+        - name: tools
+          persistentVolumeClaim:
+            claimName: omni-tools
         - name: omni-data
           persistentVolumeClaim:
             claimName: omni

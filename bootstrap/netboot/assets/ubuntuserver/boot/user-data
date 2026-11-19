@@ -1124,6 +1124,9 @@ write_files:
 
 runcmd:
   - 'modprobe tun || true'
+  # No apt cache refreshes or unattended upgrades: they rewrite ~120 MB on the
+  # SD card, and the image is rebuilt rather than upgraded in place.
+  - 'systemctl disable --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service || true'
   - [ mkdir, -p, /run/log/journal ]
   - [ systemctl, restart, systemd-journald ]
   - [ bash, /usr/local/sbin/set-hostname.sh ]

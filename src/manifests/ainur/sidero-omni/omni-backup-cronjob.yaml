@@ -47,7 +47,8 @@ metadata:
   name: omni-backup
   namespace: ainur-sidero-omni
 spec:
-  schedule: "30 3 * * *"
+  # 03:32: a minute none of the other CronJobs here use, since they need Omni.
+  schedule: "32 3 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 1

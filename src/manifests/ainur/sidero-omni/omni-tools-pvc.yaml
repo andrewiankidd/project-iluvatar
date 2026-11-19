@@ -1,0 +1,18 @@
+# A cache of the omnictl and talosctl binaries ainur's Omni Jobs and
+# CronJobs use, each fetched once per version. Before it, every run
+# downloaded omnictl (72 MB) from GitHub into its container layer on
+# valar-50's SD card, several times every few minutes: hundreds of MB an
+# hour written to the card, and the API stalls that came with it.
+# Kept (storageclass.yaml), so a rebuilt ainur starts with the cache warm.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: omni-tools
+  namespace: ainur-sidero-omni
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path-kept
+  resources:
+    requests:
+      storage: 1Gi
