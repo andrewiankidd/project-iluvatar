@@ -87,7 +87,7 @@ kind: Ingress
 metadata:
   name: web
   annotations:
-    kidd.network/tunnel: "true"
+    # Off the tunnel for now: LAN only.
     traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
     # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
     gethomepage.dev/enabled: "true"

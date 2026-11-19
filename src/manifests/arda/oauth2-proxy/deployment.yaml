@@ -107,13 +107,13 @@ spec:
       port: 80
       targetPort: http
 ---
-# The login's own pages and Dex's callback, on the internet and the LAN.
+# The login's own pages and Dex's callback, on the LAN.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: oauth2-proxy
   annotations:
-    kidd.network/tunnel: "true"
+    # Off the tunnel for now: LAN only.
 spec:
   ingressClassName: traefik
   rules:

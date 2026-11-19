@@ -45,6 +45,8 @@ metadata:
   namespace: ainur-sidero-omni
 spec:
   schedule: "*/5 * * * *"
+  # Suspended: nothing of ainur's goes on the internet for now.
+  suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 1

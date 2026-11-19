@@ -913,9 +913,6 @@ write_files:
         annotations:
           traefik.ingress.kubernetes.io/router.tls: "true"
           kubernetes.io/ingress.class: traefik
-          # On the internet through arda's tunnel (src/manifests/ainur/
-          # sidero-omni/arda-tunnel-cronjob.yaml), behind its Dex login.
-          kidd.network/tunnel: "true"
           gethomepage.dev/enabled: "true"
           gethomepage.dev/instance: private
           gethomepage.dev/group: Cluster
