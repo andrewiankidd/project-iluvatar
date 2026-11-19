@@ -36,6 +36,13 @@ config:
       secretEnv: AINUR_OIDC_CLIENT_SECRET
       redirectURIs:
         - https://auth.kidd.network/oauth2/callback
+    # Paperless on arda (src/manifests/arda/paperless.yml): its own "Sign in
+    # with Dex" (django-allauth), confidential and with PKCE.
+    - id: paperless
+      name: Paperless
+      secretEnv: AINUR_OIDC_CLIENT_SECRET
+      redirectURIs:
+        - https://paperless.kidd.network/accounts/oidc/dex/login/callback/
     - id: argocd
       name: argocd
       secretEnv: AINUR_OIDC_CLIENT_SECRET

@@ -1,0 +1,306 @@
+# Paperless-ngx 3.5, one pod:
+#   paperless  the web app, the task worker (OCR, mail, indexing) and the
+#              consume-folder watcher, all in the one image
+#   broker     Valkey, the task queue Paperless requires. Nothing in it worth
+#              keeping: no persistence, a restart only drops queued tasks.
+#   samba      the consume folder as an SMB share, for a scanner (below)
+#
+# The database is SQLite, in the data volume: one household's paperwork is
+# well inside what SQLite does, and a Postgres pod would cost arda memory it
+# doesn't have and a second volume to keep in step with media. Tika and
+# Gotenberg (Office documents, .eml bodies) are left out for the same
+# memory: PDFs and images from the phone, the scanner and mail attachments
+# need neither. Adding them later is two containers and
+# PAPERLESS_TIKA_ENABLED.
+#
+# Volumes, each on Longhorn and so backed up nightly to R2 by VolSync,
+# encrypted by restic (../kyverno-policies/volsync.yaml):
+#   paperless-data    the SQLite database, search index and classifier
+#   paperless-media   the documents themselves (originals and OCR'd archive copies)
+#   paperless-consume the inbox the scanner writes to; not backed up: files
+#                     only sit there until Paperless takes them, seconds.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: paperless-data
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: paperless-media
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: paperless-consume
+  annotations:
+    kidd.network/backup: "false"
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paperless
+  labels:
+    app: paperless
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume
+  selector:
+    matchLabels:
+      app: paperless
+  template:
+    metadata:
+      labels:
+        app: paperless
+    spec:
+      # Dex's certificate is from the lab CA: add it to the usual public
+      # roots for Paperless's Python (the OIDC login; IMAP to a public
+      # mail server still verifies against the public roots).
+      initContainers:
+        - name: ca-bundle
+          image: alpine:3.22
+          command: ["sh", "-c", "cat /etc/ssl/certs/ca-certificates.crt /dex/ca.crt > /ca/bundle.pem"]
+          volumeMounts:
+            - name: dex
+              mountPath: /dex
+              readOnly: true
+            - name: ca
+              mountPath: /ca
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+      containers:
+        - name: paperless
+          image: ghcr.io/paperless-ngx/paperless-ngx:3.5.1
+          env:
+            - name: PAPERLESS_URL
+              value: https://paperless.kidd.network
+            - name: PAPERLESS_REDIS
+              value: redis://localhost:6379
+            - name: PAPERLESS_DBENGINE
+              value: sqlite
+            - name: PAPERLESS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: paperless
+                  key: secret-key
+            # Made at the first start only; the setup CronJob logs in as it.
+            - name: PAPERLESS_ADMIN_USER
+              value: paperless
+            - name: PAPERLESS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: paperless
+                  key: admin-password
+            - name: PAPERLESS_TIME_ZONE
+              value: Europe/London
+            - name: PAPERLESS_OCR_LANGUAGE
+              value: eng
+            # Arrives through Traefik, which says whether the visitor used
+            # HTTPS (the tunnel's X-Forwarded-Proto is trusted there).
+            - name: PAPERLESS_PROXY_SSL_HEADER
+              value: '["HTTP_X_FORWARDED_PROTO", "https"]'
+            # One of each: the node has little memory to spare. OCR runs one
+            # document at a time on two cores, fine for a household.
+            - name: PAPERLESS_TASK_WORKERS
+              value: "1"
+            - name: PAPERLESS_THREADS_PER_WORKER
+              value: "2"
+            - name: PAPERLESS_WEBSERVER_WORKERS
+              value: "1"
+            # The scanner's files arrive over SMB, from another container;
+            # inotify sees them (same node, same kernel), and Paperless waits
+            # until a file stops changing before taking it.
+            - name: PAPERLESS_CONSUMER_RECURSIVE
+              value: "true"
+            # Sign in with Dex (ainur's dex/values.yaml, client "paperless").
+            # A Dex login makes its Paperless user on first use: Dex has only
+            # the household's own logins, and regular sign-ups stay off.
+            - name: DEX_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: dex
+                  key: client-secret
+            - name: PAPERLESS_APPS
+              value: allauth.socialaccount.providers.openid_connect
+            - name: PAPERLESS_SOCIALACCOUNT_PROVIDERS
+              value: >-
+                {"openid_connect": {"SCOPE": ["openid", "profile", "email"],
+                "OAUTH_PKCE_ENABLED": true,
+                "APPS": [{"provider_id": "dex", "name": "Dex",
+                "client_id": "paperless", "secret": "$(DEX_CLIENT_SECRET)",
+                "settings": {"server_url": "https://dex.kidd.network"}}]}}
+            - name: PAPERLESS_SOCIAL_AUTO_SIGNUP
+              value: "true"
+            - name: PAPERLESS_ACCOUNT_EMAIL_VERIFICATION
+              value: none
+            - name: REQUESTS_CA_BUNDLE
+              value: /ca/bundle.pem
+            - name: SSL_CERT_FILE
+              value: /ca/bundle.pem
+          ports:
+            - name: http
+              containerPort: 8000
+          volumeMounts:
+            - name: data
+              mountPath: /usr/src/paperless/data
+            - name: media
+              mountPath: /usr/src/paperless/media
+            - name: consume
+              mountPath: /usr/src/paperless/consume
+            - name: ca
+              mountPath: /ca
+              readOnly: true
+          # The first start runs the database migrations: give it time.
+          startupProbe:
+            httpGet:
+              path: /accounts/login/
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /accounts/login/
+              port: http
+          resources:
+            requests: { cpu: 100m, memory: 640Mi }
+            # OCR of a long scan is the peak; one document at a time.
+            limits: { memory: 1536Mi }
+        - name: broker
+          image: valkey/valkey:9.0.8-alpine
+          args: ["--save", "", "--appendonly", "no", "--maxmemory", "64mb"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 96Mi }
+        # The scanner's way in: Paperless's consume folder as the SMB share
+        # "scan", user "scanner" with ARDA_PAPERLESS_SCANNER_PASSWORD, on
+        # the LAN only (smb.yaml). Files are written as uid 1000, Paperless's
+        # own user, so it can take them away once consumed.
+        #
+        # On the scanner (its "scan to network folder" / "scan to SMB" setup):
+        #   Host / server   192.168.1.58  (or paperless.kidd.network)
+        #   Share / path    scan          (in full: \\192.168.1.58\scan)
+        #   Username        scanner
+        #   Password        ARDA_PAPERLESS_SCANNER_PASSWORD
+        #   Domain          WORKGROUP, or blank
+        #   Port            445
+        #   File type       PDF, 300 dpi
+        # Samba asks for SMB2 or newer. A scanner that only speaks SMB1 should
+        # use scan-to-email (ARDA_PAPERLESS_MAIL_*) instead.
+        - name: samba
+          image: ghcr.io/servercontainers/samba:smbd-only-a3.24.4-s4.23.8-r0
+          env:
+            - name: ACCOUNT_scanner
+              valueFrom:
+                secretKeyRef:
+                  name: paperless
+                  key: scanner-password
+            - name: UID_scanner
+              value: "1000"
+            - name: SAMBA_CONF_LOG_LEVEL
+              value: "1"
+            - name: SAMBA_VOLUME_CONFIG_scan
+              value: "[scan]; path = /shares/scan; valid users = scanner; guest ok = no; read only = no; browseable = yes; force user = scanner; create mask = 0664; directory mask = 0775"
+            - name: AVAHI_DISABLE
+              value: "1"
+            - name: WSDD2_DISABLE
+              value: "1"
+          ports:
+            - name: smb
+              containerPort: 445
+          volumeMounts:
+            - name: consume
+              mountPath: /shares/scan
+          readinessProbe:
+            tcpSocket:
+              port: smb
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: paperless-data
+        - name: media
+          persistentVolumeClaim:
+            claimName: paperless-media
+        - name: consume
+          persistentVolumeClaim:
+            claimName: paperless-consume
+        - name: dex
+          secret:
+            secretName: dex
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: ca
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: paperless
+spec:
+  selector:
+    app: paperless
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+# On the internet through the tunnel (HTTPS is Cloudflare's), for the phone
+# apps away from home, and on the LAN at arda's address with the lab-CA
+# certificate. Paperless's own login guards it; the Dex button works where
+# dex.kidd.network answers.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: paperless
+  annotations:
+    kidd.network/tunnel: "true"
+    # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: private
+    gethomepage.dev/group: Apps
+    gethomepage.dev/name: Paperless
+    gethomepage.dev/description: Scanned and emailed paperwork, searchable
+    gethomepage.dev/icon: paperless-ngx.png
+    gethomepage.dev/href: https://paperless.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: paperless.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: paperless
+                port:
+                  name: http

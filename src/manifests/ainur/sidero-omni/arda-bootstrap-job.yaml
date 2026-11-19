@@ -132,6 +132,25 @@ spec:
                   --from-literal=client-secret="$AINUR_OIDC_CLIENT_SECRET" \
                   --from-file=ca.crt=/etc/omni/lab-root-ca.crt
               fi
+              # Paperless (src/manifests/arda/paperless.yml): its Django key,
+              # admin and scanner passwords and the optional mailbox; and the
+              # same Dex client secret and lab CA as oauth2-proxy's, for its
+              # own "Sign in with Dex".
+              if [ -n "${ARDA_PAPERLESS_SECRET_KEY:-}" ]; then
+                set -- --from-literal=secret-key="$ARDA_PAPERLESS_SECRET_KEY" \
+                  --from-literal=admin-password="${ARDA_PAPERLESS_ADMIN_PASSWORD:-}" \
+                  --from-literal=scanner-password="${ARDA_PAPERLESS_SCANNER_PASSWORD:-}"
+                for v in HOST PORT USER PASSWORD FOLDER; do
+                  eval "x=\${ARDA_PAPERLESS_MAIL_$v:-}"
+                  [ -z "$x" ] || set -- "$@" --from-literal="mail-$(echo "$v" | tr A-Z a-z)=$x"
+                done
+                put paperless paperless "$@"
+              fi
+              if [ -n "${AINUR_OIDC_CLIENT_SECRET:-}" ]; then
+                put paperless dex \
+                  --from-literal=client-secret="$AINUR_OIDC_CLIENT_SECRET" \
+                  --from-file=ca.crt=/etc/omni/lab-root-ca.crt
+              fi
               # Obsidian's CouchDB login (src/manifests/arda/obsidian.yml).
               if [ -n "${ARDA_OBSIDIAN_PASSWORD:-}" ]; then
                 put obsidian obsidian --from-literal=password="$ARDA_OBSIDIAN_PASSWORD"

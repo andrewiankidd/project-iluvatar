@@ -1,0 +1,80 @@
+# Runs setup.py (what it does is described there) every 10 minutes: a new
+# Dex user is an admin within 10 minutes of their first sign-in, and mail
+# settings follow .env without anyone opening the web app.
+#
+# Paperless's own image, already on the node, with the data volume (SQLite)
+# mounted beside the running Paperless: same node, so the ReadWriteOnce
+# volume mounts, and SQLite's locking keeps the two writers apart.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: paperless-setup
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 3600
+      template:
+        spec:
+          restartPolicy: Never
+          # Wherever Paperless is, for its volume.
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      app: paperless
+                  topologyKey: kubernetes.io/hostname
+          securityContext:
+            # Paperless's own user, so nothing it writes is root's.
+            runAsUser: 1000
+            runAsGroup: 1000
+          containers:
+            - name: setup
+              image: ghcr.io/paperless-ngx/paperless-ngx:3.5.1
+              command: ["python3", "/setup/setup.py"]
+              workingDir: /usr/src/paperless/src
+              env:
+                - name: PAPERLESS_DBENGINE
+                  value: sqlite
+                - name: PAPERLESS_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: paperless
+                      key: secret-key
+                - name: ADMIN_USER
+                  value: paperless
+                - name: MAIL_HOST
+                  valueFrom:
+                    secretKeyRef: { name: paperless, key: mail-host, optional: true }
+                - name: MAIL_PORT
+                  valueFrom:
+                    secretKeyRef: { name: paperless, key: mail-port, optional: true }
+                - name: MAIL_USER
+                  valueFrom:
+                    secretKeyRef: { name: paperless, key: mail-user, optional: true }
+                - name: MAIL_PASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: paperless, key: mail-password, optional: true }
+                - name: MAIL_FOLDER
+                  valueFrom:
+                    secretKeyRef: { name: paperless, key: mail-folder, optional: true }
+              volumeMounts:
+                - name: data
+                  mountPath: /usr/src/paperless/data
+                - name: setup
+                  mountPath: /setup
+              resources:
+                requests: { cpu: 50m, memory: 128Mi }
+                limits: { memory: 384Mi }
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: paperless-data
+            - name: setup
+              configMap:
+                name: paperless-setup

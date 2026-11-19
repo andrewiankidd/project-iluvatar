@@ -1,0 +1,49 @@
+# Paperless-ngx on arda: scanned and emailed paperwork, OCR'd and searchable,
+# at paperless.kidd.network, at home and through the tunnel (the phone apps
+# upload from anywhere).
+#
+# Three ways in:
+#   phone    the Paperless Mobile / Swift Paperless apps, over HTTPS
+#   email    Paperless's own IMAP fetching, if ARDA_PAPERLESS_MAIL_* are set
+#   scanner  scan-to-SMB at \192.168.1.58\scan (LAN only), see paperless/deployment.yaml
+#
+# Logins: Paperless's own (the "paperless" superuser, for the apps and the
+# setup CronJob), and "Sign in with Dex" (Dex's "paperless" client), which
+# makes a Paperless user on first use; the setup CronJob makes it an admin.
+#
+# Reads the paperless Secret (secret-key, admin-password, scanner-password,
+# and the optional mail-* keys) and the dex Secret (client-secret, ca.crt),
+# both from the bootstrap VM's .env (ARDA_PAPERLESS_*, AINUR_OIDC_CLIENT_SECRET),
+# handed out by src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml.
+# Without them Paperless waits in CreateContainerConfigError.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: paperless
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/paperless
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: paperless
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true
