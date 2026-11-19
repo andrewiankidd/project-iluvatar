@@ -146,10 +146,22 @@ Considered and set aside:
 
 ### More workloads
 
-- Planned on the x86 page, none built: Paperless, Bitwarden, Crafty, LlamaGPT. Each would be an Argo CD app under `src/manifests/arda` storing its data on Longhorn, with any secrets coming from `.env`.
+- Planned on the x86 page, none built: Bitwarden, Crafty, LlamaGPT (Paperless: built, below). Each would be an Argo CD app under `src/manifests/arda` storing its data on Longhorn, with any secrets coming from `.env`.
 - After the x86 path is proven and the stopgap retired.
 - **Bitwarden**: Vaultwarden is the usual lightweight server; Dex in front like the rest.
 - **Media**: built, below.
+
+### Paperless (built 2026-11-19)
+
+- `src/manifests/arda/paperless.yml`, namespace `paperless`: Paperless-ngx 3.5.1 at `paperless.kidd.network` (tunnel and LAN, private Homepage), one pod with a Valkey 9.0 broker and a Samba sidecar (`servercontainers/samba`, smbd only). SQLite in `paperless-data` (5 Gi), documents in `paperless-media` (20 Gi), both backed up by VolSync (checked: their `-volsync` Secrets, ReplicationSources and first backup pods appeared); `paperless-consume` (2 Gi) opted out, since files only pass through it.
+- **Memory**: before, arda was at 81% used (12.3 GiB) with 79% requested. Paperless requests 640 MiB and is limited to 1.5 GiB. One task worker with two OCR threads and one web worker; it sits at ~570 MiB idle and ~700 MiB just after OCR. Left out for memory: Postgres (SQLite does for one household), Tika and Gotenberg (only Office files and `.eml` bodies need them). Add them with the second ProDesk.
+- **Logins**: Dex client `paperless` (confidential, `AINUR_OIDC_CLIENT_SECRET`, PKCE too), through django-allauth. `PAPERLESS_SOCIAL_AUTO_SIGNUP`. The `paperless-setup` CronJob (`setup.py`, every 10 min, Paperless's own image) makes any user with a Dex social account a superuser. Local superuser `paperless` / `ARDA_PAPERLESS_ADMIN_PASSWORD` (generated). Checked on the LAN: login page with the Dex button, then a 302 to Dex with PKCE and the right callback, then Dex's "Log in to Your Account". From the internet: Paperless's login page (Cloudflare's certificate, 200). The Dex button can't work from outside while Dex is off the tunnel (no public DNS for `dex.kidd.network`). Not tried: a real Dex sign-in, and the CronJob's promotion of a Dex user.
+- **Lab CA vs Python 3.14**: Paperless's Python refuses the lab CA ("CA cert does not include key usage extension", `VERIFY_X509_STRICT`, default since 3.13). Worked around in `paperless/sitecustomize.py`, which drops only that flag and only for `*.kidd.network` hosts (an expired public cert is still refused: checked). **The real fix**: re-issue the lab CA with `keyUsage = critical, keyCertSign, cRLSign` in `gen-lab-certs.sh`, keeping the same key so nothing that trusts it breaks. Every Python 3.13+ client of a lab-CA site will hit this.
+- **Ingestion, checked**: an image-only PDF through the API and another dropped on `\\192.168.1.58\scan` (user `scanner`, `ARDA_PAPERLESS_SCANNER_PASSWORD`, SMB3) were both OCR'd and found by `?query=`; the share empties itself; a wrong password gets `NT_STATUS_LOGON_FAILURE`. SMB is LAN only: the LoadBalancer has no `kidd.network/port-forward` and no external-dns hostname.
+- **Mail: off**, waiting for a mailbox. Set `ARDA_PAPERLESS_MAIL_HOST`/`_USER`/`_PASSWORD` (optional `_PORT`, `_FOLDER`), rebuild the served secrets, and the CronJob creates account and rule `inbox`: attachments only, mark read, 30 days. Untested against a real mailbox; the model fields and enums it uses were checked in the running 3.5.1.
+- **Scanner**: scan-to-email suits most home scanners better than SMB (universal, works away from home, and many cheap devices only speak SMB1, which Samba refuses). The share is ready for one that does SMB2/3.
+- **Left to do, in the UIs**: Paperless Mobile / Swift Paperless on the phone (server `https://paperless.kidd.network`; user `paperless` or a Dex user's password or API token from *My Profile*); tags, correspondents and document types as paperwork arrives. The two test documents (`api-test`, `smb-test`) can be deleted.
+- **Watch**: the data and media volumes are backed up separately, minutes apart. A restore can find a document row without its file or the reverse, and `document_sanity_checker` reports it. For a guaranteed-consistent copy, a nightly `document_exporter` into a backed-up volume would do; not added (memory and space).
 
 ### Media (built 2026-11-19)
 
