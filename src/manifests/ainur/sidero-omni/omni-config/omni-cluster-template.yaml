@@ -90,3 +90,12 @@ systemExtensions:
   - siderolabs/intel-ucode
   - siderolabs/iscsi-tools
   - siderolabs/util-linux-tools
+patches:
+  # Says so to the scheduler: the media apps prefer a node with the GPU
+  # (src/manifests/arda/media/kustomization.yaml). Keep with i915 above.
+  - name: gpu-label
+    inline:
+      apiVersion: v1alpha1
+      kind: KubeNodeConfig
+      labels:
+        kidd.network/gpu: intel

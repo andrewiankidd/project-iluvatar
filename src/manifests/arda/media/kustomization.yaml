@@ -21,7 +21,9 @@ patches:
   # Every pod that mounts the media volume (storage.yaml) on one node: it is
   # ReadWriteOnce, attached to one node at a time. A Deployment opts in with
   # the label kidd.network/media-volume: "true"; the first such pod goes
-  # wherever the scheduler likes, and the rest follow it.
+  # wherever the scheduler likes, and the rest follow it. They prefer a node
+  # with the GPU (kidd.network/gpu, set with i915 in Omni's cluster template),
+  # which Jellyfin and Plex need; without one, the rest run and those two wait.
   - target:
       kind: Deployment
       labelSelector: kidd.network/media-volume=true
@@ -38,3 +40,10 @@ patches:
                 labelSelector:
                   matchLabels:
                     kidd.network/media-volume: "true"
+          nodeAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                preference:
+                  matchExpressions:
+                    - key: kidd.network/gpu
+                      operator: Exists
