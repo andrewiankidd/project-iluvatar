@@ -17,3 +17,24 @@ configMapGenerator:
   - name: wiring
     files:
       - wiring.mjs
+patches:
+  # Every pod that mounts the media volume (storage.yaml) on one node: it is
+  # ReadWriteOnce, attached to one node at a time. A Deployment opts in with
+  # the label kidd.network/media-volume: "true"; the first such pod goes
+  # wherever the scheduler likes, and the rest follow it.
+  - target:
+      kind: Deployment
+      labelSelector: kidd.network/media-volume=true
+    patch: |-
+      - op: add
+        path: /spec/template/metadata/labels/kidd.network~1media-volume
+        value: "true"
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          podAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              - topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    kidd.network/media-volume: "true"

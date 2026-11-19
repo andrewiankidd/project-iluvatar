@@ -21,6 +21,7 @@ metadata:
   name: radarr
   labels:
     app: radarr
+    kidd.network/media-volume: "true"
 spec:
   replicas: 1
   strategy:

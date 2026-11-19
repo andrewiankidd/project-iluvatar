@@ -27,6 +27,7 @@ metadata:
   name: jellyfin
   labels:
     app: jellyfin
+    kidd.network/media-volume: "true"
 spec:
   replicas: 1
   strategy:

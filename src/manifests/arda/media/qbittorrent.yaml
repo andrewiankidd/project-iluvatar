@@ -40,6 +40,7 @@ metadata:
   name: qbittorrent
   labels:
     app: qbittorrent
+    kidd.network/media-volume: "true"
 spec:
   replicas: 1
   strategy:
@@ -136,7 +137,7 @@ spec:
           resources:
             requests: { cpu: 20m, memory: 48Mi }
             # /dev/net/tun, from the generic device plugin (../generic-device-plugin.yml).
-            limits: { memory: 128Mi, squat.ai/tun: "1" }
+            limits: { memory: 128Mi, devic.es/tun: "1" }
       containers:
         - name: qbittorrent
           image: lscr.io/linuxserver/qbittorrent:5.1.4-r3-ls453

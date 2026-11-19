@@ -2,18 +2,15 @@
 # directly at 192.168.1.58:32400 (Plex's apps on the LAN connect straight to
 # the server), LAN only. Plex accounts, not Dex.
 #
-# HELD AT 0 REPLICAS: arda's one node hasn't the memory for Plex beside
-# Jellyfin and everything else (BACKLOG.md, "Media"). It waits for the second
-# ProDesk; set replicas: 1 then.
-#
-# Claiming (tying the server to a Plex account) happens on its first start
-# only, with a claim token from https://plex.tv/claim. The token lasts four
-# minutes, far shorter than a trip through .env and the bootstrap VM, so it
-# isn't an ARDA_* value: when Plex is turned on, get a token and hand it to
-# whoever is deploying, who puts it straight into the plex Secret
-# (kubectl -n media create secret generic plex --from-literal=claim=claim-...)
-# and starts Plex within the four minutes. After that the claim lives in
-# plex-config (backed up), and the Secret can go.
+# Claiming (tying the server to a Plex account) happens when the container
+# starts while the server is unclaimed, with a claim token from
+# https://plex.tv/claim. The token lasts four minutes, far shorter than a
+# trip through .env and the bootstrap VM, so it isn't an ARDA_* value: get
+# one and hand it to whoever is deploying, who puts it straight into the plex
+# Secret (kubectl -n media create secret generic plex --from-literal=claim=claim-...)
+# and restarts Plex within the four minutes. After that the claim lives in
+# plex-config (backed up), and the Secret can go. Until then Plex runs
+# unclaimed, with no libraries.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -32,8 +29,9 @@ metadata:
   name: plex
   labels:
     app: plex
+    kidd.network/media-volume: "true"
 spec:
-  replicas: 0   # memory: see above
+  replicas: 1
   strategy:
     type: Recreate   # one writer per volume
   selector:
@@ -119,8 +117,7 @@ metadata:
   name: plex
   annotations:
     # LAN only. Plex accounts.
-    # Off the private Homepage while Plex is held at 0; "true" with replicas: 1.
-    gethomepage.dev/enabled: "false"
+    gethomepage.dev/enabled: "true"
     gethomepage.dev/instance: private
     gethomepage.dev/group: Media
     gethomepage.dev/name: Plex

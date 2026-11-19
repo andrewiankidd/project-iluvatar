@@ -23,6 +23,7 @@ metadata:
   name: bazarr
   labels:
     app: bazarr
+    kidd.network/media-volume: "true"
 spec:
   replicas: 1
   strategy:
