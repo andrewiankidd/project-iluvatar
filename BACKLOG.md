@@ -101,10 +101,9 @@ Considered and set aside:
 
 ### Secrets without anything manual
 
-- The `ARDA_*` values in the gitignored `bootstrap/netboot/.env` (see `.env.example`) → `pi-netboot-builder.sh` serves them at `/secrets/arda.env` → `arda-secrets.sh` in user-data makes ainur's `arda-secrets` Secret once k3s is ready → `arda-bootstrap-job.yaml` hands each arda app its Secret, hourly.
+- The `ARDA_*` values in the gitignored `bootstrap/netboot/.env` (see `.env.example`) → the bootstrap VM's `push-secrets.sh` SSHes them to ainur's k3s server → `arda-secrets.sh` there makes ainur's `arda-secrets` Secret → `arda-bootstrap-job.yaml` hands each arda app its Secret, hourly. `AINUR_*` the same way, into `ainur-secrets`.
 - Not SOPS or Sealed Secrets: both mean encrypting by hand.
-- **Trade-off**: `/secrets/arda.env` is readable by anyone on the LAN while the bootstrap VM runs, as the k3s agent token already is. Fine under LAN trust.
-- **Watch**: a value changed in `.env` only reaches the clusters on the next bootstrap from the VM. Worse, while the VM runs it keeps serving the `arda.env` it wrote at start, and ainur's 10-minute timer replaces `arda-secrets` with it, dropping a value added since. On 2026-11-19 (`ARDA_GITLAB_RUNNER_TOKEN`) that meant re-running the builder's secrets step in the VM by hand. The builder should re-write `/secrets/*.env` whenever `.env` changes, not only on a full build.
+- The pusher reads `.env` every 30 seconds, so a changed value reaches ainur within a minute while the VM runs, and arda within the hour. Nothing to rebuild.
 
 ### arda storage
 
@@ -232,10 +231,22 @@ Not yet:
 - **Watch**: netboot (option 66, TFTP, NFS, proxy DHCP) and kube-vip's ARP on `.59` all assume one segment; the Pis and the VM have to stay together, and DHCP relay or per-VLAN options decide what crosses. Plan it before moving anything.
 - Remote access is UniFi Teleport (or its plain WireGuard server); clients need the gateway as DNS for `*.kidd.network`, and the lab CA installed.
 
-### Secrets served in the clear
+### Secrets pushed, not served (done 2026-11-19)
 
-- The builder serves every `AINUR_*` and `ARDA_*` value at `http://<builder>/secrets/*.env`, and ainur's builder does the same from the VIP. That now includes the lab CA's private key, which can mint a certificate for any `*.kidd.network` name your devices will trust, alongside the UniFi API key. Anyone on the LAN can read them.
-- **Fix**: serve them only to the Pis (an allow-list of their addresses in nginx), or move the Pis to fetching them over SSH or with a token baked into user-data. VLANs (below) narrow who's on the LAN in the first place.
+Until 2026-11-19 every `AINUR_*` and `ARDA_*` value, the lab CA's private key included, was readable by anyone on the LAN: at `/secrets/*.env` from the VM and from ainur's VIP, the agent token at `/k3s/k3s-agent-token`, and the Pi password and both k3s tokens inside `user-data` and the SD card image.
+
+Now nothing secret is served or in an image:
+
+- An image holds only `AINUR_PUSH_PUBKEY`. There's no password: SSH takes that key and nothing else, and the console has no login.
+- A booting Pi waits, saying so in `/run/ainur/awaiting-push`, until `push-secrets.sh` SSHes in with `AINUR_PUSH_KEY` and writes `/run/ainur/` (RAM). The bootstrap VM (compose `pi-secrets-pusher`) has all of `.env`: both k3s tokens for a waiting Pi, and `ainur.env`/`arda.env` for the k3s server, whenever they change. ainur's `secrets-pusher` Deployment has only the push key and the agent token, for a netbooted Pi's every boot.
+- Pis are found by scanning the /24 for SSH servers that say Ubuntu and take the key; not a list.
+- The lab CA's key reaches no Secret now (gen-lab-certs.sh makes it cert-manager's), and the push key only `ainur-netboot`'s.
+
+Still open:
+
+- **Rotate.** Everything in `.env` was readable on the LAN for weeks: the k3s tokens, the lab CA, Cloudflare, R2, UniFi, Dex. Planned for the pre-live rebootstrap. A new lab CA means every device and arda machine trusting it again.
+- **A pusher can't tell a Pi from an impostor.** A netbooted Pi makes new SSH host keys every boot, so there's nothing to pin. Something that answers SSH as Ubuntu, takes any key and claims to be waiting gets what that pusher has: the agent token from ainur's, and everything from the VM's. Far harder than one `curl`; VLANs (below) close it.
+- **The NFS root is exported read-write to anyone** (`/mnt/nfsshare *(rw,...,no_root_squash)`, VM and ainur). Nothing secret is in it now, but anyone on the LAN could change what the netbooted Pis run. Export it read-only, to the Pis' addresses.
 
 ### Secure Boot on arda
 

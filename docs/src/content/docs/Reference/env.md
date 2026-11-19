@@ -7,8 +7,8 @@ draft: false
 
 Everything the bootstrap needs that isn't in Git lives in `bootstrap/netboot/.env`. Start from `.env.example` next to it, which has the same sections. The file is gitignored: secrets go here, never in the repo.
 
-:::caution[Readable on the LAN]
-The bootstrap VM serves the `AINUR_*` and `ARDA_*` values to the Pis over plain HTTP (`/secrets/*.env`) while it runs, the same way it serves the k3s join token. The design trusts the LAN.
+:::note[Pushed, never served]
+Nothing from this file is served over HTTP or written into an image. The Pis' images hold only `AINUR_PUSH_PUBKEY`; the bootstrap VM's `pi-secrets-pusher` reads this file every 30 seconds and SSHes the values to ainur with `AINUR_PUSH_KEY`. So a changed value reaches ainur within a minute while the VM runs, with nothing to rebuild.
 :::
 
 Values with a `$` in them (a bcrypt hash) need single quotes: `AINUR_DEX_ADMIN_HASH='$2y$10$...'`. Both the VM's scripts and Docker Compose read the file, and both leave single-quoted values alone.
@@ -45,16 +45,16 @@ Used by [`rebootstrap.sh`](/project-iluvatar/getting-started/rebootstrap-ainur/)
 
 ## ainur secrets
 
-The builder writes the first three into the Pis' cloud-init. A script in cloud-init makes them all into an `ainur-secrets` Secret in each namespace that reads one (Dex, Argo CD, Omni, Homepage and the in-cluster builder).
+The bootstrap VM pushes these to ainur's k3s server, which makes them into an `ainur-secrets` Secret in each namespace that reads one (Dex, Argo CD, Omni, Homepage, monitoring and netboot).
 
 | Setting | |
 |---|---|
-| `AINUR_PI_PASSWORD` | The Pis' `ubuntu` user; also `rebootstrap.sh`'s login. |
-| `AINUR_K3S_TOKEN`, `AINUR_K3S_AGENT_TOKEN` | k3s's join tokens, server and agent. |
+| `AINUR_PUSH_KEY`, `AINUR_PUSH_PUBKEY` | The only way into the Pis: an SSH key pair, the private key as one line of base64. The images trust the public half; the pushers and `rebootstrap.sh` use the private one. There's no password. `.env.example` has the commands to make one. |
+| `AINUR_K3S_TOKEN`, `AINUR_K3S_AGENT_TOKEN` | k3s's join tokens, server and agent. Pushed to a Pi while it boots, never put in its image. |
 | `AINUR_DEX_ADMIN_HASH` | bcrypt hash of Dex's `admin@` password: `htpasswd -nbBC 10 "" 'password' \| tr -d ':\n'` |
 | `AINUR_OIDC_CLIENT_SECRET` | The client secret Dex shares with Argo CD, Headlamp, Omni and Homepage. |
 | `AINUR_HOMEPAGE_AUTH_SECRET` | Homepage's session cookie key, 32 characters or more. |
-| `AINUR_LAB_CA_CRT`, `AINUR_LAB_CA_KEY` | The lab root CA, each a PEM file as one line of base64 (`base64 -w0`). With them, a rebuilt ainur keeps the CA your devices and the arda machines already trust; without them it makes a new one on its first boot, and every arda machine has to be reset to trust it. Leave them empty for the very first bootstrap, then copy that CA in: `.env.example` has the commands. Only the netboot builder's copy of `ainur-secrets` keeps the key. |
+| `AINUR_LAB_CA_CRT`, `AINUR_LAB_CA_KEY` | The lab root CA, each a PEM file as one line of base64 (`base64 -w0`). With them, a rebuilt ainur keeps the CA your devices and the arda machines already trust; without them it makes a new one on its first boot, and every arda machine has to be reset to trust it. Leave them empty for the very first bootstrap, then copy that CA in: `.env.example` has the commands. No `ainur-secrets` copy keeps the key. |
 
 ## arda secrets
 

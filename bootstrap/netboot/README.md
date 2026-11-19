@@ -21,10 +21,10 @@ The compose is made up of four containers with three different configurations
 
 The values the clusters need that cannot be in this public repo go in `.env`; see `.env.example` and the [.env reference](https://andrewiankidd.github.io/project-iluvatar/reference/env/).
 
-- `AINUR_*` (the Pis' password, k3s tokens, Dex and OIDC secrets): the builder writes some into user-data and serves all of them at `/secrets/ainur.env`, which ainur makes into an `ainur-secrets` Secret in each namespace that reads one.
-- `ARDA_*` (Cloudflare tokens, who plays, R2 backup keys): served at `/secrets/arda.env`; ainur keeps them as its `arda-secrets` Secret, and arda gets each app's Secret from there.
+- `AINUR_*` (the push key, k3s tokens, Dex and OIDC secrets) and `ARDA_*` (Cloudflare tokens, who plays, R2 backup keys) are pushed, never served: `pi-secrets-pusher` (`scripts/push-secrets.sh`) SSHes them to ainur with `AINUR_PUSH_KEY`, which ainur makes into its `ainur-secrets` and `arda-secrets` Secrets; arda gets each app's Secret from there.
+- The images (user-data, the SD card image) hold only `AINUR_PUSH_PUBKEY`. The Pis have no password; that key is the only way in.
 
-Nothing to run by hand; both files are readable on the LAN while the VM runs.
+Nothing to run by hand: the pusher reads `.env` every 30 seconds, so an edit reaches ainur within a minute.
 
 ## Running
 **Warning: If you are using Windows, you must use a VM.**

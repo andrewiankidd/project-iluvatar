@@ -18,6 +18,10 @@ The HTTP DaemonSet serves two kinds of file:
 
 The same pod, the same hostNetwork, but two completely different consumers.
 
+:::note[Since 2026-11-19 the token isn't served]
+What follows is how this was first built. Now only `k3s-leader` is served: a booting Pi waits for its agent token to be pushed over SSH by ainur's `secrets-pusher` (`bootstrap/netboot/scripts/push-secrets.sh`), using a key whose public half is the only credential in its image. See [the .env reference](../../../reference/env/).
+:::
+
 :::caution[This is the spiciest endpoint in the whole stack]
 The agent-token file served at `http://<VIP>/k3s/k3s-agent-token` (and `http://bootstrap.kidd.network/k3s/k3s-agent-token`) is the **k3s join token, plain text, unauthenticated, over plain HTTP**. Anyone who can reach this endpoint can `curl` the token and bring up a node that joins your cluster as an agent — which is enough to schedule pods on shared hardware and read whatever hostPaths your workloads use.
 

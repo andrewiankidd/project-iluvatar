@@ -40,7 +40,9 @@ For each Pi it SSHes in, and if `/` is on the SD card, zeroes the card's first 8
 
 The SD card Pi reboots twice: once into netboot to be flashed, then onto the card. That's about 10 minutes, and it becomes the k3s server. The netbooted Pis wait for it: they learn the leader from ainur (`bootstrap.<domain>/k3s/k3s-leader`) and won't elect themselves, which would make each its own cluster.
 
-The Pis are `192.168.1.50`-`52` with the `ubuntu` user from user-data unless `.env` says otherwise (`PI_HOSTS`, `PI_USER`, `PI_PASSWORD`; see `.env.example`). `ssh` and `sshpass` run in a throwaway container, so Docker is all it needs.
+The Pis are `192.168.1.50`-`52` with the `ubuntu` user from user-data unless `.env` says otherwise (`PI_HOSTS`, `PI_USER`; see `.env.example`). It logs in with `AINUR_PUSH_KEY`, the only way in: the Pis have no password. `ssh` runs in a throwaway container, so Docker is all it needs.
+
+Each Pi then waits for its k3s tokens: the VM's `pi-secrets-pusher` hands them over SSH, and the SD card Pi its ainur Secrets with them. They're never in the image.
 
 :::caution
 This replaces the cluster rather than updating it. The SD card Pi's k3s state lives on the card, so it comes back as a brand new cluster, and everything stored in it (Secrets, Omni's state, Argo CD's) is rebuilt from Git and `.env`. Longhorn's NVMe disks are left alone.
