@@ -22,6 +22,13 @@ config:
       secretEnv: AINUR_OIDC_CLIENT_SECRET
       redirectURIs:
         - https://headlamp.kidd.network/oauth2/callback
+    # Grafana (../monitoring/values.yaml): public, with PKCE, so it needs no
+    # secret.
+    - id: grafana
+      name: Grafana
+      public: true
+      redirectURIs:
+        - https://grafana.kidd.network/login/generic_oauth
     - id: argocd
       name: argocd
       secretEnv: AINUR_OIDC_CLIENT_SECRET

@@ -1,0 +1,48 @@
+# Loki: both clusters' logs (monitoring/loki-values.yaml).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: loki
+  namespace: ainur
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: ainur
+  sources:
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: loki
+      targetRevision: 7.7.0
+      helm:
+        releaseName: loki
+        valueFiles:
+          - $values/src/manifests/ainur/monitoring/loki-values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ainur-monitoring
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      # kube-prometheus-stack's CRDs are too big for client-side apply.
+      - ServerSideApply=true
+    managedNamespaceMetadata:
+      labels:
+        ainur.kidd.network/ca: inject
+        # node-exporter and the log collectors read the host.
+        pod-security.kubernetes.io/enforce: privileged
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

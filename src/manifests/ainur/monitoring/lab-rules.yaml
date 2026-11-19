@@ -1,0 +1,54 @@
+# The lab's own alerts, beside kube-prometheus-stack's standard ones (node
+# down, pod crash-looping, Job failed, disk filling, and so on). Each is
+# something that has already happened here and went unnoticed.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: lab
+spec:
+  groups:
+    - name: lab
+      rules:
+        # valar-50's SD card, 2026-11-19: our own CronJobs wrote ~8.6 MB/s to
+        # it, I/O pressure sat near 70%, and k3s's API stalled until kube-vip
+        # dropped the VIP. Any node stalled on I/O this long is in trouble.
+        - alert: NodeIOStalled
+          expr: rate(node_pressure_io_stalled_seconds_total[10m]) > 0.25
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.cluster }}/{{ $labels.instance }} is stalled on disk I/O {{ $value | humanizePercentage }} of the time"
+            description: "Something is writing (or reading) far more than usual. On valar-50 that's the SD card, which stalls k3s's API with it."
+
+        # Omni's nightly backup to R2 (ainur-sidero-omni/omni-backup).
+        - alert: OmniBackupMissing
+          expr: time() - kube_cronjob_status_last_successful_time{cronjob="omni-backup"} > 2 * 86400
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            summary: "Omni hasn't been backed up to R2 for {{ $value | humanizeDuration }}"
+            description: "A new NVMe on valar-50 would mean an empty Omni and re-registering every arda machine. kubectl -n ainur-sidero-omni logs -l job-name --tail=50 for the last run."
+
+        # A Longhorn volume that's lost its last good replica. Degraded (fewer
+        # replicas than wanted) is normal while arda has one machine.
+        - alert: LonghornVolumeFaulted
+          expr: longhorn_volume_robustness == 3
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Longhorn volume {{ $labels.volume }} on {{ $labels.cluster }} is faulted"
+            description: "Its data is unavailable. Check the Longhorn UI and the node it was on."
+
+        # A cluster that stops reporting looks exactly like a healthy, quiet
+        # one on a dashboard.
+        - alert: ClusterNotReporting
+          expr: absent_over_time(up{cluster="arda"}[10m])
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No metrics from arda for 10 minutes"
+            description: "arda is down, or its Prometheus agent can't reach prometheus.kidd.network."

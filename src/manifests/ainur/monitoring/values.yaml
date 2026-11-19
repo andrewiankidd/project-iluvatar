@@ -1,0 +1,160 @@
+# kube-prometheus-stack 93.4.1 on ainur (../monitoring.yml): the lab's
+# Prometheus, Alertmanager and Grafana. ainur's own metrics are scraped here;
+# arda's arrive by remote write from the same chart in agent mode there
+# (src/manifests/arda/monitoring), labelled cluster="arda", so every
+# dashboard and rule covers both. Logs are Loki's (loki-values.yaml).
+#
+# Everything with data runs on valar-50, on its NVMe (local-path-kept, so a
+# rebuilt ainur keeps its history).
+fullnameOverride: kps
+
+crds:
+  enabled: true
+
+# k3s runs etcd (it has none here: SQLite), the scheduler, controller-manager
+# and kube-proxy inside its own process: nothing separate to scrape, and
+# their rules would only alert that they're missing.
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+windowsMonitoring:
+  enabled: false
+
+defaultRules:
+  rules:
+    etcd: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    kubeControllerManager: false
+    kubeProxy: false
+    windows: false
+
+prometheus:
+  prometheusSpec:
+    nodeSelector:
+      kidd.network/role: control-plane
+    scrapeInterval: 60s
+    evaluationInterval: 60s
+    retention: 15d
+    retentionSize: 8GB
+    # arda's Prometheus (agent mode) writes here.
+    enableRemoteWriteReceiver: true
+    # Every ServiceMonitor, PodMonitor and rule in the cluster, not just the
+    # chart's own.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    # cluster="ainur" on everything scraped here, as arda's carry
+    # cluster="arda".
+    scrapeClasses:
+      - name: cluster
+        default: true
+        relabelings:
+          - targetLabel: cluster
+            replacement: ainur
+    resources:
+      requests:
+        memory: 512Mi
+      limits:
+        memory: 2Gi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path-kept
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 10Gi
+
+alertmanager:
+  alertmanagerSpec:
+    nodeSelector:
+      kidd.network/role: control-plane
+
+prometheusOperator:
+  nodeSelector:
+    kidd.network/role: control-plane
+  admissionWebhooks:
+    patch:
+      nodeSelector:
+        kidd.network/role: control-plane
+
+kube-state-metrics:
+  nodeSelector:
+    kidd.network/role: control-plane
+
+grafana:
+  nodeSelector:
+    kidd.network/role: control-plane
+  defaultDashboardsTimezone: browser
+  # Dashboards come from config (the chart's, and ConfigMaps labelled
+  # grafana_dashboard), so Grafana itself holds nothing worth keeping.
+  persistence:
+    enabled: false
+  sidecar:
+    dashboards:
+      # A cluster selector on the chart's dashboards: ainur and arda.
+      multicluster:
+        global:
+          enabled: true
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      uid: loki
+      url: http://loki.ainur-monitoring.svc:3100
+      access: proxy
+  # The lab CA, for Dex.
+  extraConfigmapMounts:
+    - name: lab-ca
+      configMap: lab-ca
+      mountPath: /etc/ssl/local-ca
+      readOnly: true
+  grafana.ini:
+    server:
+      root_url: https://grafana.kidd.network
+    # Dex is the only way in: no password login, so the chart's default admin
+    # password is never usable.
+    auth:
+      disable_login_form: true
+    auth.basic:
+      enabled: false
+    auth.generic_oauth:
+      enabled: true
+      name: Dex
+      # Dex's grafana client is public (PKCE): no secret to hand out.
+      client_id: grafana
+      use_pkce: true
+      scopes: openid profile email offline_access
+      auth_url: https://dex.kidd.network/auth
+      token_url: https://dex.kidd.network/token
+      api_url: https://dex.kidd.network/userinfo
+      tls_client_ca: /etc/ssl/local-ca/ca.crt
+      allow_sign_up: true
+      auto_login: true
+      # Everyone Dex lets in is an admin, as in Headlamp: Dex has only the
+      # lab's own accounts.
+      role_attribute_path: "'Admin'"
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    annotations:
+      cert-manager.io/cluster-issuer: local-ca
+      gethomepage.dev/enabled: "true"
+      gethomepage.dev/instance: private
+      gethomepage.dev/group: Cluster
+      gethomepage.dev/name: Grafana
+      gethomepage.dev/description: Metrics and logs, both clusters
+      gethomepage.dev/icon: mdi-chart-line
+      gethomepage.dev/pod-selector: app.kubernetes.io/name=grafana
+    hosts:
+      - grafana.kidd.network
+    tls:
+      - hosts:
+          - grafana.kidd.network
+        secretName: grafana-tls
