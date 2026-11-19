@@ -1032,7 +1032,7 @@ write_files:
       # which has to serve it on to the next ainur (gen-lab-certs.sh).
       put ainur-netboot ainur-secrets --from-env-file="$f"
       grep -v '^AINUR_LAB_CA_' "$f" > "$f.apps"
-      for ns in ainur-dex argocd ainur-sidero-omni ainur-homepage; do
+      for ns in ainur-dex argocd ainur-sidero-omni ainur-homepage ainur-monitoring; do
         put "$ns" ainur-secrets --from-env-file="$f.apps"
       done
       rm -f "$f.apps"

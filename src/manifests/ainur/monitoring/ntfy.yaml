@@ -1,0 +1,124 @@
+# ntfy: push notifications to your phone. Alertmanager posts the lab's
+# alerts to the lab-alerts topic (values.yaml, alertmanager.config); the ntfy
+# app on a phone subscribes to it. On ainur beside Alertmanager, so alerts
+# about arda still go out when arda is down; on the internet through arda's
+# tunnel (src/manifests/arda/cloudflared/ainur-homepage.yaml) for a phone
+# away from home.
+#
+# No anonymous access. Users and the token are built at start from
+# ainur-secrets, so nothing is kept:
+#   admin         your Dex password (AINUR_DEX_ADMIN_HASH), reads everything
+#   alertmanager  AINUR_NTFY_TOKEN, may only post to lab-alerts
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ntfy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ntfy
+  template:
+    metadata:
+      labels:
+        app: ntfy
+    spec:
+      containers:
+        - name: ntfy
+          image: binwiederhier/ntfy:v2.38.1
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              hash=$(printf '%s' "$AINUR_DEX_ADMIN_HASH" | tr -d "'\"")
+              export NTFY_AUTH_USERS="admin:$hash:admin,alertmanager:$hash:user"
+              export NTFY_AUTH_ACCESS="alertmanager:lab-alerts:wo"
+              export NTFY_AUTH_TOKENS="alertmanager:$AINUR_NTFY_TOKEN:alertmanager"
+              exec ntfy serve
+          envFrom:
+            - secretRef:
+                name: ainur-secrets
+          env:
+            - name: NTFY_BASE_URL
+              value: https://ntfy.kidd.network
+            - name: NTFY_LISTEN_HTTP
+              value: ":80"
+            - name: NTFY_BEHIND_PROXY
+              value: "true"
+            - name: NTFY_AUTH_DEFAULT_ACCESS
+              value: deny-all
+            - name: NTFY_ENABLE_LOGIN
+              value: "true"
+            - name: NTFY_AUTH_FILE
+              value: /var/lib/ntfy/auth.db
+            - name: NTFY_CACHE_FILE
+              value: /var/lib/ntfy/cache.db
+            # iPhones can only be woken through Apple, which ntfy.sh relays
+            # for self-hosted servers: it passes a wake-up for the topic, and
+            # the app fetches the message itself from here. Android doesn't
+            # need it.
+            - name: NTFY_UPSTREAM_BASE_URL
+              value: https://ntfy.sh
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+          resources:
+            requests:
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/ntfy
+      volumes:
+        # Users come from ainur-secrets at start; messages are kept 12 hours.
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ntfy
+spec:
+  selector:
+    app: ntfy
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ntfy
+  annotations:
+    cert-manager.io/cluster-issuer: local-ca
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: private
+    gethomepage.dev/group: Cluster
+    gethomepage.dev/name: ntfy
+    gethomepage.dev/description: The lab's alerts, on your phone
+    gethomepage.dev/icon: mdi-bell-ring
+    gethomepage.dev/pod-selector: app=ntfy
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - ntfy.kidd.network
+      secretName: ntfy-tls
+  rules:
+    - host: ntfy.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ntfy
+                port:
+                  name: http

@@ -1,10 +1,11 @@
-# kidd.network and homepage.kidd.network on the internet: ainur's public
-# Homepage (no login; only what isn't marked private), through arda's
-# tunnel, since ainur has none of its own. The tunnel hands every host to
-# arda's Traefik (config.yaml), and this Ingress sends these two on to
-# ainur's Traefik at its VIP, which serves them as on the LAN.
+# ainur's public sites on the internet, through arda's tunnel, since ainur
+# has none of its own: kidd.network and homepage.kidd.network (the public
+# Homepage: no login, only what isn't marked private) and ntfy.kidd.network
+# (the lab's alerts; ntfy's own login). The tunnel hands every host to arda's
+# Traefik (config.yaml), and this Ingress sends these on to ainur's Traefik,
+# which serves them as on the LAN.
 #
-# external-dns-tunnel publishes the two names (kidd.network/tunnel); arda's
+# external-dns-tunnel publishes these names (kidd.network/tunnel); arda's
 # LAN DNS leaves them alone (kidd.network/lan-dns: "false"), since on the
 # LAN they already point at ainur, kept by ainur's unifi CronJob.
 #
@@ -54,6 +55,18 @@ spec:
                 port:
                   name: https
     - host: homepage.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ainur-homepage
+                port:
+                  name: https
+    # ainur's ntfy (src/manifests/ainur/monitoring/ntfy.yaml), so a phone
+    # gets the lab's alerts away from home. ntfy has its own login.
+    - host: ntfy.kidd.network
       http:
         paths:
           - path: /
