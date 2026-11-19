@@ -134,6 +134,14 @@ ainur ran Longhorn until 2026-11. Its volumes were small (the netboot files and 
 #### Priorities
 Two PriorityClasses, created by cloud-init before any chart: `ainur-critical` (cert-manager, trust-manager, Dex, Omni, kube-vip and the netboot servers) and `ainur-optional` (Homepage). Argo CD uses Kubernetes' own `system-cluster-critical`. A Pi short of memory evicts the optional pods first and the critical ones last.
 
+#### Observability
+[`src/manifests/ainur/monitoring.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/monitoring.yml), [`loki.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/loki.yml), [`ainur-logs.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/ainur-logs.yml)
+- **Prometheus, Alertmanager and Grafana** (kube-prometheus-stack) for both clusters: arda runs the same chart in agent mode and writes its metrics here, so every dashboard and rule covers both, with a `cluster` selector.
+- **Loki** for both clusters' logs and events, collected by Grafana Alloy.
+- **On valar-50's NVMe**, at fixed paths that outlive a rebuild: 15 days of metrics, 14 of logs.
+- **Grafana** at grafana.kidd.network, behind Dex.
+- **The lab's own alerts** beside the standard ones: a disk stalling on I/O, Omni's or a game volume's backup missed, a faulted Longhorn volume, arda going quiet.
+
 #### Sidero Omni
 [`src/manifests/ainur/sidero-omni.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/sidero-omni.yml)
 - **Helm chart** from SideroLabs with repo-side overrides.

@@ -156,14 +156,26 @@ Considered and set aside:
 - On the Lab VLAN, its IoT devices on IoT. Whatever the household uses has to keep working mid-rebuild, so keep a manual fallback (switches, the Hue app) until it has earned trust.
 - If the Nest setup includes cameras or a doorbell: UniFi Protect records locally and Home Assistant integrates with it.
 
-### Observability (promoted from Tier 4, 2026-11-18)
+### Observability (promoted from Tier 4, 2026-11-18; built 2026-11-19)
 
-Absent, and 2026-11-18 showed what that costs: valar-51/52 hung with no record of why, the NVMe dropouts were found from console screenshots, and Longhorn volumes faulted silently.
+2026-11-18 showed what its absence cost: valar-51/52 hung with no record of why, the NVMe dropouts were found from console screenshots, Longhorn volumes faulted silently, and on 2026-11-19 valar-50's SD card was found by hand to be taking 8.6 MB/s of writes from our own CronJobs.
 
-- Metrics: kube-prometheus-stack (Prometheus, node-exporter, kube-state-metrics, Grafana, Alertmanager) on ainur, scraping arda too.
-- Logs: Loki with Alloy, collecting both clusters' pods and UniFi's firewall/system logs over syslog. With the GeoLite2 database, that's a map of who hits the forwarded game ports.
-- Alerts somewhere local (self-hosted ntfy), so a hung node or a faulted volume says so. Blackbox checks (or Uptime Kuma) for "does the service answer from outside".
-- Grafana behind Dex; Homepage finds it by its annotations. All Argo CD apps, as usual.
+Built, on ainur (`src/manifests/ainur/monitoring*`), pinned to valar-50 with its data on the NVMe (`local-path-kept`):
+
+- **Metrics**: kube-prometheus-stack 93.4.1. Prometheus (15 days, 8 GB) scrapes ainur and receives arda's by remote write; arda runs the same chart in agent mode (`src/manifests/arda/monitoring`), so the standard dashboards and rules cover both, told apart by `cluster`. k3s's and Talos's built-in control-plane scrapes are off (nothing separate to scrape). VolSync's metrics are scraped without its auth proxy (`metrics.disableAuth`), and Longhorn's too.
+- **Logs**: Loki 3.6, single binary, 14 days. Both clusters' pod logs and events through k8s-monitoring's Alloy.
+- **Grafana** at grafana.kidd.network behind Dex (a public PKCE client, no password login), on the private Homepage. Stateless: dashboards are config.
+- **Alerts** (`monitoring/lab-rules.yaml`), beside the chart's standard ones: disk I/O stalls, Omni's backup or a VolSync backup missed, a faulted Longhorn volume, arda going silent.
+- arda pushes to `prometheus.kidd.network/api/v1/write` and `loki.kidd.network/loki/api/v1/push` (only those paths), trusting the lab CA from the `ainur-telemetry` Secret arda-bootstrap writes.
+
+Not yet:
+
+- **Alerts reach no one.** They show in Grafana and Alertmanager only. Next: ntfy on ainur, Alertmanager to it, published through the tunnel so a phone gets them away from home.
+- **A dead man's switch.** If ainur itself dies, nothing alerts. Alertmanager's `Watchdog` (always firing) to an outside check (healthchecks.io, or a second ntfy) would say so; online, but only for the alarm.
+- **UniFi's logs** (firewall, system) over syslog into Loki, and GeoIP for who hits the forwarded ports.
+- **Blackbox checks** from outside: does minecraft.kidd.network answer, does the tunnel.
+- The ingest endpoints are unauthenticated, like the rest of the LAN (see VLANs).
+- No Tempo (traces) or Mimir: nothing emits traces, and Prometheus is plenty at this size.
 
 ---
 

@@ -34,7 +34,7 @@ spec:
         # arda's volumes, backed up nightly to R2 by VolSync (arda's Kyverno
         # policy). out_of_sync is 1 once a scheduled backup is missed.
         - alert: VolumeBackupMissing
-          expr: volsync_volume_out_of_sync == 1
+          expr: volsync_volume_out_of_sync{role="source"} == 1
           for: 2h
           labels:
             severity: critical
