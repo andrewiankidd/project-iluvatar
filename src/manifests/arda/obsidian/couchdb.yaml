@@ -77,9 +77,9 @@ spec:
               mountPath: /opt/couchdb/data
             - name: local-d
               mountPath: /opt/couchdb/etc/local.d
+          # Not /_up: with require_valid_user every path wants the login.
           readinessProbe:
-            httpGet:
-              path: /_up
+            tcpSocket:
               port: http
           resources:
             requests: { cpu: 50m, memory: 128Mi }
