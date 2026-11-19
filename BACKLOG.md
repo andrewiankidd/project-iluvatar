@@ -154,6 +154,17 @@ Considered and set aside:
 ### Home Assistant and a local assistant (the end goal)
 
 - Replace Google Nest and the Hue cloud with Home Assistant plus a local LLM voice assistant: Whisper (speech to text), Piper (text to speech), Ollama behind Home Assistant's Assist, and Home Assistant voice satellites where the Nest speakers are. All local, so it fits the offline rule.
+- **Home Assistant is up** (2026-11-19, `src/manifests/arda/homeassistant.yml`): the container image 2026.11.2 at `homeassistant.kidd.network`, LAN only, its own login, `/config` on Longhorn (VolSync's first backup ran), `configuration.yaml` from Git. On the host network in a privileged namespace; from the pod, mDNS sees the Hue Bridge, seven Google Cast devices (the Nest speakers and Chromecasts) and eight Matter devices. Onboarding (the owner account) is waiting for the user.
+
+Next, in order:
+
+- **Onboard and add what discovery offers**: the Hue Bridge first (local API, works while the bridge stays), the Google Cast devices for media and TTS.
+- **Matter needs a Matter Server**: Home Assistant only talks to Matter through `python-matter-server`, an add-on on HA OS; here, its own Deployment on the host network (it needs IPv6 link-local on the LAN), added as the Matter integration at `ws://<it>:5580/ws`.
+- **Wyoming services for Assist**: `wyoming-whisper` and `wyoming-piper` as Deployments on arda (CPU), added as Wyoming integrations by their Service names; Ollama after, sized against arda's RAM (~80% used with Home Assistant's ~600 MB).
+- **Away from home**: the companion app needs Home Assistant reachable. The tunnel (`kidd.network/tunnel: "true"` on its Ingress) is one line, but puts Home Assistant's login on the internet; ip_ban is on (10 failed logins). Off until wanted. Cloudflare Access in front would break the app, as Dex would.
+- **SSO**: not Dex (no OIDC in Home Assistant, and the apps can't do a browser login). When LLDAP exists, Home Assistant's `command_line` auth provider can check passwords against it; until then, its own users.
+- **Bluetooth** isn't available (no adapter passed in, and arda's ProDesk may have none); ESPHome Bluetooth proxies would cover it over the network.
+- **The IoT VLAN**: once devices move off the Lab VLAN, mDNS and SSDP won't cross by themselves; the UniFi gateway's mDNS reflector, or Home Assistant given a leg on that VLAN.
 - **Zigbee over the network, not USB**: a PoE Ethernet coordinator (SLZB-06-style) lets Home Assistant run on arda without being pinned to the node with the dongle. Hue bulbs are Zigbee and pair to it directly, so the bridge and its cloud go.
 - **The LLM starts on CPU.** GPUs are out of budget. Home Assistant's own intent matching handles plain commands instantly with no LLM; a small quantized model (3B-8B, Ollama) on a ProDesk handles the rest in seconds. A GPU box later changes nothing else. Supersedes LlamaGPT.
 - On the Lab VLAN, its IoT devices on IoT. Whatever the household uses has to keep working mid-rebuild, so keep a manual fallback (switches, the Hue app) until it has earned trust.
