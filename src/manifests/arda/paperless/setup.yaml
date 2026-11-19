@@ -21,6 +21,8 @@ spec:
       template:
         spec:
           restartPolicy: Never
+          # No PAPERLESS_PORT=tcp://... from the Service (deployment.yaml).
+          enableServiceLinks: false
           # Wherever Paperless is, for its volume.
           affinity:
             podAffinity:

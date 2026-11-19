@@ -73,6 +73,9 @@ spec:
       labels:
         app: paperless
     spec:
+      # Otherwise the Service "paperless" arrives as PAPERLESS_PORT=tcp://...,
+      # which Paperless reads as its own setting and won't start.
+      enableServiceLinks: false
       # Dex's certificate is from the lab CA: add it to the usual public
       # roots for Paperless's Python (the OIDC login; IMAP to a public
       # mail server still verifies against the public roots).
