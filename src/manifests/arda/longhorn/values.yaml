@@ -9,6 +9,14 @@ defaultSettings:
   createDefaultDiskLabeledNodes: true
   defaultReplicaCount: "3"
   replicaAutoBalance: best-effort
+  # Let a node drain even when it holds a volume's last replica. With one
+  # node every replica is the last, so the default (block-if-contains-last-
+  # replica) keeps a PodDisruptionBudget on the instance manager that no
+  # drain can satisfy: a Talos upgrade through Omni cordons the node, evicts
+  # every workload, then waits forever, with all of arda down (2026-11-19,
+  # adding i915). By the time the instance manager goes, the workloads are
+  # gone and their volumes detached. Worth revisiting with three nodes.
+  nodeDrainPolicy: always-allow
 
 persistence:
   defaultClass: true
