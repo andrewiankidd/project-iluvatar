@@ -7,8 +7,8 @@
 # Two pushers run this:
 #   full   the bootstrap VM (docker-compose.yml), with all of .env, read again
 #          every round, so a value added there reaches ainur within a minute:
-#            k3s.env    both k3s tokens, to a waiting Pi (the SD card Pi
-#                       becomes the k3s server, so it needs the server token)
+#            k3s.env    the agent token to a waiting Pi; the server token too
+#                       to the SD card Pi, which becomes the k3s server
 #            ainur.env  every AINUR_* value, which ainur-secrets.sh makes into
 #            arda.env   ainur's Secrets, and every ARDA_*, for arda-secrets.sh;
 #                       to the k3s server, or a Pi about to become it
@@ -68,11 +68,13 @@ while :; do
 	fi
 	printf '%s\n' "$KEY" | base64 -d > "$STATE/key" 2>/dev/null && chmod 600 "$STATE/key"
 
-	# What a waiting Pi gets, and (full mode) what the k3s server gets.
-	k3s_env="AINUR_K3S_AGENT_TOKEN=$AGENT_TOKEN"
+	# What a waiting Pi gets: a netbooted one the agent token, the SD card Pi
+	# (the k3s server to be) the server token too, from the VM only.
+	agent_env="AINUR_K3S_AGENT_TOKEN=$AGENT_TOKEN"
+	server_env=""
 	ainur_env=""; arda_env=""; envsum=""
 	if [ "$MODE" = full ]; then
-		k3s_env="$k3s_env
+		server_env="$agent_env
 AINUR_K3S_TOKEN=$(value AINUR_K3S_TOKEN)"
 		ainur_env="$(printf '%s\n' "$VALUES" | grep '^AINUR_')"
 		arda_env="$(printf '%s\n' "$VALUES" | grep '^ARDA_')"
@@ -93,10 +95,14 @@ if [ -n '$envsum' ] && { [ \"\$want\" = sd ] || [ -n \"\$server\" ]; } \\
   echo 'pushed ainur.env and arda.env'
   if [ -n \"\$server\" ]; then systemctl start ainur-secrets.service arda-secrets.service && echo 'applied them'; fi
 fi
-if [ \"\$want\" = netboot ] || { [ \"\$want\" = sd ] && [ '$MODE' = full ]; }; then
-  echo '$(b64 "$k3s_env")' | base64 -d > /run/ainur/k3s.env.new && mv /run/ainur/k3s.env.new /run/ainur/k3s.env
+if [ \"\$want\" = netboot ]; then
+  echo '$(b64 "$agent_env")' | base64 -d > /run/ainur/k3s.env.new && mv /run/ainur/k3s.env.new /run/ainur/k3s.env
   rm -f /run/ainur/awaiting-push
-  echo \"pushed the k3s tokens (\$want)\"
+  echo 'pushed the k3s agent token (netboot)'
+elif [ \"\$want\" = sd ] && [ '$MODE' = full ]; then
+  echo '$(b64 "$server_env")' | base64 -d > /run/ainur/k3s.env.new && mv /run/ainur/k3s.env.new /run/ainur/k3s.env
+  rm -f /run/ainur/awaiting-push
+  echo 'pushed the k3s tokens (sd)'
 elif [ \"\$want\" = sd ]; then
   echo 'waiting for the k3s server token, which only the bootstrap VM has'
 fi"
