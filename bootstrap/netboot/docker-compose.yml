@@ -104,10 +104,11 @@ services:
       PUSH_ENV_FILE: /run/push/.env
       # Only to find this /24; the rest is read from .env every round.
       BOOTSTRAP_IP_ADDRESS: ${BOOTSTRAP_IP_ADDRESS}
+    # The directory, not the files: a file mount keeps the old .env when an
+    # editor saves a new one in its place.
     volumes:
-      - ./.env:/run/push/.env:ro
-      - ./scripts/push-secrets.sh:/push-secrets.sh:ro
-    command: ["sh", "-c", "apk add -q --no-cache openssh-client-default && exec sh /push-secrets.sh"]
+      - .:/run/push:ro
+    command: ["sh", "-c", "apk add -q --no-cache openssh-client-default && exec sh /run/push/scripts/push-secrets.sh"]
     restart: unless-stopped
 
   # Optional builder for creating Debian structure files on the servers
