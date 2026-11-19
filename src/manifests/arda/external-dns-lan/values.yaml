@@ -45,8 +45,10 @@ sources:
 
 # Except an Ingress that opts out: one serving a name that already points at
 # ainur on the LAN (../cloudflared/ainur-homepage.yaml).
+# "notin": external-dns 0.23 refuses "!=" here as not a valid selector, and
+# stops at start.
 extraArgs:
-  - --annotation-filter=kidd.network/lan-dns!=false
+  - --annotation-filter=kidd.network/lan-dns notin (false)
 
 domainFilters:
   - kidd.network
