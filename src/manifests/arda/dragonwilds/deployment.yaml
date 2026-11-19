@@ -58,8 +58,10 @@ spec:
                 secretKeyRef:
                   name: dragonwilds
                   key: admin-password
-            # Empty unless the Secret has one: the world's own password, if
-            # any, then applies.
+            # The password for joining. The image rewrites DedicatedServer.ini
+            # from these variables on every start, so with none in the Secret
+            # (ARDA_DRAGONWILDS_WORLD_PASSWORD unset) the world is open to
+            # anyone, whatever it had before. Left unset on purpose only.
             - name: WORLD_PASSWORD
               valueFrom:
                 secretKeyRef:

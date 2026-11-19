@@ -234,6 +234,43 @@ spec:
                     echo "forwards: $(jq length /tmp/want.json) wanted"
                   }
                   arda_forwards
+
+                  # LAN names for those same Services. Their public records
+                  # point at home.kidd.network, but on the LAN the *.kidd.network
+                  # wildcard above answers first, with ainur's VIP, where no game
+                  # listens. So each forwarded Service's external-dns hostname
+                  # gets an A record to its own address. A TXT record beside each
+                  # marks it as ours, so ours that nothing wants any more go.
+                  arda_lan_dns() {
+                    [ "$arda_up" = 1 ] || return 0
+                    kubectl get svc -A -o json | jq -c '[.items[]
+                      | select(.metadata.annotations["kidd.network/port-forward"] == "true")
+                      | (.status.loadBalancer.ingress // [])[0].ip as $ip | select($ip)
+                      | (.metadata.annotations["external-dns.kubernetes.io/hostname"] // "")
+                      | split(",")[] | gsub(" "; "") | select(. != "") | {key: ., value: $ip}]
+                      | unique_by(.key)' > /tmp/want-dns.json
+                    api "$dns" > /tmp/dns.json
+                    jq -c '.[]' /tmp/want-dns.json | while read -r w; do
+                      k=$(printf '%s' "$w" | jq -r .key); v=$(printf '%s' "$w" | jq -r .value)
+                      rec=$(jq -c --arg k "$k" '.[] | select(.key == $k and .record_type == "A")' /tmp/dns.json | head -n1)
+                      if [ -z "$rec" ]; then
+                        change "lan dns: add $k -> $v" POST "$dns" "$(jq -nc --arg k "$k" --arg v "$v" '{key: $k, record_type: "A", value: $v, enabled: true}')"
+                      elif [ "$(printf '%s' "$rec" | jq -r '"\(.value) \(.enabled)"')" != "$v true" ]; then
+                        change "lan dns: correct $k -> $v" PUT "$dns/$(printf '%s' "$rec" | jq -r ._id)" \
+                          "$(printf '%s' "$rec" | jq -c --arg v "$v" '.value = $v | .enabled = true')"
+                      fi
+                      jq -e --arg k "k8s.unifi.$k" 'any(.[]; .key == $k and .record_type == "TXT")' /tmp/dns.json >/dev/null ||
+                        change "lan dns: mark $k as ours" POST "$dns" "$(jq -nc --arg k "k8s.unifi.$k" '{key: $k, record_type: "TXT", value: "owner=ainur-unifi-cronjob", enabled: true}')"
+                    done
+                    jq -r '.[] | select(.record_type == "TXT" and (.key | startswith("k8s.unifi."))) | .key | sub("^k8s\\.unifi\\."; "")' /tmp/dns.json \
+                      | while read -r k; do
+                        jq -e --arg k "$k" 'any(.[]; .key == $k)' /tmp/want-dns.json >/dev/null && continue
+                        jq -r --arg k "$k" --arg t "k8s.unifi.$k" '.[] | select((.key == $k and .record_type == "A") or (.key == $t and .record_type == "TXT")) | ._id' /tmp/dns.json \
+                          | while read -r id; do change "lan dns: remove $k" DELETE "$dns/$id"; done
+                      done
+                    echo "lan dns: $(jq length /tmp/want-dns.json) wanted"
+                  }
+                  arda_lan_dns
               volumeMounts:
                 - name: tools
                   mountPath: /tools
