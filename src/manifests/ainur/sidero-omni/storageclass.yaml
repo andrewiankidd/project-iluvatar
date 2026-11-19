@@ -1,7 +1,8 @@
 # local-path, but each volume's folder is named after its claim
-# (<namespace>/<claim>) rather than a fresh UID, and kept when the claim
+# (<namespace>/<claim>/data) rather than a fresh UID, and kept when the claim
 # goes. So a rebuilt ainur (re-flashed SD card, same NVMe) finds Omni's data
-# where it left it: /var/mnt/nvme/local-path/ainur-sidero-omni/omni.
+# where it left it: /var/mnt/nvme/local-path/ainur-sidero-omni/omni/data.
+# (The provisioner requires a level below <namespace>/<claim>.)
 # For volumes that have to outlive the cluster; the rest use local-path.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -9,8 +10,10 @@ metadata:
   name: local-path-kept
   annotations:
     argocd.argoproj.io/sync-wave: "-4"
+    # A StorageClass's parameters can't change in place; recreate it.
+    argocd.argoproj.io/sync-options: Replace=true
 provisioner: rancher.io/local-path
 parameters:
-  pathPattern: "{{ .PVC.Namespace }}/{{ .PVC.Name }}"
+  pathPattern: "{{ .PVC.Namespace }}/{{ .PVC.Name }}/data"
 reclaimPolicy: Retain
 volumeBindingMode: WaitForFirstConsumer
