@@ -125,6 +125,8 @@ Defined at [`src/manifests/ainur/pi-netboot.yml`](https://github.com/andrewianki
 - **Ingress**  with cert-manager TLS.
 - **Trusted CA**: mounts the injected `lab-ca` ConfigMap for outbound TLS.
 - **Sync-wave** after Dex so authentication is ready first.
+- **arda too**, as a second cluster: an Omni kubeconfig for `talos-default` (admin), kept fresh by the `arda-headlamp` CronJob.
+- **A Dex login in front of all of it** (oauth2-proxy). Headlamp's own login is checked in the browser, and its server hands a kubeconfig cluster's rights to any request; the proxy makes sure nothing reaches Headlamp, and so neither cluster, without a login.
 
 #### Storage: local-path
 ainur ran Longhorn until 2026-11. Its volumes were small (the netboot files and Omni's state), and Longhorn's own pods and images cost the 8 GB netbooted Pis more than the replication was worth, so every volume is now k3s's built-in local-path on valar-50's NVMe, with the pods that use them pinned there. Longhorn lives on arda, where the data is.
