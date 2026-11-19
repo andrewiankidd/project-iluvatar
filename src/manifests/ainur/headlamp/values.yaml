@@ -16,6 +16,11 @@ config:
     externalSecret:
       enabled: true
       name: headlamp-oidc
+  # arda, as a second cluster: a kubeconfig from Omni, kept in the
+  # arda-kubeconfig Secret by ainur's arda-headlamp CronJob
+  # (../sidero-omni/arda-headlamp-cronjob.yaml).
+  extraArgs:
+    - -kubeconfig=/home/headlamp/arda/config
 
 env:
   - name: HEADLAMP_CONFIG_OIDC_CALLBACK_URL
@@ -29,9 +34,17 @@ volumes:
     configMap:
       name: lab-ca
       optional: true
+  # Optional: Headlamp starts without arda until the CronJob has made it.
+  - name: arda-kubeconfig
+    secret:
+      secretName: arda-kubeconfig
+      optional: true
 volumeMounts:
   - name: local-ca
     mountPath: /etc/ssl/local-ca
+    readOnly: true
+  - name: arda-kubeconfig
+    mountPath: /home/headlamp/arda
     readOnly: true
 clusterRoleBinding:
   create: false
