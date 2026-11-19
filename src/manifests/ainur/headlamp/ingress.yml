@@ -24,8 +24,9 @@ spec:
         paths:
           - path: /
             pathType: Prefix
+            # Through the Dex login (oauth2-proxy.yaml), not straight to Headlamp.
             backend:
               service:
-                name: headlamp
+                name: oauth2-proxy
                 port:
                   number: 80

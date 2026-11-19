@@ -68,9 +68,12 @@ spec:
                   value: https://omni.kidd.network
                 - name: CLUSTER
                   value: talos-default
-                # What Headlamp's users get on arda (comma-separated).
+                # What Headlamp's users get on arda (comma-separated): admin.
+                # Only safe because all of Headlamp is behind a Dex login
+                # (../headlamp/oauth2-proxy.yaml); Headlamp itself would hand
+                # these rights to any request.
                 - name: ARDA_GROUPS
-                  value: kidd.network:headlamp-probe
+                  value: system:masters
                 - name: OMNICTL_URL
                   value: https://github.com/siderolabs/omni/releases/download/v1.13.3/omnictl-linux-arm64
               command:
