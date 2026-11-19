@@ -42,6 +42,14 @@ async function call(app, method, path, body) {
   return text ? JSON.parse(text) : null;
 }
 
+async function up(url) {
+  try {
+    return (await fetch(url, { signal: AbortSignal.timeout(10000) })).ok;
+  } catch {
+    return false;
+  }
+}
+
 // A new item from the app's own schema, its fields set by name.
 function fromSchema(schema, implementation, name, fields, extra = {}) {
   const item = structuredClone(schema.find((s) => s.implementation === implementation));
@@ -59,14 +67,19 @@ async function arr(app) {
   }
   const clients = await call(app, 'GET', '/downloadclient');
   if (!clients.some((c) => c.implementation === 'QBittorrent')) {
+    // Sonarr and Radarr test a new download client and refuse one they can't
+    // reach; qBittorrent is down until its VPN has a key. The next run adds it.
+    if (!(await up(`http://qbittorrent.${ns}:8080/api/v2/app/version`))) {
+      console.log(`${app}: qBittorrent not up yet (no VPN key?); added once it is`);
+      return;
+    }
     const schema = await call(app, 'GET', '/downloadclient/schema');
     const client = fromSchema(schema, 'QBittorrent', 'qBittorrent', {
       host: `qbittorrent.${ns}`,
       port: 8080,
       [app === 'sonarr' ? 'tvCategory' : 'movieCategory']: category,
     }, { protocol: 'torrent', priority: 1 });
-    // forceSave: qBittorrent may be down (no Mullvad keys yet); save anyway.
-    await call(app, 'POST', '/downloadclient?forceSave=true', client);
+    await call(app, 'POST', '/downloadclient', client);
     console.log(`${app}: qBittorrent added`);
   }
 }
