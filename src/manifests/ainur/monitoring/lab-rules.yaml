@@ -31,6 +31,17 @@ spec:
             summary: "Omni hasn't been backed up to R2 for {{ $value | humanizeDuration }}"
             description: "A new NVMe on valar-50 would mean an empty Omni and re-registering every arda machine. kubectl -n ainur-sidero-omni logs -l job-name --tail=50 for the last run."
 
+        # arda's volumes, backed up nightly to R2 by VolSync (arda's Kyverno
+        # policy). out_of_sync is 1 once a scheduled backup is missed.
+        - alert: VolumeBackupMissing
+          expr: volsync_volume_out_of_sync == 1
+          for: 2h
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.cluster }} {{ $labels.obj_namespace }}/{{ $labels.obj_name }} has missed its scheduled backup"
+            description: "VolSync's {{ $labels.role }} for it hasn't completed on schedule. kubectl -n {{ $labels.obj_namespace }} get replicationsources for its status."
+
         # A Longhorn volume that's lost its last good replica. Degraded (fewer
         # replicas than wanted) is normal while arda has one machine.
         - alert: LonghornVolumeFaulted

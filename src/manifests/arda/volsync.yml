@@ -20,6 +20,14 @@ spec:
     repoURL: https://backube.github.io/helm-charts
     chart: volsync
     targetRevision: 0.17.0
+    helm:
+      valuesObject:
+        # Its metrics without the auth proxy's token check: the ServiceMonitor
+        # the chart makes sends no token, so arda's Prometheus agent got 401.
+        # Volume names and sync state, in-cluster only. They feed ainur's
+        # VolumeBackupMissing alert (src/manifests/ainur/monitoring).
+        metrics:
+          disableAuth: true
   destination:
     server: https://kubernetes.default.svc
     namespace: volsync-system
