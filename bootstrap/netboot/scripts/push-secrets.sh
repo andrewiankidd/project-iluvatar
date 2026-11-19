@@ -7,14 +7,17 @@
 # Two pushers run this:
 #   full   the bootstrap VM (docker-compose.yml), with all of .env, read again
 #          every round, so a value added there reaches ainur within a minute:
-#            k3s.env    the agent token to a waiting Pi; the server token too
-#                       to the SD card Pi, which becomes the k3s server
+#            k3s.env    both k3s tokens, to the SD card Pi, which becomes the
+#                       k3s server (netbooted Pis are ainur's to push to)
 #            ainur.env  every AINUR_* value, which ainur-secrets.sh makes into
 #            arda.env   ainur's Secrets, and every ARDA_*, for arda-secrets.sh;
 #                       to the k3s server, or a Pi about to become it
 #   agent  ainur itself (src/manifests/ainur/pi-netboot/secrets-pusher.yaml),
-#          with only the agent token: a netbooted Pi forgets everything when
-#          it reboots, and has to be handed the token again every boot.
+#          with only the agent token, to netbooted Pis: one forgets
+#          everything when it reboots, and has to be handed the token again
+#          every boot. The server's own full token (K10<CA hash>::node:...),
+#          which pins the server's CA, and which the Pis' node passwords
+#          (k3s-20-install.sh) are derived from.
 #
 # The Pis are found, not listed: every host on this /24 whose SSH says
 # Ubuntu, and which takes the key. One that doesn't is left alone for an hour.
@@ -38,18 +41,20 @@ mkdir -p "$STATE/refused"
 
 log() { echo "[push-secrets] $(date -Iseconds) $*"; }
 
-# The values, fresh each round: from the .env file (the VM), or from a
-# mounted Secret, a file per value (ainur's pod), so a changed value is used
+# The values, fresh each round: from the .env file (the VM), or from mounted
+# directories of a file per value (ainur's pod), so a changed value is used
 # without a restart.
-ENV_DIR="${PUSH_ENV_DIR:-}"
+ENV_DIRS="${PUSH_ENV_DIRS:-}"
 values() {
 	if [ -n "$ENV_FILE" ]; then
 		[ -r "$ENV_FILE" ] || { log "can't read $ENV_FILE"; return 1; }
 		# shellcheck disable=SC1090
 		( set -a; . "$ENV_FILE" >/dev/null 2>&1; env ) | grep -E '^(AINUR|ARDA)_[A-Z0-9_]*=' | sort
-	elif [ -n "$ENV_DIR" ]; then
-		for f in "$ENV_DIR"/AINUR_* "$ENV_DIR"/ARDA_*; do
-			[ -f "$f" ] && printf '%s=%s\n' "${f##*/}" "$(cat "$f")"
+	else
+		for d in $ENV_DIRS; do
+			for f in "$d"/AINUR_* "$d"/ARDA_*; do
+				if [ -f "$f" ]; then printf '%s=%s\n' "${f##*/}" "$(tr -d '\n' < "$f")"; fi
+			done
 		done
 	fi
 }
@@ -68,8 +73,9 @@ while :; do
 	fi
 	printf '%s\n' "$KEY" | base64 -d > "$STATE/key" 2>/dev/null && chmod 600 "$STATE/key"
 
-	# What a waiting Pi gets: a netbooted one the agent token, the SD card Pi
-	# (the k3s server to be) the server token too, from the VM only.
+	# What a waiting Pi gets: a netbooted one the agent token, from ainur; the
+	# SD card Pi (the k3s server to be) both tokens, from the VM. Each Pi has
+	# one pusher, so they never write the same file at once.
 	agent_env="AINUR_K3S_AGENT_TOKEN=$AGENT_TOKEN"
 	server_env=""
 	ainur_env=""; arda_env=""; envsum=""
@@ -95,7 +101,7 @@ if [ -n '$envsum' ] && { [ \"\$want\" = sd ] || [ -n \"\$server\" ]; } \\
   echo 'pushed ainur.env and arda.env'
   if [ -n \"\$server\" ]; then systemctl start ainur-secrets.service arda-secrets.service && echo 'applied them'; fi
 fi
-if [ \"\$want\" = netboot ]; then
+if [ \"\$want\" = netboot ] && [ '$MODE' = agent ]; then
   echo '$(b64 "$agent_env")' | base64 -d > /run/ainur/k3s.env.new && mv /run/ainur/k3s.env.new /run/ainur/k3s.env
   rm -f /run/ainur/awaiting-push
   echo 'pushed the k3s agent token (netboot)'
