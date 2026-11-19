@@ -1116,7 +1116,10 @@ runcmd:
   - [ systemctl, daemon-reload ]
   - [ systemctl, enable, --now, ssh-prepare.service ]
   - [ systemctl, enable, --now, nvme-prepare.service ]
-  - [ systemctl, enable, --now, k3s-bootstrap.service, k3s-ready.path ]
+  # Not waiting for it: its first run waits for the k3s tokens to be pushed
+  # and fails, retrying every 10s, and a failed runcmd fails cloud-final,
+  # which drops the Pi to emergency.target (no sshd, so no push either).
+  - [ systemctl, enable, --now, --no-block, k3s-bootstrap.service, k3s-ready.path ]
 
 final_message: "Cloud-init for valar-0 complete."
 
