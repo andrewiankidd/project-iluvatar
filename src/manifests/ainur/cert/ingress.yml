@@ -11,6 +11,8 @@ metadata:
     gethomepage.dev/name: Lab CA
     gethomepage.dev/description: Trust this lab's certificates
     gethomepage.dev/icon: mdi-certificate
+    # Its pods, for the status badge (they're app: cert-download).
+    gethomepage.dev/pod-selector: app=cert-download
 spec:
   ingressClassName: traefik
   tls:

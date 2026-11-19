@@ -18,6 +18,8 @@ metadata:
     gethomepage.dev/description: The servers, and their 3D maps
     gethomepage.dev/icon: mdi-minecraft
     gethomepage.dev/href: https://minecraft.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
 spec:
   ingressClassName: traefik
   rules:
