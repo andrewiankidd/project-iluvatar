@@ -6,6 +6,9 @@ metadata:
   annotations:
     kubernetes.io/ingress.class: "traefik"
     cert-manager.io/cluster-issuer: "local-ca"
+    # On the internet through arda's tunnel (../sidero-omni/arda-tunnel-cronjob.yaml),
+    # so a Dex login works away from home.
+    kidd.network/tunnel: "true"
 spec:
   ingressClassName: traefik
   tls:

@@ -1,0 +1,24 @@
+# ainur, by name, for ainur's sites on the tunnel: the Ingresses that ainur's
+# arda-tunnel CronJob copies here, one for each ainur Ingress annotated
+# kidd.network/tunnel: "true" (src/manifests/ainur/sidero-omni/arda-tunnel-cronjob.yaml).
+# Like ainur-homepage.yaml: HTTPS to ainur's Traefik at its VIP without
+# checking ainur's certificate (arda's Traefik doesn't hold the lab CA); the
+# internet side is Cloudflare's.
+#
+# Those are sites with a Dex login of their own (Argo CD, Grafana, Headlamp),
+# and Dex itself, so the login works away from home. Dex has no rate limit or
+# second factor: on the internet, its passwords are the whole defence.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ainur
+  annotations:
+    traefik.ingress.kubernetes.io/service.serversscheme: https
+    traefik.ingress.kubernetes.io/service.serverstransport: cloudflared-ainur@kubernetescrd
+spec:
+  # On the LAN, *.kidd.network is ainur's VIP (ainur's unifi CronJob).
+  type: ExternalName
+  externalName: ainur.kidd.network
+  ports:
+    - name: https
+      port: 443

@@ -4,7 +4,7 @@ namespace: cloudflared
 resources:
   - deployment.yaml
   - ainur-homepage.yaml
-  - ainur-dex.yaml
+  - ainur.yaml
 configMapGenerator:
   # Hashed name: editing the config rolls the Deployment.
   - name: cloudflared
