@@ -21,3 +21,14 @@ providers:
 service:
   annotations:
     metallb.io/allow-shared-ip: arda
+
+# HTTPS on the LAN: a *.kidd.network certificate from the lab CA, made by
+# ainur's cert-manager and copied here as kube-system/arda-lan-tls by ainur's
+# arda-bootstrap Job (src/manifests/ainur/sidero-omni/arda-lan-certificate.yaml).
+# Devices that trust the lab CA trust arda's sites at home, as they do
+# ainur's. Until it arrives, Traefik's own self-signed one. The tunnel is
+# plain HTTP to Traefik, and Cloudflare's certificate on the internet.
+tlsStore:
+  default:
+    defaultCertificate:
+      secretName: arda-lan-tls

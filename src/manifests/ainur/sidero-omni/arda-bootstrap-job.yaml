@@ -112,6 +112,17 @@ spec:
                   --from-literal=runner-token="$ARDA_GITLAB_RUNNER_TOKEN" \
                   --from-literal=runner-registration-token=
               fi
+              # Obsidian's CouchDB and browser login (src/manifests/arda/obsidian.yml).
+              if [ -n "${ARDA_OBSIDIAN_PASSWORD:-}" ]; then
+                put obsidian obsidian --from-literal=password="$ARDA_OBSIDIAN_PASSWORD"
+              fi
+              # arda's LAN HTTPS certificate, from the lab CA (arda-lan-certificate.yaml),
+              # for arda's Traefik. Copied on every run, so renewals follow.
+              if [ -s /arda-lan-tls/tls.crt ]; then
+                kubectl -n kube-system create secret tls arda-lan-tls \
+                  --cert=/arda-lan-tls/tls.crt --key=/arda-lan-tls/tls.key \
+                  --dry-run=client -o yaml | kubectl apply -f -
+              fi
               # Every volume's backups (src/manifests/arda/kyverno-policies/volsync.yaml):
               # one restic repository per volume under volsync/ in the
               # arda-backups bucket, all with the same password.
@@ -162,6 +173,9 @@ spec:
               mountPath: /etc/omni/lab-root-ca.crt
               subPath: ca.crt
               readOnly: true
+            - name: arda-lan-tls
+              mountPath: /arda-lan-tls
+              readOnly: true
       # For the automation key on Omni's ReadWriteOnce data volume, as in
       # omni-cluster-template-sync-job.yaml.
       affinity:
@@ -182,3 +196,7 @@ spec:
         - name: lab-root-ca
           configMap:
             name: lab-ca
+        - name: arda-lan-tls
+          secret:
+            secretName: arda-lan-tls
+            optional: true

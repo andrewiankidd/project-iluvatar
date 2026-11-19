@@ -1,0 +1,47 @@
+# Obsidian on arda: a sync server for the Obsidian apps, and Obsidian itself
+# in a browser.
+#
+#   obsidian-sync.kidd.network   CouchDB, for the Self-hosted LiveSync plugin.
+#                                On the internet through the Cloudflare tunnel,
+#                                so phones sync away from home; CouchDB's own
+#                                login guards it.
+#   obsidian.kidd.network        Obsidian in a browser (linuxserver/obsidian),
+#                                on the LAN only, behind a login. Its vault
+#                                syncs through the same CouchDB.
+#
+# Reads the obsidian Secret (password), from ARDA_OBSIDIAN_PASSWORD in the
+# bootstrap VM's .env, handed out by
+# src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml. It is CouchDB's
+# admin password (user "obsidian") and the browser login's. Without it both
+# pods wait in CreateContainerConfigError.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: obsidian
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/obsidian
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: obsidian
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

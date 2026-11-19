@@ -1,0 +1,18 @@
+# arda's certificate for HTTPS on the LAN: *.kidd.network from the lab CA,
+# which arda has no cert-manager or CA key to make itself. arda-bootstrap-job
+# copies the Secret to arda (kube-system/arda-lan-tls) on each run, so a
+# renewal reaches arda within the hour; arda's Traefik serves it for every
+# host (src/manifests/arda/traefik/values.yaml).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: arda-lan
+  namespace: ainur-sidero-omni
+spec:
+  secretName: arda-lan-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: local-ca
+  dnsNames:
+    - kidd.network
+    - "*.kidd.network"
