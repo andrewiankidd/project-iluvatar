@@ -169,11 +169,11 @@ Built, on ainur (`src/manifests/ainur/monitoring*`), pinned to valar-50 with its
 - **Logs**: Loki 3.6, single binary, 14 days. Both clusters' pod logs and events through k8s-monitoring's Alloy.
 - **Grafana** at grafana.kidd.network behind Dex (a public PKCE client, no password login), on the private Homepage. Stateless: dashboards are config.
 - **Alerts** (`monitoring/lab-rules.yaml`), beside the chart's standard ones: disk I/O stalls, Omni's backup or a VolSync backup missed, a faulted Longhorn volume, arda going silent.
+- **To your phone** through ntfy (`monitoring/ntfy.yaml`) on ainur, at ntfy.kidd.network on the LAN and through arda's tunnel: warnings and critical alerts, resolved ones too, to the `lab-alerts` topic. Log in as `admin` with the Dex password. Tested end to end (2026-11-19).
 - arda pushes to `prometheus.kidd.network/api/v1/write` and `loki.kidd.network/loki/api/v1/push` (only those paths), trusting the lab CA from the `ainur-telemetry` Secret arda-bootstrap writes.
 
 Not yet:
 
-- **Alerts reach no one.** They show in Grafana and Alertmanager only. Next: ntfy on ainur, Alertmanager to it, published through the tunnel so a phone gets them away from home.
 - **A dead man's switch.** If ainur itself dies, nothing alerts. Alertmanager's `Watchdog` (always firing) to an outside check (healthchecks.io, or a second ntfy) would say so; online, but only for the alarm.
 - **UniFi's logs** (firewall, system) over syslog into Loki, and GeoIP for who hits the forwarded ports.
 - **Blackbox checks** from outside: does minecraft.kidd.network answer, does the tunnel.
