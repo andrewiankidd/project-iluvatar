@@ -71,7 +71,7 @@ spec:
             # systemExtensions in omni-config/omni-cluster-template.yaml,
             # which is what machines already installed get.
             - name: EXTENSIONS
-              value: siderolabs/i915 siderolabs/intel-ucode siderolabs/iscsi-tools siderolabs/util-linux-tools
+              value: siderolabs/intel-ucode siderolabs/iscsi-tools siderolabs/util-linux-tools
             - name: OMNICTL_URL
               value: https://github.com/siderolabs/omni/releases/download/v1.13.3/omnictl-linux-arm64
           command:

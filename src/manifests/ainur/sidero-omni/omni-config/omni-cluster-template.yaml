@@ -14,7 +14,7 @@ talos:
 #   i915                        the Intel GPU's driver and firmware, for Quick
 #                               Sync transcodes (src/manifests/arda/media)
 systemExtensions:
-  - siderolabs/i915
+  # - siderolabs/i915   (off: crashed valinor-53 two minutes into every boot, 2026-11-19)
   - siderolabs/intel-ucode
   - siderolabs/iscsi-tools
   - siderolabs/util-linux-tools
