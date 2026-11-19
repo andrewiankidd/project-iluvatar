@@ -1,0 +1,74 @@
+# gitlab-runner chart 0.94.3 on arda (../gitlab-runner.yml).
+
+gitlabUrl: https://gitlab.com/
+
+# The gitlab-runner Secret's runner-token: a glrt- runner authentication
+# token, so tags, protection and untagged jobs are set on the runner in
+# GitLab, not here. The pod registers as a new manager on each start and
+# unregisters on the way out.
+runners:
+  secret: gitlab-runner
+  executor: kubernetes
+  # Each job's pod, in this namespace. Builds keep the VM's docker:dind way:
+  #
+  #   services: [docker:dind]
+  #   variables: { DOCKER_HOST: tcp://docker:2376, DOCKER_TLS_CERTDIR: /certs,
+  #                DOCKER_TLS_VERIFY: 1, DOCKER_CERT_PATH: /certs/client }
+  #
+  # The executor names each service in the pod's hosts, so `docker` is the
+  # dind container. dind writes its client certificates to /certs/client,
+  # shared here with the job; its image layers go in /var/lib/docker, a
+  # plain directory on the node, since overlayfs can't stack on the
+  # container's own.
+  #
+  # Why privileged dind rather than rootless BuildKit or kaniko: every
+  # existing pipeline already uses docker:dind, and kaniko is archived. The
+  # cost is that a job's pod is root on the node; this namespace is the only
+  # privileged one with a reason that isn't storage or networking, and the
+  # runner only takes jobs from projects that hold its token. Rootless
+  # BuildKit (moby/buildkit:rootless, unprivileged with Talos's default
+  # seccomp off) would need every pipeline's build steps rewritten.
+  #
+  # arda is x86, so images build as linux/amd64 natively; the VM needed
+  # QEMU for that on an ARM Mac.
+  config: |
+    [[runners]]
+      [runners.kubernetes]
+        namespace = "{{ .Release.Namespace }}"
+        image = "alpine:latest"
+        privileged = true
+        poll_timeout = 600
+        # Next to Minecraft on one 16 GB machine: a job reserves a little,
+        # may use a lot, and is the first thing evicted when memory runs out.
+        cpu_request = "500m"
+        memory_request = "1Gi"
+        memory_limit = "4Gi"
+        service_cpu_request = "250m"
+        service_memory_request = "256Mi"
+        service_memory_limit = "2Gi"
+        helper_memory_request = "64Mi"
+        helper_memory_limit = "256Mi"
+        memory_limit_overwrite_max_allowed = "8Gi"
+        [runners.kubernetes.node_selector]
+          "kubernetes.io/arch" = "amd64"
+        [[runners.kubernetes.volumes.empty_dir]]
+          name = "docker-certs"
+          mount_path = "/certs/client"
+          medium = "Memory"
+        [[runners.kubernetes.volumes.empty_dir]]
+          name = "docker-data"
+          mount_path = "/var/lib/docker"
+
+# Two jobs at a time: the VM's autoscaler allowed one per 2 GB of spare RAM,
+# and arda has about 5 GB to spare beside its games.
+concurrent: 2
+
+rbac:
+  create: true
+serviceAccount:
+  create: true
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi

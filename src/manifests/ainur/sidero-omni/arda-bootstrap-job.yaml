@@ -105,6 +105,13 @@ spec:
                 fi
                 put dragonwilds dragonwilds "$@"
               fi
+              # The GitLab runner (src/manifests/arda/gitlab-runner.yml): a glrt-
+              # runner authentication token; the chart wants both keys.
+              if [ -n "${ARDA_GITLAB_RUNNER_TOKEN:-}" ]; then
+                put gitlab-runner gitlab-runner \
+                  --from-literal=runner-token="$ARDA_GITLAB_RUNNER_TOKEN" \
+                  --from-literal=runner-registration-token=
+              fi
               # Every volume's backups (src/manifests/arda/kyverno-policies/volsync.yaml):
               # one restic repository per volume under volsync/ in the
               # arda-backups bucket, all with the same password.
