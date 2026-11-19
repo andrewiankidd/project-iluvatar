@@ -35,11 +35,18 @@ spec:
             # Paperless's own user, so nothing it writes is root's.
             runAsUser: 1000
             runAsGroup: 1000
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: setup
               image: ghcr.io/paperless-ngx/paperless-ngx:3.5.1
               command: ["python3", "/setup/setup.py"]
               workingDir: /usr/src/paperless/src
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
               env:
                 - name: PAPERLESS_DBENGINE
                   value: sqlite
