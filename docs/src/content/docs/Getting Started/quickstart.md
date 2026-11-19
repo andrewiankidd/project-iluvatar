@@ -7,7 +7,7 @@ sidebar:
 draft: false
 ---
 
-> tl;dr - clone, fill in `.env`, start the bootstrap VM, boot the Pis, then boot the x86 machines from the USB stick ainur builds for you.
+> tl;dr - clone, fill in `.env`, start the bootstrap VM, netboot the Pis, then network-boot the x86 machines from ainur. Both clusters can also start from an SD card or USB stick, but netboot is the default.
 
 The examples use `example.com`. This repo uses `kidd.network`; swap in your own domain. Don't own one? Your router's local DNS can make one up for the LAN (see [Network](#network)).
 
@@ -17,7 +17,7 @@ The examples use `example.com`. This repo uses `kidd.network`; swap in your own 
     ```bash
     git clone https://github.com/andrewiankidd/project-iluvatar.git
     ```
-2. Copy `bootstrap/netboot/.env.example` to `bootstrap/netboot/.env` and fill it in. Every setting is explained in the [.env reference](/project-iluvatar/reference/env/).
+2. Copy `bootstrap/netboot/.env.example` to `bootstrap/netboot/.env` and fill it in. Every setting is explained in the [.env reference](/project-iluvatar/reference/env/). Leave `AINUR_LAB_CA_CRT` and `AINUR_LAB_CA_KEY` empty the first time: ainur makes the lab CA, and you copy it in once it's up, so every rebuild after keeps it.
 3. Start the bootstrap VM, which builds the Pi image and serves it:
     ```bash
     ./bootstrap/netboot/vm/start.sh
@@ -35,11 +35,11 @@ On UniFi, put an API key in `.env` (`ARDA_UNIFI_API_KEY`, see the [.env referenc
 
 On another router, set those yourself: option 66 to ainur's VIP once ainur is up, and the two DNS records.
 
-### If the Pis boot from the network
+### Netboot (recommended)
 
-- Set each Pi's bootloader to try the network: [Preparing Pi For Netboot](/project-iluvatar/guides/netbooting-raspberry-pi/pi-prep/).
+- Set each Pi's bootloader to try the network: [Preparing Pi For Netboot](/project-iluvatar/guides/netbooting-raspberry-pi/pi-prep/). The VM serves the image over TFTP, NFS and HTTP; once ainur is up, ainur serves it itself.
 
-### If a Pi boots from an SD card
+### Or an SD card
 
 One Pi can run from an SD card, so ainur can come up with nothing else on the network. Either:
 
@@ -71,10 +71,11 @@ More: [Bootstrap Ainur](/project-iluvatar/getting-started/bootstrap-ainur/), [Di
 Omni runs on ainur and manages the x86 Talos cluster, `talos-default`.
 
 1. **Log in** at `https://omni.example.com` with Dex.
-2. **Get the USB image** from `http://bootstrap.example.com/talos-media/metal-amd64.iso`. ainur builds it for you, with the lab CA and Omni's join settings already inside. Don't use Omni's own *Download Installation Media*: its image lacks the lab CA.
-3. **Write it to a USB stick** (Rufus or balenaEtcher).
-4. **On the machine**: Secure Boot off, USB first in the boot order. Boot it; no screen needed. If it has had anything else installed (an older Talos, Windows), pick **Reset system disk** at the stick's boot menu first; see [Re-bootstrapping Arda](/project-iluvatar/getting-started/rebootstrap-arda/).
-5. **It joins Omni** and shows under *Machines*. The cluster template makes the first one the control plane and the rest workers. Omni installs Talos to the NVMe and reboots it; if it boots the stick again, put the NVMe first or pull the stick.
-6. **arda bootstraps itself**: once `talos-default` is up, a Job on ainur installs Argo CD there and points it at `src/manifests/arda`, handing each app its `ARDA_*` secret from `.env`.
+2. **On the machine's firmware**: UEFI boot, Secure Boot off, and the network card's UEFI driver loaded so a UEFI **IPv4** network entry appears. On an HP that's four settings: [UEFI vs Legacy Boot](/project-iluvatar/guides/netbooting-x86/uefi-vs-legacy-boot/).
+3. **Network-boot it**: the one-time boot menu (F9 on an HP), then the **IPv4** network entry. ainur's iPXE menu boots **Talos** after ten seconds. A machine that has had anything else installed (another OS, or a Talos from before ainur was rebuilt) needs **Reset system disk** from that menu instead; see [Re-bootstrapping Arda](/project-iluvatar/getting-started/rebootstrap-arda/).
+4. **It joins Omni** and shows under *Machines*. The cluster template makes the first one the control plane and the rest workers. Omni installs Talos to the NVMe and reboots it from there.
+5. **arda bootstraps itself**: once `talos-default` is up, a Job on ainur installs Argo CD there and points it at `src/manifests/arda`, handing each app its `ARDA_*` secret from `.env`.
 
-Booting the x86 machines over the network instead is covered in [Netbooting x86](/project-iluvatar/guides/netbooting-x86/).
+**Or a USB stick**, for a machine that can't network-boot: ainur serves the same image as `http://bootstrap.example.com/talos-media/metal-amd64.iso`, with the lab CA and Omni's join settings inside (Omni's own *Download Installation Media* lacks the lab CA). Write it with Rufus or balenaEtcher and boot from it; once the machine has joined, pull the stick or put the NVMe first.
+
+More: [Bootstrapping Arda](/project-iluvatar/getting-started/bootstrap-arda/), [Netbooting x86](/project-iluvatar/guides/netbooting-x86/).
