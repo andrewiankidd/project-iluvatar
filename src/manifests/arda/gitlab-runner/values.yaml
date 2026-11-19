@@ -33,6 +33,8 @@ runners:
   # QEMU for that on an ARM Mac.
   config: |
     [[runners]]
+      # More than one poll open at once, or a job waits out the last one.
+      request_concurrency = 2
       [runners.kubernetes]
         namespace = "{{ .Release.Namespace }}"
         image = "alpine:latest"

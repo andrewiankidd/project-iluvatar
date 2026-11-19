@@ -104,7 +104,7 @@ Considered and set aside:
 - The `ARDA_*` values in the gitignored `bootstrap/netboot/.env` (see `.env.example`) → `pi-netboot-builder.sh` serves them at `/secrets/arda.env` → `arda-secrets.sh` in user-data makes ainur's `arda-secrets` Secret once k3s is ready → `arda-bootstrap-job.yaml` hands each arda app its Secret, hourly.
 - Not SOPS or Sealed Secrets: both mean encrypting by hand.
 - **Trade-off**: `/secrets/arda.env` is readable by anyone on the LAN while the bootstrap VM runs, as the k3s agent token already is. Fine under LAN trust.
-- **Watch**: a value changed in `.env` only reaches the clusters on the next bootstrap from the VM.
+- **Watch**: a value changed in `.env` only reaches the clusters on the next bootstrap from the VM. Worse, while the VM runs it keeps serving the `arda.env` it wrote at start, and ainur's 10-minute timer replaces `arda-secrets` with it, dropping a value added since. On 2026-11-19 (`ARDA_GITLAB_RUNNER_TOKEN`) that meant re-running the builder's secrets step in the VM by hand. The builder should re-write `/secrets/*.env` whenever `.env` changes, not only on a full build.
 
 ### arda storage
 
@@ -122,6 +122,14 @@ Considered and set aside:
 ### Off the stopgap
 
 - `arda-local` runs Minecraft and Dragonwilds on a workstation until arda is up. It reads the same `ARDA_*` names from its own `.env`, so the lines are shared. Moving them means restoring each world into its Longhorn volume on arda, then retiring the stopgap. Never run both: they share the tunnel and the DNS records.
+
+### CI runner (built 2026-11-19)
+
+- `src/manifests/arda/gitlab-runner.yml`: the official chart, Kubernetes executor, `concurrent: 2`, registered with the Multipass VM runner's own `glrt-` token (`ARDA_GITLAB_RUNNER_TOKEN`). One runner in GitLab, two managers, so retiring the VM is switching it off; its repo needs nothing else.
+- **Retire the VM** once a real pipeline has run on arda: until then, jobs go to whichever manager asks first.
+- **Trade-off**: privileged `docker:dind` job pods, kept because every pipeline already uses it. A job is root on valinor-53, next to the games, and runs whatever any project holding the token pushes. Rootless BuildKit (or `docker buildx` with a remote rootless buildkitd in the namespace) would end that, at the cost of rewriting each pipeline's build steps.
+- **No build cache**: each job's image layers are an emptyDir, gone when it ends. The chart can use an S3 cache; an R2 bucket would do.
+- Jobs reserve 1 GiB and may use 4 GiB on a 16 GB machine Minecraft mostly fills; two Cypress jobs at once can push the games' pods towards eviction. Watch it in Goldilocks.
 
 ### More workloads
 
