@@ -6,9 +6,8 @@
 # /data/media/movies (Movies). It reads the same volume as everything else
 # (storage.yaml).
 #
-# Transcoding is on the CPU for now. arda's Intel GPU has no driver loaded:
-# Talos needs the siderolabs/i915 extension in arda's schematic, and the pod
-# then needs /dev/dri (BACKLOG.md, "Media").
+# Transcoding is on the CPU: the Intel GPU needs the siderolabs/i915 Talos
+# extension, rolled back after it crashed valinor-53 (BACKLOG.md, "Media").
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

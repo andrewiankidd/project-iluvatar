@@ -9,7 +9,7 @@
 #   bazarr.kidd.network       subtitles   │ their own login turned off
 #   qbittorrent.kidd.network  downloads   ┘ (only out through Mullvad, via gluetun)
 #   jellyfin.kidd.network     playback, its own users
-#   plex.kidd.network         playback, Plex accounts (held at 0 replicas: memory)
+#   plex.kidd.network         playback, Plex accounts
 #
 # All on the LAN only, none on the tunnel. Every app mounts one volume, media,
 # at /data, laid out as TRaSH's guides have it (media/storage.yaml), so an
