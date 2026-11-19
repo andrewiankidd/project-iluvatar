@@ -1,0 +1,62 @@
+# The media stack on arda: films and series are asked for, found, fetched over
+# a VPN, renamed into a library, given subtitles, and played.
+#
+#   seerr.kidd.network        Seerr: requests (Overseerr and Jellyseerr merged
+#                             into it), its own login via Jellyfin/Plex users
+#   prowlarr.kidd.network     indexers, pushed to Sonarr and Radarr
+#   sonarr.kidd.network       series      ┐
+#   radarr.kidd.network       films       ├ behind the Dex login (oauth2-proxy.yml),
+#   bazarr.kidd.network       subtitles   │ their own login turned off
+#   qbittorrent.kidd.network  downloads   ┘ (only out through Mullvad, via gluetun)
+#   jellyfin.kidd.network     playback, its own users
+#   plex.kidd.network         playback, Plex accounts (held at 0 replicas: memory)
+#
+# All on the LAN only, none on the tunnel. Every app mounts one volume, media,
+# at /data, laid out as TRaSH's guides have it (media/storage.yaml), so an
+# import is a hardlink, not a copy.
+#
+# Indexers and download sources are left empty on purpose: those are chosen
+# in Prowlarr's UI. How the apps find each other is in media/wiring.yaml.
+#
+# Reads from ainur's arda-bootstrap Job
+# (src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml):
+#   media    the apps' API keys, derived from ARDA_MEDIA_API_SECRET
+#   mullvad  ARDA_MULLVAD_PRIVATE_KEY and ARDA_MULLVAD_ADDRESSES, gluetun's
+#            WireGuard login; until they're set qBittorrent never starts
+#            (CreateContainerConfigError), so it never runs outside the VPN
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: media
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/media
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: media
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # gluetun needs NET_ADMIN and /dev/net/tun to build qBittorrent's tunnel
+    # and firewall, which Talos's baseline Pod Security refuses.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,0 +1,144 @@
+# Plex: plays the same library as Jellyfin, at plex.kidd.network and
+# directly at 192.168.1.58:32400 (Plex's apps on the LAN connect straight to
+# the server), LAN only. Plex accounts, not Dex.
+#
+# HELD AT 0 REPLICAS: arda's one node hasn't the memory for Plex beside
+# Jellyfin and everything else (BACKLOG.md, "Media"). It waits for the second
+# ProDesk; set replicas: 1 then.
+#
+# Claiming (tying the server to a Plex account) happens on its first start
+# only, with a claim token from https://plex.tv/claim. The token lasts four
+# minutes, far shorter than a trip through .env and the bootstrap VM, so it
+# isn't an ARDA_* value: when Plex is turned on, get a token and hand it to
+# whoever is deploying, who puts it straight into the plex Secret
+# (kubectl -n media create secret generic plex --from-literal=claim=claim-...)
+# and starts Plex within the four minutes. After that the claim lives in
+# plex-config (backed up), and the Secret can go.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: plex-config
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi   # metadata and artwork grow with the library
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plex
+  labels:
+    app: plex
+spec:
+  replicas: 0   # memory: see above
+  strategy:
+    type: Recreate   # one writer per volume
+  selector:
+    matchLabels:
+      app: plex
+  template:
+    metadata:
+      labels:
+        app: plex
+    spec:
+      containers:
+        - name: plex
+          image: plexinc/pms-docker:1.43.5.11079-b3b13e506
+          env:
+            - { name: TZ, value: Europe/London }
+            - { name: PLEX_UID, value: "1000" }
+            - { name: PLEX_GID, value: "1000" }
+            - name: ADVERTISE_IP
+              value: https://plex.kidd.network:443,http://192.168.1.58:32400
+            - name: PLEX_CLAIM
+              valueFrom: { secretKeyRef: { name: plex, key: claim, optional: true } }
+          ports:
+            - name: http
+              containerPort: 32400
+          readinessProbe:
+            httpGet:
+              path: /identity
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: transcode
+              mountPath: /transcode
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 50m, memory: 384Mi }
+            limits: { memory: 2Gi }   # a CPU transcode's buffers
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: plex-config
+        - name: transcode
+          emptyDir:
+            sizeLimit: 20Gi
+        - name: data
+          persistentVolumeClaim:
+            claimName: media
+---
+# For the web and for Seerr.
+apiVersion: v1
+kind: Service
+metadata:
+  name: plex
+spec:
+  selector:
+    app: plex
+  ports:
+    - name: http
+      port: 32400
+      targetPort: http
+---
+# Plex's apps on the LAN, straight to the server. Not port-forwarded: LAN only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: plex-lan
+  annotations:
+    # 192.168.1.58, shared with arda's other LAN services (../metallb/pool.yaml).
+    metallb.io/allow-shared-ip: arda
+spec:
+  type: LoadBalancer
+  selector:
+    app: plex
+  ports:
+    - name: http
+      port: 32400
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: plex
+  annotations:
+    # LAN only. Plex accounts.
+    # Off the private Homepage while Plex is held at 0; "true" with replicas: 1.
+    gethomepage.dev/enabled: "false"
+    gethomepage.dev/instance: private
+    gethomepage.dev/group: Media
+    gethomepage.dev/name: Plex
+    gethomepage.dev/description: Watch (Plex accounts)
+    gethomepage.dev/icon: plex.png
+    gethomepage.dev/href: https://plex.kidd.network/web
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: plex.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: plex
+                port:
+                  name: http

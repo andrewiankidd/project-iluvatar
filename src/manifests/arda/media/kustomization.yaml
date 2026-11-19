@@ -1,0 +1,19 @@
+# The media app (../media.yml).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: media
+resources:
+  - storage.yaml
+  - prowlarr.yaml
+  - sonarr.yaml
+  - radarr.yaml
+  - bazarr.yaml
+  - qbittorrent.yaml
+  - seerr.yaml
+  - jellyfin.yaml
+  - plex.yaml
+  - wiring.yaml
+configMapGenerator:
+  - name: wiring
+    files:
+      - wiring.mjs

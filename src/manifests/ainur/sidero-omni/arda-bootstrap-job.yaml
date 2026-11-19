@@ -155,6 +155,27 @@ spec:
               if [ -n "${ARDA_OBSIDIAN_PASSWORD:-}" ]; then
                 put obsidian obsidian --from-literal=password="$ARDA_OBSIDIAN_PASSWORD"
               fi
+              # The media apps' API keys (src/manifests/arda/media.yml): one per
+              # app, derived from one secret, so the apps and the wiring Job
+              # agree on them without a value per app in .env.
+              if [ -n "${ARDA_MEDIA_API_SECRET:-}" ]; then
+                set --
+                for app in sonarr radarr prowlarr bazarr seerr; do
+                  set -- "$@" --from-literal="$app-api-key=$(printf '%s' "$ARDA_MEDIA_API_SECRET:$app" | sha256sum | cut -c1-32)"
+                done
+                put media media "$@"
+              fi
+              # qBittorrent's VPN (src/manifests/arda/media/qbittorrent.yaml):
+              # a Mullvad WireGuard key and its address. Without them
+              # qBittorrent never starts.
+              if [ -n "${ARDA_MULLVAD_PRIVATE_KEY:-}" ] && [ -n "${ARDA_MULLVAD_ADDRESSES:-}" ]; then
+                set -- --from-literal=private-key="$ARDA_MULLVAD_PRIVATE_KEY" \
+                  --from-literal=addresses="$ARDA_MULLVAD_ADDRESSES"
+                if [ -n "${ARDA_MULLVAD_COUNTRY:-}" ]; then
+                  set -- "$@" --from-literal=country="$ARDA_MULLVAD_COUNTRY"
+                fi
+                put media mullvad "$@"
+              fi
               # arda's LAN HTTPS certificate, from the lab CA (arda-lan-certificate.yaml),
               # for arda's Traefik. Copied on every run, so renewals follow.
               if [ -s /arda-lan-tls/tls.crt ]; then
