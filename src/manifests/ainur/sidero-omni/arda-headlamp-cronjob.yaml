@@ -102,11 +102,12 @@ spec:
                     --certificate-authority=/etc/omni/lab-root-ca.crt --embed-certs >/dev/null
                   kubectl --kubeconfig /tmp/arda get --raw /version >/dev/null
 
-                  kubectl -n $NS create secret generic arda-kubeconfig --from-file=config=/tmp/arda \
-                    --dry-run=client -o yaml \
-                    | kubectl annotate --local -f - -o yaml \
-                        kidd.network/made="$(date +%s)" kidd.network/groups="$ARDA_GROUPS" \
-                    | kubectl apply -f -
+                  # Replaced, not applied: kubectl apply would keep a second
+                  # copy of the kubeconfig in its last-applied annotation.
+                  kubectl -n $NS delete secret arda-kubeconfig --ignore-not-found
+                  kubectl -n $NS create secret generic arda-kubeconfig --from-file=config=/tmp/arda
+                  kubectl -n $NS annotate secret arda-kubeconfig \
+                    kidd.network/made="$(date +%s)" kidd.network/groups="$ARDA_GROUPS"
                   kubectl -n $NS rollout restart deploy/headlamp
                   echo "arda-kubeconfig made for groups $ARDA_GROUPS; Headlamp restarted"
               volumeMounts:
