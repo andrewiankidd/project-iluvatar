@@ -50,5 +50,5 @@ If a machine can't network boot, the same reset is on the Talos ISO's boot menu 
 ## Keeping it rare
 
 - **ainur's lab CA comes from `.env`** (`AINUR_LAB_CA_CRT`, `AINUR_LAB_CA_KEY`), so a rebuilt ainur keeps the CA every machine already trusts. Leave them empty and every rebuild makes a new CA, and every arda machine needs the reset above.
-- **Omni's own state doesn't survive a rebuild yet**, so a rebuilt ainur still means resetting arda's machines. Keeping Omni's data across rebuilds is on the backlog.
+- **Omni's data survives a rebuild**: it's kept at a fixed path on valar-50's NVMe, and backed up to R2 every night for when the NVMe itself is new. A rebuilt ainur comes back with the same Omni, which still knows every machine, so none of them need the reset above.
 - **Start a machine from a blank disk**, or from one this Omni installed, and none of this comes up.

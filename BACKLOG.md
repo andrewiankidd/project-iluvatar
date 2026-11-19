@@ -71,7 +71,7 @@ What changed:
 A re-bootstrap still starts every cluster from an empty datastore, but each volume worth keeping is backed up to R2 nightly by VolSync (restic, from a Longhorn snapshot) and created *from* its latest backup: the PVC's `dataSourceRef` names a ReplicationDestination, so it waits, Pending, until its data is back, and a brand-new one starts empty.
 
 - **arda: every Longhorn volume**, chart-made ones included, wired by a Kyverno policy (`src/manifests/arda/kyverno-policies/volsync.yaml`). Tested end to end: write, back up, delete, recreate, same data back. Longhorn's own R2 backups are gone.
-- **ainur: nothing, for now.** Omni's volumes were backed up the same way until 2026-11-18, when ainur dropped Longhorn (below) and VolSync with it. A rebuilt ainur starts Omni empty, and arda's machines re-register.
+- **ainur: Omni's data and its GPG key** (2026-11-19). They live at fixed paths on valar-50's NVMe (StorageClass `local-path-kept`, `<namespace>/<claim>/data`, kept when the claim goes), so a re-flashed valar-50 finds them. The `omni-backup` CronJob stops Omni at 03:30 (its embedded etcd has no client port to snapshot through; about 13 s down) and restic-backs-up both to `arda-backups/omni` in R2; the `omni-restore` Job puts them back when the folder is empty, before the GPG Job and Omni. Tested: data moved aside and the Secret deleted, restored from R2, and the same Omni came back with its cluster and machine. Everything else on ainur rebuilds from Git and `.env`.
 - **The GPG key is restored, not regenerated**: `gpg-generator.yaml` now uses the saved key when there is one.
 - **Netbooted Pis keep their node password**: derived from the agent token and hostname, so they rejoin after a reboot without anything stored.
 - **ainur's k3s uses SQLite**, not etcd. It has one server (the netbooted Pis can't hold a datastore), and etcd's constant small writes on the SD card stalled the API whenever the card was busy. With nothing on ainur worth restoring, there's no datastore snapshot to keep.
@@ -81,7 +81,8 @@ A re-bootstrap still starts every cluster from an empty datastore, but each volu
 
 Open:
 
-- **Omni's state on a rebuild.** local-path names each volume's directory after its PVC's UID, so a rebuilt cluster makes new, empty ones and leaves the old directories on the NVMe. A static PV at a fixed path (or VolSync back, to R2 or a LAN S3) would carry Omni over; the old directories need clearing either way.
+- **The netboot volumes on a rebuild** still use plain local-path, so a rebuilt ainur makes new folders and leaves the old `pvc-*` ones on valar-50's NVMe. They rebuild from Git, so nothing is lost, but the old folders want clearing.
+- **An offline restore.** `omni-restore` fails rather than start Omni empty if R2 can't be reached, so a new NVMe with no internet leaves Omni waiting. A LAN S3 target would cover it.
 - **The lab CA survives a rebuild now** (2026-11-18): `AINUR_LAB_CA_CRT`/`AINUR_LAB_CA_KEY` in `.env`, used by `gen-lab-certs.sh`. Until then every rebuild made a new CA on valar-50's SD card, and every arda machine (and device) stopped trusting Omni.
 - **valar-51/52's NVMe** sit unused, and valar-50's still holds Longhorn's old replicas under `/var/mnt/nvme`.
 - Rebuilding the control plane still takes the VIP down while it netboots, so that re-flash needs the bootstrap VM serving netboot (`rebootstrap.sh` now points DHCP option 66 at it and ainur's `unifi` CronJob points it back).
