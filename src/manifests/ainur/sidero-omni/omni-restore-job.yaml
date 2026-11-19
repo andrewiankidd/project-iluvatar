@@ -1,0 +1,85 @@
+# Puts Omni's data back from R2 when its folder is empty: a new NVMe, or a
+# new valar-50. A rebuilt ainur on the same NVMe finds the data already
+# there (storageclass.yaml), and this does nothing.
+#
+# Wave -3, before omni-gpg-init (-2) and Omni (0), so the GPG key it
+# restores is the one the gpg Job turns into the omni-gpg Secret.
+#
+# With no backup settings in .env, or no backup yet, Omni starts empty. If
+# the backups can't be reached, it fails instead, and Omni waits: starting
+# empty would only look like a working Omni with none of its machines.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: omni-restore
+  namespace: ainur-sidero-omni
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+    # A changed Job spec cannot be patched; recreate it instead.
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: Never
+      # valar-50, where the volumes live.
+      nodeSelector:
+        kidd.network/role: control-plane
+      containers:
+        - name: restore
+          image: alpine/kubectl:1.37.1
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              if [ -d /backup/omni/etcd ]; then
+                echo "Omni's data is here already; nothing to restore"
+                exit 0
+              fi
+              s() { cat "/arda-secrets/$1" 2>/dev/null || true; }
+              export AWS_ACCESS_KEY_ID="$(s ARDA_BACKUP_ACCESS_KEY_ID)"
+              export AWS_SECRET_ACCESS_KEY="$(s ARDA_BACKUP_SECRET_ACCESS_KEY)"
+              export RESTIC_PASSWORD="$(s ARDA_VOLSYNC_PASSWORD)"
+              endpoint="$(s ARDA_BACKUP_ENDPOINT)"
+              if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$RESTIC_PASSWORD" ] || [ -z "$endpoint" ]; then
+                echo "no ARDA_BACKUP_* settings; Omni starts empty"
+                exit 0
+              fi
+              export RESTIC_REPOSITORY="s3:$endpoint/arda-backups/omni"
+              apk add -q --no-cache restic
+              rc=0; restic cat config >/dev/null 2>&1 || rc=$?
+              if [ "$rc" = 10 ]; then
+                echo "no backups yet; Omni starts empty"
+                exit 0
+              elif [ "$rc" != 0 ]; then
+                echo "can't read the backups at $RESTIC_REPOSITORY (restic exit $rc); not starting Omni empty"
+                exit 1
+              fi
+              if [ "$(restic snapshots --host omni --json --latest 1)" = "[]" ]; then
+                echo "no backups yet; Omni starts empty"
+                exit 0
+              fi
+              restic snapshots --host omni --latest 1
+              restic restore latest --host omni --target /
+              ls -la /backup/omni /backup/gpg
+          volumeMounts:
+            - name: omni
+              mountPath: /backup/omni
+            - name: gpg
+              mountPath: /backup/gpg
+            - name: arda-secrets
+              mountPath: /arda-secrets
+              readOnly: true
+      volumes:
+        - name: omni
+          persistentVolumeClaim:
+            claimName: omni
+        - name: gpg
+          persistentVolumeClaim:
+            claimName: omni-gpg-backup
+        # Not optional: on a fresh ainur, wait for arda-secrets.sh rather
+        # than decide there are no backups.
+        - name: arda-secrets
+          secret:
+            secretName: arda-secrets

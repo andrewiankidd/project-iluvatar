@@ -1,0 +1,16 @@
+# local-path, but each volume's folder is named after its claim
+# (<namespace>/<claim>) rather than a fresh UID, and kept when the claim
+# goes. So a rebuilt ainur (re-flashed SD card, same NVMe) finds Omni's data
+# where it left it: /var/mnt/nvme/local-path/ainur-sidero-omni/omni.
+# For volumes that have to outlive the cluster; the rest use local-path.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-path-kept
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+provisioner: rancher.io/local-path
+parameters:
+  pathPattern: "{{ .PVC.Namespace }}/{{ .PVC.Name }}"
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer

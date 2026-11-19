@@ -29,9 +29,18 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: ainur-sidero-omni
+  # The nightly backup stops Omni (sidero-omni/omni-backup-cronjob.yaml);
+  # without this, self-heal would start it again mid-backup.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: omni
+      jsonPointers:
+        - /spec/replicas
   syncPolicy:
     syncOptions:
       - CreateNamespace=true
+      - RespectIgnoreDifferences=true
     managedNamespaceMetadata:
       labels:
         ainur.kidd.network/ca: inject

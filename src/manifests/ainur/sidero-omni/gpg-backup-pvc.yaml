@@ -1,19 +1,21 @@
-# Wave -2, with omni-gpg-init, its only user: local-path makes a volume
-# only once a pod using it is scheduled (omni-pvc.yaml).
+# The GPG key Omni's data is encrypted with, kept beside that data at a
+# fixed path (storageclass.yaml) and in the same nightly backup: the data is
+# unreadable without it.
+# Wave -3, with omni-restore, which binds it (omni-pvc.yaml).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: omni-gpg-backup
   namespace: ainur-sidero-omni
   annotations:
-    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-wave: "-3"
   labels:
     ainur.kidd.network/workload: sidero-omni
     ainur.kidd.network/volume: gpg-backup
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: local-path
+  storageClassName: local-path-kept
   resources:
     requests:
       storage: 16Mi
