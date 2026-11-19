@@ -1,10 +1,9 @@
-# Gives arda (the talos-default cluster) its own Argo CD and points it at
-# src/manifests/arda, the way k3s's HelmCharts do for ainur, then hands each
-# arda app its Secret from ainur's arda-secrets (the ARDA_* values in the
-# bootstrap VM's .env; see bootstrap/netboot/.env.example).
+# Pushes arda app Secrets to arda (the talos-default cluster) so that
+# src/manifests/arda Argo CD Applications (managed by ainur's Argo CD) can
+# reference them.
 #
-# Waits until the cluster is up, however long that takes. Argo CD re-creates
-# the Job after ttlSecondsAfterFinished; re-running it is harmless.
+# Waits until the cluster is up, however long that takes. Re-running it is
+# harmless — each Secret is applied idempotently.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -26,8 +25,6 @@ spec:
               value: https://omni.kidd.network
             - name: CLUSTER
               value: talos-default
-            - name: ARGOCD_INSTALL_URL
-              value: https://raw.githubusercontent.com/argoproj/argo-cd/v3.6.1/manifests/install.yaml
             - name: OMNICTL_URL
               value: https://github.com/siderolabs/omni/releases/download/v1.13.3/omnictl-linux-arm64
             # Dex's client secret, for arda's oauth2-proxy (Dex's "arda" client).
@@ -69,19 +66,8 @@ spec:
                 echo "waiting for $CLUSTER"; sleep 60
               done
 
-              kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
-              kubectl apply -n argocd --server-side --force-conflicts -f "$ARGOCD_INSTALL_URL"
-              kubectl wait --for condition=established --timeout=120s \
-                crd/applications.argoproj.io
-
-              # An Application's health is its apps' health, so arda's sync
-              # waves wait for each wave to be Healthy: Longhorn, snapshots,
-              # VolSync and Kyverno's policies before anything with a volume,
-              # or that volume wouldn't restore (src/manifests/arda/kyverno-policies.yml).
-              kubectl -n argocd patch configmap argocd-cm --type merge -p '{"data":{"resource.customizations.health.argoproj.io_Application":"hs = {}\nhs.status = \"Progressing\"\nhs.message = \"\"\nif obj.status ~= nil and obj.status.health ~= nil then\n  hs.status = obj.status.health.status\n  if obj.status.health.message ~= nil then\n    hs.message = obj.status.health.message\n  end\nend\nreturn hs\n"}}'
-
-              # Each app's Secret, from whichever ARDA_* values are set, before
-              # the apps: VolSync's above all, which a volume needs as it's made.
+              # Each app's Secret, from whichever ARDA_* values are set —
+              # ainur's Argo CD syncs src/manifests/arda and references these.
               put() {
                 ns=$1; name=$2; shift 2
                 kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
@@ -194,35 +180,7 @@ spec:
                   --from-literal=RESTIC_REPOSITORY_BASE="s3:${ARDA_BACKUP_ENDPOINT:-}/arda-backups/volsync"
               fi
 
-              kubectl apply -f - <<EOF
-              apiVersion: argoproj.io/v1alpha1
-              kind: Application
-              metadata:
-                name: arda
-                namespace: argocd
-              spec:
-                project: default
-                source:
-                  repoURL: https://github.com/andrewiankidd/project-iluvatar.git
-                  targetRevision: main
-                  path: src/manifests/arda
-                destination:
-                  server: https://kubernetes.default.svc
-                  namespace: argocd
-                syncPolicy:
-                  # Keep retrying a failed sync: a fresh cluster has to come up on
-                  # its own, and most failures are ordering (a CRD, webhook or
-                  # Secret not there yet) that resolves itself.
-                  retry:
-                    limit: -1
-                    backoff:
-                      duration: 30s
-                      factor: 2
-                      maxDuration: 10m
-                  automated:
-                    prune: true
-                    selfHeal: true
-              EOF
+              echo "[arda-bootstrap] secrets pushed; arda workloads are managed by ainur's Argo CD"
           volumeMounts:
             - name: tools
               mountPath: /tools

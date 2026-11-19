@@ -1,0 +1,47 @@
+# Arda workloads — managed by ainur's Argo CD.
+#
+# arda's Kubernetes API is proxied through Omni at
+# https://omni.kubernetes.kidd.network. This Application points Argo CD at
+# that endpoint and syncs src/manifests/arda, the way the ainur app-of-apps
+# handles src/manifests/ainur.
+#
+# The secrets that each arda app needs (cloudflare, minecraft, volsync, etc.)
+# are created on arda by the arda-bootstrap Job (aina-bootstrap-job.yaml).
+# Argo CD syncs the Application manifests that reference them.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: arda
+  namespace: ainur
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: ainur
+  sources:
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      path: src/manifests/arda
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://omni.kubernetes.kidd.network
+    namespace: argocd
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true
