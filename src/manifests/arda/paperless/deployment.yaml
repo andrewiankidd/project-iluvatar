@@ -174,16 +174,23 @@ spec:
             - name: ca
               mountPath: /ca
               readOnly: true
-          # The first start runs the database migrations: give it time.
+          # The first start runs the database migrations: give it time. By
+          # name: Django refuses a request for the pod's own address.
           startupProbe:
             httpGet:
               path: /accounts/login/
+              httpHeaders:
+                - name: Host
+                  value: paperless.kidd.network
               port: http
             periodSeconds: 10
             failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /accounts/login/
+              httpHeaders:
+                - name: Host
+                  value: paperless.kidd.network
               port: http
           resources:
             requests: { cpu: 100m, memory: 640Mi }
