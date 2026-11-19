@@ -510,7 +510,7 @@ write_files:
       # shellcheck disable=SC1091
       . /run/ainur/k3s.env
       : "${K3S_TOKEN:=${AINUR_K3S_TOKEN:-}}"
-      : "${K3S_AGENT_TOKEN:=${AINUR_K3S_AGENT_TOKEN}}"
+      : "${K3S_AGENT_TOKEN:=${AINUR_K3S_AGENT_TOKEN:-}}"
       # Base args kept minimal; netboot overlays (if any) appended below
       K3S_COMMON_ARGS=""
       # One server, so k3s's default SQLite datastore, not etcd (--cluster-init,
