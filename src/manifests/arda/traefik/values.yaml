@@ -11,6 +11,9 @@ providers:
   kubernetesIngress:
     publishedService:
       enabled: true
+    # For an Ingress that sends a host on to ainur by name
+    # (../cloudflared/ainur-homepage.yaml).
+    allowExternalNameServices: true
 
 # On arda's shared 192.168.1.58 (../metallb), so the sites also answer on the
 # LAN (the chart's Service is a LoadBalancer already). Not port-forwarded:

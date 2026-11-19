@@ -18,30 +18,13 @@ metadata:
     traefik.ingress.kubernetes.io/service.serversscheme: https
     traefik.ingress.kubernetes.io/service.serverstransport: cloudflared-ainur@kubernetescrd
 spec:
+  # ainur by name: on the LAN, *.kidd.network is ainur's VIP (ainur's unifi
+  # CronJob). A name, not an EndpointSlice: Argo CD doesn't manage those.
+  type: ExternalName
+  externalName: ainur.kidd.network
   ports:
     - name: https
       port: 443
-      targetPort: 443
----
-apiVersion: discovery.k8s.io/v1
-kind: EndpointSlice
-metadata:
-  name: ainur-homepage
-  labels:
-    kubernetes.io/service-name: ainur-homepage
-addressType: IPv4
-ports:
-  - name: https
-    port: 443
-    protocol: TCP
-endpoints:
-  # ainur's VIP (kube-vip, src/manifests/ainur/pi-netboot/kube-vip.yaml).
-  - addresses:
-      - 192.168.1.59
-    # Traefik only uses endpoints marked ready; nothing marks a hand-made one.
-    conditions:
-      ready: true
-      serving: true
 ---
 apiVersion: traefik.io/v1alpha1
 kind: ServersTransport
