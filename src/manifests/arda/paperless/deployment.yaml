@@ -161,6 +161,9 @@ spec:
               value: /ca/bundle.pem
             - name: SSL_CERT_FILE
               value: /ca/bundle.pem
+            # sitecustomize.py: the lab CA under Python's strict checks.
+            - name: PYTHONPATH
+              value: /pycustom
           ports:
             - name: http
               containerPort: 8000
@@ -173,6 +176,9 @@ spec:
               mountPath: /usr/src/paperless/consume
             - name: ca
               mountPath: /ca
+              readOnly: true
+            - name: pycustom
+              mountPath: /pycustom
               readOnly: true
           # The first start runs the database migrations: give it time. By
           # name: Django refuses a request for the pod's own address.
@@ -268,6 +274,9 @@ spec:
                 path: ca.crt
         - name: ca
           emptyDir: {}
+        - name: pycustom
+          configMap:
+            name: paperless-sitecustomize
 ---
 apiVersion: v1
 kind: Service
