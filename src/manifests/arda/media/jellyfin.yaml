@@ -6,8 +6,13 @@
 # /data/media/movies (Movies). It reads the same volume as everything else
 # (storage.yaml).
 #
-# Transcoding is on the CPU: the Intel GPU needs the siderolabs/i915 Talos
-# extension, rolled back after it crashed valinor-53 (BACKLOG.md, "Media").
+# Transcodes on an Intel GPU (Quick Sync; the ProDesks' UHD 630), which only
+# nodes with the siderolabs/i915 Talos extension offer (devic.es/dri, from
+# ../generic-device-plugin.yml): for now the workers, not valinor-53, which
+# crashed with it (BACKLOG.md, "Media"). So Jellyfin runs on a worker, and
+# the rest of the media volume's pods follow it there. Quick Sync is switched
+# on in its settings before it starts, while they are still the defaults;
+# after that they are the UI's (Dashboard → Playback → Transcoding).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -44,6 +49,49 @@ spec:
         runAsGroup: 1000
         fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        # Quick Sync on, if hardware acceleration is still off (a new volume,
+        # or the defaults Jellyfin writes on its first start). Jellyfin fills
+        # in every setting this file leaves out with its default.
+        - name: quick-sync
+          image: alpine:3.22
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              f=/config/config/encoding.xml
+              if [ -s "$f" ] && ! grep -q '<HardwareAccelerationType>none<' "$f"; then
+                echo "already set"; exit 0
+              fi
+              mkdir -p /config/config
+              cat > "$f" <<'EOF'
+              <?xml version="1.0" encoding="utf-8"?>
+              <EncodingOptions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+                <HardwareAccelerationType>qsv</HardwareAccelerationType>
+                <QsvDevice>/dev/dri/renderD128</QsvDevice>
+                <VaapiDevice>/dev/dri/renderD128</VaapiDevice>
+                <EnableHardwareEncoding>true</EnableHardwareEncoding>
+                <EnableTonemapping>true</EnableTonemapping>
+                <EnableDecodingColorDepth10Hevc>true</EnableDecodingColorDepth10Hevc>
+                <EnableDecodingColorDepth10Vp9>true</EnableDecodingColorDepth10Vp9>
+                <HardwareDecodingCodecs>
+                  <string>h264</string>
+                  <string>hevc</string>
+                  <string>mpeg2video</string>
+                  <string>vc1</string>
+                  <string>vp8</string>
+                  <string>vp9</string>
+                </HardwareDecodingCodecs>
+              </EncodingOptions>
+              EOF
+              echo "Quick Sync on"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
       containers:
         - name: jellyfin
           image: ghcr.io/jellyfin/jellyfin:10.11.11
@@ -66,7 +114,8 @@ spec:
               mountPath: /data
           resources:
             requests: { cpu: 50m, memory: 384Mi }
-            limits: { memory: 2Gi }   # a CPU transcode's buffers
+            # The Intel GPU (../generic-device-plugin.yml): only nodes with i915 offer it.
+            limits: { memory: 2Gi, devic.es/dri: "1" }
       volumes:
         - name: config
           persistentVolumeClaim:
