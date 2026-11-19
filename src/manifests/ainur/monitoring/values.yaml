@@ -24,6 +24,10 @@ kubeProxy:
   enabled: false
 windowsMonitoring:
   enabled: false
+# Its scrape needs a Service in kube-system, which the ainur Argo CD project
+# doesn't deploy to.
+coreDns:
+  enabled: false
 
 defaultRules:
   rules:
