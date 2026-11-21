@@ -1,10 +1,14 @@
-# Caches the Talos ISO that sidero-omni's talos-schematic Job built (lab CA
-# and Omni join config inside), for machines that boot from USB instead of
-# the network. bootstrap-http serves it as /talos-media/metal-amd64.iso.
+# Caches what sidero-omni's talos-schematic Job built (lab CA and Omni join
+# config inside), so the x86 machines get it from ainur over the LAN rather
+# than from the image factory over the internet. bootstrap-http serves it at
+# /talos-media/:
+#   <schematic>/<version>/kernel-amd64, initramfs-amd64.xz   for netboot
+#                                                            (boot.ipxe)
+#   metal-amd64.iso                     for machines that boot from USB
 #
-# Every 5 minutes it compares the schematic's iso-url with the one it
-# has, and downloads only when they differ, so the ISO follows Omni's join
-# config without waiting for an Argo CD sync.
+# Every 5 minutes it compares the schematic's with what it has, and
+# downloads only when they differ, so the media follows Omni's join config
+# without waiting for an Argo CD sync.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -46,8 +50,34 @@ spec:
                 - -c
                 - |
                   set -eu
-                  url="$(cat /talos/iso-url)"
                   cd /media
+                  # The kernel and initramfs the x86 machines netboot
+                  # (boot.ipxe loads them from here), in a directory per
+                  # schematic and version; older ones are removed.
+                  img="$(cat /talos/pxe-image-url 2>/dev/null || true)"
+                  dir="$(cat /talos/cache-dir 2>/dev/null || true)"
+                  if [ -n "$img" ] && [ -n "$dir" ]; then
+                    if [ -s "$dir/initramfs-amd64.xz" ] && [ -s "$dir/kernel-amd64" ]; then
+                      echo "already have $dir"
+                    else
+                      rm -rf "$dir.tmp"; mkdir -p "$dir.tmp"
+                      wget -q -O "$dir.tmp/kernel-amd64" "$img/kernel-amd64"
+                      wget -q -O "$dir.tmp/initramfs-amd64.xz" "$img/initramfs-amd64.xz"
+                      rm -rf "$dir"; mv "$dir.tmp" "$dir"
+                      echo "cached $img"
+                    fi
+                    keep="${dir%%/*}"
+                    for d in */; do
+                      d="${d%/}"
+                      [ "$d" = "$keep" ] || [ "$d" = lost+found ] || { rm -rf "./$d"; echo "removed $d"; }
+                    done
+                    for d in "$keep"/*/; do
+                      [ "$d" = "$dir/" ] || { rm -rf "./$d"; echo "removed $d"; }
+                    done
+                  fi
+
+                  # The ISO, for machines that boot from USB.
+                  url="$(cat /talos/iso-url)"
                   if [ "$(cat metal-amd64.iso.url 2>/dev/null)" = "$url" ]; then
                     echo "already have $url"
                     exit 0

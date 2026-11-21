@@ -66,6 +66,11 @@ spec:
               value: https://factory.talos.dev
             - name: PXE_URL
               value: https://pxe.factory.talos.dev
+            # ainur's copy of the kernel and initramfs (../pi-netboot/
+            # talos-iso.yaml), served by bootstrap-http: a LAN download,
+            # not ~100 MB from the factory on every boot.
+            - name: LOCAL_URL
+              value: http://192.168.1.59/talos-media
             # iscsi-tools and util-linux-tools are what Longhorn needs; i915
             # the Intel GPU's driver, for Quick Sync. Keep in step with
             # systemExtensions in omni-config/omni-cluster-template.yaml,
@@ -128,9 +133,20 @@ spec:
               # reach any more, such as one installed by an earlier Omni or
               # under an earlier lab CA. The wipe is a kernel argument here,
               # not in the schematic, so it can't follow into the install.
-              reset="$(curl -fsS "$PXE_URL/pxe/$id/$TALOS_VERSION/metal-amd64" \
-                | sed -e '/^#!ipxe/d' -e '/^kernel /s/$/ talos.experimental.wipe=system/')"
-              echo "$reset" | grep -q '^kernel .*talos.experimental.wipe=system$'
+              #
+              # Each loads the kernel and initramfs from ainur's copy, and
+              # falls back to the factory while that isn't cached yet (a new
+              # schematic, for up to 5 minutes).
+              img="$PXE_URL/image/$id/$TALOS_VERSION"
+              loc="$LOCAL_URL/$id/$TALOS_VERSION"
+              pxe="$(curl -fsS "$PXE_URL/pxe/$id/$TALOS_VERSION/metal-amd64" | sed '/^#!ipxe/d')"
+              echo "$pxe" | grep -q "^kernel $img/kernel-amd64 "
+              echo "$pxe" | grep -q "^initrd $img/initramfs-amd64.xz$"
+              # $1: extra kernel arguments
+              factory() { echo "$pxe" | sed "/^kernel /s|\$|$1|"; }
+              # $1: extra kernel arguments; $2: where to go if it fails
+              local_() { factory "$1" | sed -E -e "s|$img/|$loc/|g" -e "/^(kernel|initrd|boot)/s/\$/ || goto $2/"; }
+              wipe=' talos.experimental.wipe=system'
               {
                 echo '#!ipxe'
                 echo 'menu Talos'
@@ -139,14 +155,21 @@ spec:
                 echo 'choose --default talos --timeout 10000 target || goto talos'
                 echo 'goto ${target}'
                 echo ':talos'
-                echo "chain --replace --autofree $PXE_URL/pxe/$id/$TALOS_VERSION/metal-\${buildarch}"
+                local_ '' talos-factory
+                echo ':talos-factory'
+                factory ''
                 echo ':reset'
-                echo "$reset"
+                local_ "$wipe" reset-factory
+                echo ':reset-factory'
+                factory "$wipe"
               } > /tmp/boot.ipxe
+              grep -q "^kernel $loc/kernel-amd64 .*$wipe || goto reset-factory$" /tmp/boot.ipxe
 
               # Served by bootstrap-http as /talos/boot.ipxe, which the
               # proxy DHCP (../pi-netboot/proxy-dhcp.yaml) hands to iPXE.
-              # iso-url is what ../pi-netboot/talos-iso.yaml caches for USB.
+              # ../pi-netboot/talos-iso.yaml caches iso-url for USB, and the
+              # kernel and initramfs at pxe-image-url into cache-dir, for this
+              # menu.
               {
                 echo "apiVersion: v1"
                 echo "kind: ConfigMap"
@@ -155,6 +178,8 @@ spec:
                 echo "  namespace: ainur-netboot"
                 echo "data:"
                 echo "  iso-url: $FACTORY_URL/image/$id/$TALOS_VERSION/metal-amd64.iso"
+                echo "  pxe-image-url: $img"
+                echo "  cache-dir: $id/$TALOS_VERSION"
                 echo "  boot.ipxe: |"
                 sed 's/^/    /' /tmp/boot.ipxe
               } > /tmp/talos-ipxe.yaml
