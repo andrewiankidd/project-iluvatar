@@ -247,9 +247,8 @@ Now nothing secret is served or in an image:
 
 Still open:
 
-- **Rotate.** Everything in `.env` was readable on the LAN for weeks: the k3s tokens, the lab CA, Cloudflare, R2, UniFi, Dex. Planned for the pre-live rebootstrap. A new lab CA means every device and arda machine trusting it again.
 - **A pusher can't tell a Pi from an impostor.** A netbooted Pi makes new SSH host keys every boot, so there's nothing to pin. Something that answers SSH as Ubuntu, takes any key and claims to be waiting gets what that pusher has: the agent token from ainur's, and everything from the VM's. Far harder than one `curl`; VLANs (below) close it.
-- **The NFS root is exported read-write to anyone** (`/mnt/nfsshare *(rw,...,no_root_squash)`, VM and ainur). Nothing secret is in it now, but anyone on the LAN could change what the netbooted Pis run. Export it read-only, to the Pis' addresses.
+- **The NFS root is exported read-write to anyone** (`/mnt/nfsshare *(rw,...,no_root_squash)`, VM and ainur). A leftover: the Pis once shared `/home` over NFS (`/mnt/nfsshare/home`, read-write), where the old leader election kept the k3s leader and token (Guides: Netbooting Raspberry Pi, 7-overlay). Today they mount only their root, read-only (`nfsroot=...,ro`), and the builders write the share through their own volumes, not NFS. So nothing needs the `rw`, but anyone on the LAN could change what the netbooted Pis run. Export it `ro`.
 
 ### Secure Boot on arda
 
