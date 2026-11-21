@@ -209,8 +209,12 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
-# bootcmd:
-#   - [ bash, /usr/local/bin/k3s-02-netboot-unit-dropin.sh ]
+# Before cloud-init installs packages: the image leaves initramfs-tools half
+# configured, and configuring it runs flash-kernel, which copies the kernel
+# to /boot/firmware. A netbooted Pi has none (its boot files come over TFTP),
+# so apt failed, and with it cloud-final. Here it lands in the RAM overlay.
+bootcmd:
+  - [ mkdir, -p, /boot/firmware ]
 
 runcmd:
   - [ systemctl, enable, --now, sd-flash.service ]
