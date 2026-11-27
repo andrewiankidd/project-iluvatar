@@ -1,0 +1,97 @@
+# Letterboxd lists as Radarr lists: screeny05's letterboxd-list-radarr reads
+# a public Letterboxd page (a watchlist, a list, a director's films) and
+# serves it in Radarr's Custom List format. Letterboxd has no public API, so
+# it reads the website, caching films in Valkey beside it.
+#
+# Radarr follows ARDA_LETTERBOXD_USER's watchlist (the wiring job adds the
+# list, wiring.mjs): a film added there is added to Radarr and searched for.
+# In the cluster only: nothing outside needs it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: letterboxd-list
+  labels:
+    app: letterboxd-list
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: letterboxd-list
+  template:
+    metadata:
+      labels:
+        app: letterboxd-list
+    spec:
+      containers:
+        - name: letterboxd-list
+          # latest as of 2025-09-19, by digest: the project tags no releases.
+          image: screeny05/letterboxd-list-radarr@sha256:5e378af2ab1e4c35732f5b35a34067e1ab5cff4d4bd6966ee8d51cd8f8557004
+          env:
+            - { name: PORT, value: "5000" }
+            - { name: REDIS_URL, value: "redis://localhost:6379" }
+          ports:
+            - name: http
+              containerPort: 5000
+          readinessProbe:
+            tcpSocket:
+              port: http
+          resources:
+            requests: { cpu: 10m, memory: 96Mi }
+            limits: { memory: 384Mi }
+        # Its cache only: lost on a restart, refilled from Letterboxd.
+        - name: valkey
+          image: valkey/valkey:9.0.8-alpine
+          args: [--save, "", --appendonly, "no", --maxmemory, 96mb, --maxmemory-policy, allkeys-lfu]
+          resources:
+            requests: { cpu: 5m, memory: 16Mi }
+            limits: { memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: letterboxd-list
+spec:
+  selector:
+    app: letterboxd-list
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http
+---
+# Only Radarr reads letterboxd-list; outbound is limited to CoreDNS and the
+# public internet (letterboxd.com).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: letterboxd-list
+spec:
+  podSelector:
+    matchLabels:
+      app: letterboxd-list
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: radarr
+      ports:
+        - port: 5000
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16

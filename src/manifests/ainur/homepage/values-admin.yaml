@@ -1,0 +1,86 @@
+# admin.kidd.network: every service, for LLDAP's admins group. A service
+# shows only here with `gethomepage.dev/instance: admin` on its Ingress (and
+# on the users' page too with `gethomepage.dev/instance.users: "true"`).
+#
+# No login of Homepage's own: admin.yaml's oauth2-proxy stands in front and
+# lets only admins through (Homepage's Dex login has no group check). Its
+# sign-out is the Account bookmark below.
+config:
+  settingsString: |
+    title: kidd.network
+    instanceName: admin
+    headerStyle: clean
+    # Every link opens in a new tab.
+    target: _blank
+    # The colour theme fixed (Homepage's default, slate): no palette button.
+    color: slate
+    # Installable as an app, with the KiddNet logo (pwa.yaml). The favicon is
+    # also the iPhone home screen's icon; custom.js gives the tab the plain AK.
+    favicon: /images/kiddnet/kiddnet-180.png
+    pwa:
+      icons:
+        - src: /images/kiddnet/kiddnet-192.png
+          sizes: 192x192
+          type: image/png
+        - src: /images/kiddnet/kiddnet-512.png
+          sizes: 512x512
+          type: image/png
+        - src: /images/kiddnet/kiddnet-maskable-512.png
+          sizes: 512x512
+          type: image/png
+          purpose: maskable
+    layout:
+      Status:
+        style: row
+        columns: 3
+      # Areas is left out on purpose: groups only in this file come after the
+      # discovered ones, so it lands last.
+  # Above the discovered services, the Status group: a card per machine, both
+  # clusters, drawn by lab-nodes.yaml's cards.js (loaded by logo.yaml's
+  # custom.js) in Homepage's own markup. "Machines" is only where they go:
+  # cards.css hides it.
+  # oauth2-proxy's sign-out, then kidd.network.
+  bookmarks:
+    - Account:
+        - Sign out:
+            - href: /oauth2/sign_out?rd=https%3A%2F%2Fkidd.network
+              icon: mdi-logout
+              description: Sign out of the admin page
+  services:
+    # The other two pages.
+    - Areas:
+        - Public:
+            href: https://kidd.network
+            description: Games, media and utilities, no sign-in
+            icon: mdi-earth
+        - User Area:
+            href: https://userpage.kidd.network
+            description: Your apps, after signing in
+            icon: mdi-account
+    - Status:
+        - Machines:
+            description: The node cards' place (lab-nodes.yaml)
+    # The rack screen's link (../monitoring/dashboards/rack-dashboard.yaml), with no
+    # login: what a screen in the rack shows full-screen. Joins the Lab group.
+    - Lab:
+        - Rack screen:
+            icon: mdi-monitor-dashboard
+            description: Everything at a glance, no login; for the screen in the rack
+            href: https://grafana.kidd.network/public-dashboards/{{HOMEPAGE_VAR_GRAFANA_SHARE_rack}}?theme=dark
+
+# Restarted when a share's token is made (../reloader.yml).
+controller:
+  annotations:
+    secret.reloader.stakater.com/reload: grafana-share
+
+# The shared dashboards' link tokens, one per dashboard uid
+# (../monitoring/grafana-share.yaml): HOMEPAGE_VAR_GRAFANA_SHARE_<uid>.
+envFrom:
+  - prefix: HOMEPAGE_VAR_GRAFANA_SHARE_
+    secretRef:
+      name: grafana-share
+      optional: true
+
+env:
+  - name: HOMEPAGE_ALLOWED_HOSTS
+    value: admin.kidd.network

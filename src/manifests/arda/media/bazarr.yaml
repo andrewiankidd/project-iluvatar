@@ -1,0 +1,234 @@
+# Bazarr: subtitles for what Sonarr and Radarr bring in, at
+# bazarr.kidd.network behind the Dex login.
+#
+# Bazarr has no environment overrides, so before each start a yq step writes
+# into its config.yaml: Sonarr and Radarr (their Services and API keys), its
+# own API key, and no login of its own (the Dex login in front is it).
+# Everything else in that file (languages, providers) stays the UI's.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bazarr-config
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bazarr
+  labels:
+    app: bazarr
+    kidd.network/media-volume: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume
+  selector:
+    matchLabels:
+      app: bazarr
+  template:
+    metadata:
+      labels:
+        app: bazarr
+    spec:
+      initContainers:
+        - name: settings
+          image: mikefarah/yq:4.54.3
+          securityContext:
+            runAsUser: 0   # a new volume is root's; the app chowns it after
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              f=/config/config/config.yaml
+              mkdir -p /config/config
+              [ -s "$f" ] || echo '{}' > "$f"
+              yq -i '
+                .general.use_sonarr = true |
+                .general.use_radarr = true |
+                .auth.type = null |
+                .auth.apikey = strenv(BAZARR_KEY) |
+                .sonarr.ip = "sonarr.media.svc" | .sonarr.port = 8989 |
+                .sonarr.base_url = "/" | .sonarr.ssl = false |
+                .sonarr.apikey = strenv(SONARR_KEY) |
+                .radarr.ip = "radarr.media.svc" | .radarr.port = 7878 |
+                .radarr.base_url = "/" | .radarr.ssl = false |
+                .radarr.apikey = strenv(RADARR_KEY)
+              ' "$f"
+          env:
+            - name: BAZARR_KEY
+              valueFrom: { secretKeyRef: { name: media, key: bazarr-api-key } }
+            - name: SONARR_KEY
+              valueFrom: { secretKeyRef: { name: media, key: sonarr-api-key } }
+            - name: RADARR_KEY
+              valueFrom: { secretKeyRef: { name: media, key: radarr-api-key } }
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 64Mi }
+      containers:
+        - name: bazarr
+          image: lscr.io/linuxserver/bazarr:v1.6.2-ls373
+          env:
+            - { name: PUID, value: "1000" }
+            - { name: PGID, value: "1000" }
+            - { name: TZ, value: Europe/London }
+          ports:
+            - name: http
+              containerPort: 6767
+          readinessProbe:
+            tcpSocket:
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 20m, memory: 160Mi }
+            limits: { memory: 512Mi }
+        # Its metrics for Prometheus (exportarr, through the media PodMonitor in
+        # metrics.yaml): queue, missing, disk space, health.
+        - name: exportarr
+          image: ghcr.io/onedr0p/exportarr:v2.3.0
+          args: [bazarr]
+          env:
+            - { name: PORT, value: "9707" }
+            - { name: URL, value: "http://localhost:6767" }
+            - name: APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: media
+                  key: bazarr-api-key
+          ports:
+            - name: metrics
+              containerPort: 9707
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: { cpu: 5m, memory: 16Mi }
+            limits: { memory: 64Mi }
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: bazarr-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: media
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bazarr
+spec:
+  selector:
+    app: bazarr
+  ports:
+    - name: http
+      port: 6767
+      targetPort: http
+---
+# No login of its own (Dex in front): only Traefik and monitoring may reach it;
+# outbound is limited to Sonarr, Radarr, CoreDNS and the public internet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bazarr
+spec:
+  podSelector:
+    matchLabels:
+      app: bazarr
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 6767
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 9707
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: sonarr
+      ports:
+        - port: 8989
+    - to:
+        - podSelector:
+            matchLabels:
+              app: radarr
+      ports:
+        - port: 7878
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bazarr
+  annotations:
+    kidd.network/tunnel: "true"
+    kidd.network/zero-trust: "true"
+    # Behind the Dex login (and Cloudflare Access on the internet).
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
+    # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Media
+    gethomepage.dev/name: Bazarr
+    gethomepage.dev/description: Subtitles
+    gethomepage.dev/icon: bazarr.png
+    gethomepage.dev/href: https://bazarr.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: bazarr.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: bazarr
+                port:
+                  name: http

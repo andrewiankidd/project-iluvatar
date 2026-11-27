@@ -1,0 +1,119 @@
+# indifferentbroccoli/runescape-dragonwilds-server-docker: on each start it
+# installs or updates the official Linux server (Steam app 4019830) into
+# the volume, writes DedicatedServer.ini from the environment, and runs it.
+# Updating on start keeps the server on the clients' version, which joining
+# requires.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dragonwilds
+  labels:
+    app: dragonwilds
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per world
+  selector:
+    matchLabels:
+      app: dragonwilds
+  template:
+    metadata:
+      labels:
+        app: dragonwilds
+    spec:
+      # On SIGTERM the image asks the server to stop and waits up to 30s for
+      # it to save; leave room for that.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: dragonwilds
+          image: indifferentbroccoli/runescape-dragonwilds-server-docker:v1.0.3
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            # The owner's Player ID, from the bottom of the game's Settings
+            # menu: can ban and unban anyone. The server refuses to start
+            # without one.
+            - name: OWNER_ID
+              valueFrom:
+                secretKeyRef:
+                  name: dragonwilds
+                  key: owner-id
+            - name: SERVER_NAME
+              value: KiddNet Dragonwilds
+            # Only for a new world; a .sav in the volume is used as it is.
+            - name: DEFAULT_WORLD_NAME
+              value: CrackDen
+            - name: MAX_PLAYERS
+              value: "6"
+            - name: PLATFORM_POLICY
+              value: Crossplay
+            - name: DEFAULT_PORT
+              value: "7777"
+            - name: BEACON_PORT
+              value: "8888"
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dragonwilds
+                  key: admin-password
+            # The password for joining. The image rewrites DedicatedServer.ini
+            # from these variables on every start, so with none in the Secret
+            # (ARDA_DRAGONWILDS_WORLD_PASSWORD unset) the world is open to
+            # anyone, whatever it had before. Left unset on purpose only.
+            - name: WORLD_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dragonwilds
+                  key: world-password
+                  optional: true
+          ports:
+            - name: game
+              containerPort: 7777
+              protocol: UDP
+            - name: beacon
+              containerPort: 8888
+              protocol: UDP
+          volumeMounts:
+            - name: data
+              mountPath: /home/steam/server-files
+          resources:
+            # 2 GB plus 1 GB a player, by Jagex's guide; six players is 8.
+            requests: { cpu: 500m, memory: 3Gi }
+            limits: { memory: 8Gi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: dragonwilds-data
+---
+# Game server exposed to the internet: egress restricted to CoreDNS and the
+# public internet (Steam/Epic updates and auth), blocking cluster and LAN.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dragonwilds
+spec:
+  podSelector:
+    matchLabels:
+      app: dragonwilds
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16

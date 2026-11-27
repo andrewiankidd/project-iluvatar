@@ -1,0 +1,270 @@
+# qBittorrent, at qbittorrent.kidd.network behind the Dex login, whose only
+# way out is Mullvad.
+#
+# gluetun runs beside it in the same pod (a native sidecar, started and
+# healthy before qBittorrent starts) and owns the pod's network: a WireGuard
+# tunnel to Mullvad, and a firewall that drops everything else. The pod has
+# one network namespace, so qBittorrent has no route but the tunnel; if the
+# tunnel or gluetun goes down, the firewall rules stay in the kernel and
+# qBittorrent's traffic stops (the kill switch). Only this pod: the rest of
+# arda, Minecraft and the Cloudflare tunnel included, goes out as usual.
+# qBittorrent is also bound to the tunnel's interface (tun0), so even with
+# no firewall it couldn't use another.
+#
+# In: only the web UI (8080), gluetun's health check (9999) and its HTTP
+# proxy (8888), from inside the cluster (Traefik, Sonarr, Radarr, the
+# kubelet; Prowlarr for the proxy, so its searches leave through Mullvad
+# too, and fail rather than go out the home line if the tunnel is down). Mullvad gives no
+# forwarded port, so peers can't connect in: downloads still work, a little
+# slower on torrents with few peers.
+#
+# gluetun's WireGuard login is the mullvad Secret (ARDA_MULLVAD_PRIVATE_KEY,
+# ARDA_MULLVAD_ADDRESSES, optional ARDA_MULLVAD_COUNTRY). Without it the
+# pod waits in CreateContainerConfigError, and qBittorrent never runs.
+#
+# Its own login is off for the cluster's addresses (10.244.0.0/16): the Dex
+# login in front is the browser's, and Sonarr and Radarr need none. So only
+# the pods that use it can reach it (the NetworkPolicy below): any other pod,
+# an internet-facing one broken into, could otherwise drive its API, and its
+# "run external program" setting runs commands.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qbittorrent-config
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qbittorrent
+  labels:
+    app: qbittorrent
+    kidd.network/media-volume: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume
+  selector:
+    matchLabels:
+      app: qbittorrent
+  template:
+    metadata:
+      labels:
+        app: qbittorrent
+    spec:
+      # DNS through gluetun (its own resolver, over the tunnel): the cluster's
+      # DNS is outside the firewall's reach.
+      dnsPolicy: None
+      dnsConfig:
+        nameservers: [127.0.0.1]
+      initContainers:
+        # The settings that matter, written into qBittorrent.conf before each
+        # start; everything else stays the UI's.
+        - name: settings
+          image: alpine:3.22
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              f=/config/qBittorrent/qBittorrent.conf
+              mkdir -p /config/qBittorrent
+              touch "$f"
+              # set <section> <key> <value>: one key in an INI file, added or replaced.
+              set_ini() {
+                S="[$1]" K="$2" V="$3" awk '
+                  BEGIN { s = ENVIRON["S"]; k = ENVIRON["K"] "="; v = ENVIRON["V"] }
+                  $0 == s { print; in_s = 1; next }
+                  /^\[/ { if (in_s && !done) { print k v; done = 1 } in_s = 0 }
+                  in_s && index($0, k) == 1 { if (!done) { print k v; done = 1 } next }
+                  { print }
+                  END { if (!done) { if (!in_s) print s; print k v } }
+                ' "$f" > "$f.new"
+                mv "$f.new" "$f"
+              }
+              set_ini BitTorrent 'Session\DefaultSavePath' /data/torrents
+              set_ini BitTorrent 'Session\TempPathEnabled' false
+              set_ini BitTorrent 'Session\Interface' tun0
+              set_ini BitTorrent 'Session\InterfaceName' tun0
+              set_ini Preferences 'WebUI\Port' 8080
+              set_ini Preferences 'WebUI\AuthSubnetWhitelistEnabled' true
+              set_ini Preferences 'WebUI\AuthSubnetWhitelist' 10.244.0.0/16
+              set_ini Preferences 'WebUI\HostHeaderValidation' false
+              set_ini LegalNotice Accepted true
+              chown -R 1000:1000 /config/qBittorrent
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+        - name: gluetun
+          # main at eb3c7ec (built 2026-11-20), by digest: the last release, v3.41.3
+          # (July), carries Mullvad server data too old for Ireland (stale keys
+          # and addresses), so it never connected there. Back to a release tag
+          # once one newer than this is out.
+          image: qmcgaw/gluetun@sha256:3c43ec327d7ab2b5f1dc798b92a7640de9a1e1b74a81c9a5143adb383c03d28b
+          restartPolicy: Always   # a sidecar: up for the pod's whole life
+          env:
+            - { name: TZ, value: Europe/London }
+            - { name: VPN_SERVICE_PROVIDER, value: mullvad }
+            - { name: VPN_TYPE, value: wireguard }
+            - name: WIREGUARD_PRIVATE_KEY
+              valueFrom: { secretKeyRef: { name: mullvad, key: private-key } }
+            - name: WIREGUARD_ADDRESSES
+              valueFrom: { secretKeyRef: { name: mullvad, key: addresses } }
+            - name: SERVER_COUNTRIES
+              valueFrom: { secretKeyRef: { name: mullvad, key: country, optional: true } }
+            # The web UI, the health check and the proxy, from inside the cluster.
+            - { name: FIREWALL_INPUT_PORTS, value: "8080,9999,8888" }
+            # An HTTP proxy into the tunnel, for Prowlarr's searches (wiring.mjs
+            # sets it in Prowlarr). Only Prowlarr reaches it (the NetworkPolicy).
+            - { name: HTTPPROXY, value: "on" }
+            - { name: HTTPPROXY_LISTENING_ADDRESS, value: ":8888" }
+            - { name: HTTPPROXY_STEALTH, value: "on" }
+            - { name: HEALTH_SERVER_ADDRESS, value: ":9999" }
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN]
+          ports:
+            - name: health
+              containerPort: 9999
+          # qBittorrent starts only once the tunnel is up.
+          startupProbe:
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 30
+            failureThreshold: 4
+          resources:
+            requests: { cpu: 20m, memory: 48Mi }
+            # /dev/net/tun, from the generic device plugin (../generic-device-plugin.yml).
+            limits: { memory: 128Mi, devic.es/tun: "1" }
+      containers:
+        - name: qbittorrent
+          image: lscr.io/linuxserver/qbittorrent:5.1.4-r3-ls453
+          env:
+            - { name: PUID, value: "1000" }
+            - { name: PGID, value: "1000" }
+            - { name: TZ, value: Europe/London }
+            - { name: WEBUI_PORT, value: "8080" }
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits: { memory: 2Gi }
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: qbittorrent-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: media
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qbittorrent
+spec:
+  selector:
+    app: qbittorrent
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    # gluetun's HTTP proxy into the tunnel, for Prowlarr.
+    - name: proxy
+      port: 8888
+      targetPort: 8888
+---
+# Who may reach it, as it has no login for pods (enforced by kube-router:
+# ../network-policy.yml). Its kubelet's probes still get in: kube-router lets
+# a node reach its own pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: qbittorrent
+spec:
+  podSelector:
+    matchLabels:
+      app: qbittorrent
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        # Sonarr, Radarr, Chaptarr and Comicarr (their download client), the metrics exporter
+        # (metrics.yaml), and the wiring job's check that it's up (wiring.yaml).
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [sonarr, radarr, chaptarr, comicarr, qbittorrent-exporter, wiring]
+        # The browser's way in: Traefik, behind the Dex login.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 8080
+    # Prowlarr, to gluetun's proxy into the tunnel.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: prowlarr
+      ports:
+        - port: 8888
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: qbittorrent
+  annotations:
+    kidd.network/tunnel: "true"
+    kidd.network/zero-trust: "true"
+    # Behind the Dex login (and Cloudflare Access on the internet).
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
+    # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Media
+    gethomepage.dev/name: qBittorrent
+    gethomepage.dev/description: Downloads, over Mullvad
+    gethomepage.dev/icon: qbittorrent.png
+    gethomepage.dev/href: https://qbittorrent.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: qbittorrent.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: qbittorrent
+                port:
+                  name: http

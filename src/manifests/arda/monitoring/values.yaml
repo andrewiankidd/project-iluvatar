@@ -1,0 +1,70 @@
+# kube-prometheus-stack 93.4.1 on arda (../monitoring.yml), in agent mode:
+# arda's metrics scraped the same way as ainur's, labelled cluster="arda",
+# and written to ainur's Prometheus (src/manifests/ainur/monitoring), where
+# the dashboards, rules and alerts are. Nothing is stored or evaluated here.
+fullnameOverride: kps
+
+crds:
+  enabled: true
+
+# Talos binds etcd, the scheduler, controller-manager and kube-proxy's
+# metrics to localhost: nothing to scrape from a pod.
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+windowsMonitoring:
+  enabled: false
+
+# Rules, alerts and Grafana are ainur's.
+defaultRules:
+  create: false
+alertmanager:
+  enabled: false
+grafana:
+  enabled: false
+
+prometheus:
+  agentMode: true
+  prometheusSpec:
+    scrapeInterval: 60s
+    # Every ServiceMonitor and PodMonitor in the cluster (Longhorn's
+    # included), not just the chart's own.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    scrapeClasses:
+      - name: cluster
+        default: true
+        relabelings:
+          - targetLabel: cluster
+            replacement: arda
+    remoteWrite:
+      - url: https://prometheus.kidd.network/api/v1/write
+        # The lab CA, which ainur's endpoints are signed with: the
+        # ainur-telemetry Secret, from arda-bootstrap-job.yaml.
+        tlsConfig:
+          ca:
+            secret:
+              name: ainur-telemetry
+              key: ca.crt
+    resources:
+      requests:
+        memory: 256Mi
+      limits:
+        memory: 1Gi
+
+# node-exporter: the chart's own filesystem filters (setting extraArgs replaces
+# them), the CPU's model name (cpu.info) and the PCI devices' IDs (pcidevice,
+# for the GPU's), both off by default, for the node cards on the private
+# Homepage (homepage/lab-nodes.yaml).
+prometheus-node-exporter:
+  extraArgs:
+    - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
+    - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$
+    - --collector.cpu.info
+    - --collector.pcidevice

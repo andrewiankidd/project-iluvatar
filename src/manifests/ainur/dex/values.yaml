@@ -1,0 +1,158 @@
+config:
+  issuer: https://dex.kidd.network
+  # Its look: the kiddnet theme (theme.yaml), mounted below.
+  frontend:
+    # Dex serves its built-in copy of its pages unless told the directory,
+    # and the built-in copy has no kiddnet theme.
+    dir: /srv/dex/web
+    theme: kiddnet
+    issuer: KiddNet
+    logoURL: theme/logo.svg
+  # Its state in Kubernetes (its own CRDs on ainur), so a restart keeps its
+  # signing keys and refresh tokens: apps stay signed in across a Dex restart,
+  # which Reloader does whenever a lab secret changes. Not backed up: lost,
+  # everyone simply signs in again.
+  storage:
+    type: kubernetes
+    config:
+      inCluster: true
+  # No "Grant access" page after signing in: every client is the lab's own.
+  oauth2:
+    skipApprovalScreen: true
+  # No logins of Dex's own: everyone is in LLDAP (lldap.yaml), with their
+  # groups (admins, users); you are its admin, whose password is
+  # AINUR_LLDAP_ADMIN_PASSWORD (scripts/set-admin-password.sh). With one
+  # connector Dex skips its chooser and goes straight to the form. Dex looks
+  # people up with the read-only dex account; its password is
+  # AINUR_LLDAP_DEX_PASSWORD from ainur-secrets (Dex expands $VARs in its
+  # config). In-cluster, so plain LDAP.
+  enablePasswordDB: false
+  connectors:
+    - type: ldap
+      id: lldap
+      name: KiddNet
+      config:
+        host: lldap.ainur-dex.svc:3890
+        insecureNoSSL: true
+        bindDN: uid=dex,ou=people,dc=kidd,dc=network
+        bindPW: $AINUR_LLDAP_DEX_PASSWORD
+        # Sign in with your email address (admin@kidd.network for you), as
+        # with Dex's old built-in login, so saved logins keep working.
+        usernamePrompt: Email
+        userSearch:
+          baseDN: ou=people,dc=kidd,dc=network
+          filter: (objectClass=person)
+          username: mail
+          idAttr: uid
+          emailAttr: mail
+          nameAttr: displayName
+          preferredUsernameAttr: uid
+        groupSearch:
+          baseDN: ou=groups,dc=kidd,dc=network
+          filter: (objectClass=groupOfUniqueNames)
+          userMatchers:
+            - userAttr: DN
+              groupAttr: member
+          nameAttr: cn
+  staticClients:
+    - id: headlamp
+      name: headlamp
+      secretEnv: AINUR_OIDC_CLIENT_SECRET
+      redirectURIs:
+        - https://headlamp.kidd.network/oidc-callback
+    # The login in front of all of Headlamp (../headlamp/oauth2-proxy.yaml).
+    - id: headlamp-proxy
+      name: headlamp
+      secretEnv: AINUR_OIDC_CLIENT_SECRET
+      redirectURIs:
+        - https://headlamp.kidd.network/oauth2/callback
+    # Grafana (../monitoring/values.yaml): public, with PKCE, so it needs no
+    # secret.
+    - id: grafana
+      name: Grafana
+      public: true
+      redirectURIs:
+        - https://grafana.kidd.network/login/generic_oauth
+    # The login in front of arda's sites (src/manifests/arda/oauth2-proxy.yml):
+    # one client for all of them, its callback on auth.kidd.network.
+    - id: arda
+      name: arda
+      secretEnv: AINUR_OIDC_CLIENT_SECRET
+      redirectURIs:
+        - https://auth.kidd.network/oauth2/callback
+        - https://auth.kidd.network/oauth2-users/callback
+    # Paperless on arda (src/manifests/arda/paperless.yml): its own "Sign in
+    # with Dex" (django-allauth), confidential and with PKCE.
+    - id: paperless
+      name: Paperless
+      secretEnv: AINUR_OIDC_CLIENT_SECRET
+      redirectURIs:
+        - https://paperless.kidd.network/accounts/oidc/dex/login/callback/
+    # Home Assistant on arda (src/manifests/arda/homeassistant.yml), through
+    # the hass-oidc-auth component: public, with PKCE, so it needs no secret.
+    - id: homeassistant
+      name: Home Assistant
+      public: true
+      redirectURIs:
+        - https://homeassistant.kidd.network/auth/oidc/callback
+    - id: argocd
+      name: argocd
+      secretEnv: AINUR_OIDC_CLIENT_SECRET
+      redirectURIs:
+        - https://argocd.kidd.network/auth/callback
+    - id: homepage
+      name: homepage
+      secretEnv: AINUR_OIDC_CLIENT_SECRET
+      redirectURIs:
+        # The users' and admin pages' oauth2-proxies (../homepage/users.yaml,
+        # admin.yaml).
+        - https://userpage.kidd.network/oauth2/callback
+        - https://admin.kidd.network/oauth2/callback
+    - id: omni
+      name: omni
+      secretEnv: AINUR_OIDC_CLIENT_SECRET
+      redirectURIs:
+        - https://omni.kidd.network/oidc/consume
+        - https://omni.kidd.network/auth/callback
+        - https://omni.kidd.network/oidc/callback
+        - https://omni.kidd.network/callback
+
+service:
+  type: ClusterIP
+
+# AINUR_* from the ainur-secrets Secret (user-data: ainur-secrets.sh), read
+# at start: Reloader (../reloader.yml) restarts Dex when it changes.
+deploymentAnnotations:
+  secret.reloader.stakater.com/reload: ainur-secrets
+  configmap.reloader.stakater.com/reload: dex-theme
+# Only the two values Dex uses, not all of ainur-secrets: Dex faces the
+# internet, and the Secret also holds LLDAP's admin keys and the sign-in key.
+envVars:
+  - name: AINUR_OIDC_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: ainur-secrets
+        key: AINUR_OIDC_CLIENT_SECRET
+  - name: AINUR_LLDAP_DEX_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: ainur-secrets
+        key: AINUR_LLDAP_DEX_PASSWORD
+
+# Eviction and scheduling priority (user-data: 00-priority-classes.yaml).
+priorityClassName: ainur-critical
+
+# The kiddnet theme's files (theme.yaml), beside Dex's own light and dark.
+volumes:
+  - name: theme
+    configMap:
+      name: dex-theme
+volumeMounts:
+  - name: theme
+    mountPath: /srv/dex/web/themes/kiddnet
+    readOnly: true
+
+# v2.46.1: includes the LDAP connector port fix from v2.41.1 and current
+# security fixes.
+image:
+  tag: v2.46.1

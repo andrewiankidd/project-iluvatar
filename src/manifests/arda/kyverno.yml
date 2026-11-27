@@ -1,0 +1,37 @@
+# Kyverno: policy for arda's resources as they're created. Here it's what
+# makes every volume backed up and restorable without each app saying so
+# (kyverno-policies.yml).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  source:
+    repoURL: https://kyverno.github.io/kyverno
+    chart: kyverno
+    targetRevision: 3.9.2
+  destination:
+    name: arda
+    namespace: kyverno
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

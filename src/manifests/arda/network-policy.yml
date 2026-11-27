@@ -1,0 +1,39 @@
+# NetworkPolicies, enforced. arda's network is flannel (Talos's default),
+# which routes pods but ignores NetworkPolicies: without an enforcer, a
+# policy is accepted and does nothing. kube-router in its firewall-only mode
+# adds just the enforcement, beside flannel and kube-proxy, as k3s does
+# (ainur has it built in). Nothing changes for a pod no policy selects.
+#
+# The policies themselves live with their apps (media/qbittorrent.yaml).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: network-policy
+  namespace: argocd
+  annotations:
+    # Before the apps whose policies it enforces.
+    argocd.argoproj.io/sync-wave: "-3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/network-policy
+  destination:
+    name: arda
+    namespace: kube-system
+  syncPolicy:
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

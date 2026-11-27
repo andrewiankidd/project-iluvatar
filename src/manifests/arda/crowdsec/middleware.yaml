@@ -1,0 +1,28 @@
+# Traefik bouncer Middleware, attached to Traefik's `web` entrypoint
+# (../traefik/values.yaml) — which is where 100% of Cloudflare Tunnel traffic
+# arrives. Uses stream mode (decisions cached in Traefik's memory, refreshed
+# every 60s) so there is no per-request latency and a LAPI restart never blocks
+# traffic. Private/LAN ranges are always trusted so home access cannot be banned.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: crowdsec-bouncer
+  namespace: crowdsec
+spec:
+  plugin:
+    crowdsec-bouncer:
+      enabled: true
+      crowdsecMode: stream
+      updateIntervalSeconds: 60
+      crowdsecLapiScheme: http
+      crowdsecLapiHost: crowdsec-service.crowdsec.svc.cluster.local:8080
+      crowdsecLapiKeyFile: /etc/traefik/crowdsec/bouncer-key
+      forwardedHeadersCustomName: CF-Connecting-IP
+      # Only cloudflared's pods (pod CIDR) may supply CF-Connecting-IP.
+      forwardedHeadersTrustedIps:
+        - 10.244.0.0/16
+      # Never ban pod or LAN addresses.
+      clientTrustedIps:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16

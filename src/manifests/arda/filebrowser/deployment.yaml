@@ -1,0 +1,220 @@
+# FileBrowser Quantum (../filebrowser.yml): single Go binary with SQLite.
+#
+# Runs in the `media` namespace so it mounts the existing ReadWriteMany `media`
+# PVC (../media/storage.yaml) at /data alongside qBittorrent, Sonarr, Radarr,
+# Jellyfin, and Plex, using the same UID/GID 1000.
+#
+# Volumes:
+#   filebrowser-data   SQLite database (users, shares, settings) and preview
+#                      cache (Longhorn, backed up nightly to R2 by VolSync)
+#   media              existing shared media PVC (../media/storage.yaml) at /data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: filebrowser-data
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: filebrowser
+  labels:
+    app: filebrowser
+    kidd.network/media-volume: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume (SQLite)
+  selector:
+    matchLabels:
+      app: filebrowser
+  template:
+    metadata:
+      labels:
+        app: filebrowser
+        kidd.network/media-volume: "true"
+    spec:
+      # Same scheduling rule as media/kustomization.yaml: keep pods mounting the
+      # media volume off the control plane.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: filebrowser
+          image: ghcr.io/gtsteffaniak/filebrowser:2.1.0-stable
+          env:
+            - name: TZ
+              value: Europe/London
+            - name: FILEBROWSER_CONFIG
+              value: /etc/filebrowser/config.yaml
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/filebrowser/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: data
+              mountPath: /home/filebrowser/data
+            - name: media
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: config
+          configMap:
+            name: filebrowser-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: filebrowser-data
+        - name: media
+          persistentVolumeClaim:
+            claimName: media
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: filebrowser
+spec:
+  selector:
+    app: filebrowser
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# FileBrowser trusts X-Auth-Request-Email and auto-creates admin users: only
+# Traefik (which runs oauth2-proxy-dex or strips auth headers on /public) may
+# reach it. Everything is local filesystem + SQLite, so all egress is blocked.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: filebrowser
+spec:
+  podSelector:
+    matchLabels:
+      app: filebrowser
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 8080
+  egress: []
+---
+# Strip any client-supplied auth headers on the unauthenticated public share
+# Ingress so nobody can spoof X-Auth-Request-Email against proxy auth.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: filebrowser-strip-auth-headers
+spec:
+  headers:
+    customRequestHeaders:
+      X-Auth-Request-User: ""
+      X-Auth-Request-Email: ""
+      X-Auth-Request-Preferred-Username: ""
+      X-Auth-Request-Groups: ""
+---
+# Admin UI: guarded by Dex (admins only) on LAN and through the tunnel.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: filebrowser
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
+    kidd.network/tunnel: "true"
+    # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Apps
+    gethomepage.dev/name: FileBrowser
+    gethomepage.dev/description: Browse and share files via passworded links
+    gethomepage.dev/icon: filebrowser.png
+    gethomepage.dev/href: https://files.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: files.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: filebrowser
+                port:
+                  name: http
+---
+# Public share links (/public/* and /api/public/*): no Dex login so external
+# family/friends can open passworded/expiring share links, with auth headers
+# stripped by Traefik.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: filebrowser-public
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: media-filebrowser-strip-auth-headers@kubernetescrd
+    kidd.network/tunnel: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: files.kidd.network
+      http:
+        paths:
+          - path: /public
+            pathType: Prefix
+            backend:
+              service:
+                name: filebrowser
+                port:
+                  name: http
+          - path: /api/public
+            pathType: Prefix
+            backend:
+              service:
+                name: filebrowser
+                port:
+                  name: http

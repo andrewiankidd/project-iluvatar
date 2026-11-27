@@ -1,0 +1,68 @@
+# kidd.network and homepage.kidd.network: public services, no login: what
+# anyone may see (games, utilities, the media players). Every listed service
+# shows here unless its Ingress has `gethomepage.dev/instance: admin`, which
+# anything for managing the lab, or not for everyone, has.
+config:
+  settingsString: |
+    title: kidd.network
+    instanceName: public
+    headerStyle: clean
+    # Every link opens in a new tab.
+    target: _blank
+    # The colour theme fixed (Homepage's default, slate): no palette button.
+    color: slate
+    # Installable as an app, with the KiddNet logo (pwa.yaml). The favicon is
+    # also the iPhone home screen's icon; custom.js gives the tab the plain AK.
+    favicon: /images/kiddnet/kiddnet-180.png
+    pwa:
+      icons:
+        - src: /images/kiddnet/kiddnet-192.png
+          sizes: 192x192
+          type: image/png
+        - src: /images/kiddnet/kiddnet-512.png
+          sizes: 512x512
+          type: image/png
+        - src: /images/kiddnet/kiddnet-maskable-512.png
+          sizes: 512x512
+          type: image/png
+          purpose: maskable
+    # The discovered sections first, the areas, then the machines last.
+    layout:
+      Media: {}
+      Games: {}
+      Utilities: {}
+      Areas: {}
+      External: {}
+      Status:
+        style: row
+        columns: 3
+  services:
+    # Where signing in leads: the users' page (any Dex user) and the admin
+    # page (LLDAP's admins).
+    - Areas:
+        - User Area:
+            href: https://userpage.kidd.network
+            description: Your apps, after signing in
+            icon: mdi-account
+        - Admin Area:
+            href: https://admin.kidd.network
+            description: The whole lab, for admins
+            icon: mdi-shield-account
+    # Other sites of mine.
+    - External:
+        - andrewkidd.co.uk:
+            href: https://andrewkidd.co.uk
+            description: My own site
+            icon: mdi-web
+        - tiltedcartridge.co.uk:
+            href: https://tiltedcartridge.co.uk
+            description: Tilted Cartridge
+            icon: mdi-gamepad-variant-outline
+    # The node cards (lab-nodes.yaml) go here: "Machines" is only their place.
+    - Status:
+        - Machines:
+            description: The node cards' place (lab-nodes.yaml)
+
+env:
+  - name: HOMEPAGE_ALLOWED_HOSTS
+    value: kidd.network,homepage.kidd.network

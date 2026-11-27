@@ -1,0 +1,32 @@
+# Goldilocks at goldilocks.kidd.network: LAN only (no tunnel), behind the Dex login (../oauth2-proxy.yml),
+# since it has no login of its own. On the private Homepage (copied to ainur's
+# by its arda-homepage CronJob).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: goldilocks
+  namespace: goldilocks
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Cluster
+    gethomepage.dev/name: Goldilocks
+    gethomepage.dev/description: What workloads should reserve
+    gethomepage.dev/icon: mdi-scale-balance
+    gethomepage.dev/href: https://goldilocks.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: goldilocks.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: goldilocks-dashboard
+                port:
+                  number: 80

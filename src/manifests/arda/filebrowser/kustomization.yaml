@@ -1,0 +1,10 @@
+# FileBrowser Quantum (../filebrowser.yml).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: media
+resources:
+  - deployment.yaml
+configMapGenerator:
+  - name: filebrowser-config
+    files:
+      - config.yaml

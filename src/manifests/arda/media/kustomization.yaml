@@ -1,0 +1,47 @@
+# The media app (../media.yml).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: media
+resources:
+  - storage.yaml
+  - prowlarr.yaml
+  - sonarr.yaml
+  - radarr.yaml
+  - bazarr.yaml
+  - qbittorrent.yaml
+  - chaptarr.yaml
+  - comicarr.yaml
+  - grimmory.yaml
+  - seerr.yaml
+  - jellyfin.yaml
+  - plex.yaml
+  - wiring.yaml
+  - metrics.yaml
+  - letterboxd.yaml
+configMapGenerator:
+  - name: wiring
+    files:
+      - wiring.mjs
+patches:
+  # The pods that mount the media volume (storage.yaml), opted in with the
+  # label kidd.network/media-volume: "true": anywhere but the control plane.
+  # The volume is ReadWriteMany, so they needn't share a node; the control
+  # plane is kept for arda's own work (it runs at ~70% memory). Jellyfin and
+  # Plex ask for the Intel GPU (devic.es/dri), which only the workers with
+  # i915 offer.
+  - target:
+      kind: Deployment
+      labelSelector: kidd.network/media-volume=true
+    patch: |-
+      - op: add
+        path: /spec/template/metadata/labels/kidd.network~1media-volume
+        value: "true"
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+                - matchExpressions:
+                    - key: node-role.kubernetes.io/control-plane
+                      operator: DoesNotExist

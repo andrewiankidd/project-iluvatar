@@ -1,0 +1,362 @@
+# Readies arda (the talos-default cluster) for ainur's Argo CD, which
+# deploys src/manifests/arda to it (user-data: 24-arda-apps.yaml): hands each
+# arda app its Secret from ainur's arda-secrets (the ARDA_* values in the
+# bootstrap VM's .env; see bootstrap/netboot/.env.example), then registers
+# arda in ainur's Argo CD as the cluster named "arda". Secrets first, so
+# nothing is deployed before its Secret exists.
+#
+# Waits until the cluster is up, however long that takes. Argo CD re-creates
+# the Job after ttlSecondsAfterFinished; re-running it is harmless.
+#
+# Its rights on ainur: arda's cluster Secret and argocd-cm in argocd (the
+# Role in user-data's 24-arda-apps.yaml).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: arda-bootstrap
+  namespace: ainur-sidero-omni
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: arda-bootstrap
+  namespace: ainur-sidero-omni
+  annotations:
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: arda-bootstrap
+      containers:
+        - name: bootstrap
+          image: alpine/kubectl:1.37.1
+          env:
+            - name: OMNI_ENDPOINT
+              value: https://omni.kidd.network
+            - name: CLUSTER
+              value: talos-default
+            - name: OMNICTL_URL
+              value: https://github.com/siderolabs/omni/releases/download/v1.13.3/omnictl-linux-arm64
+            # Dex's client secret, for arda's oauth2-proxy (Dex's "arda" client).
+            - name: AINUR_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ainur-secrets
+                  key: AINUR_OIDC_CLIENT_SECRET
+                  optional: true
+            # Dedicated seed for arda's oauth2-proxy cookies, Transmute's
+            # sessions and admin password, and CrowdSec's LAPI/bouncer keys.
+            - name: AINUR_SSO_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ainur-secrets
+                  key: AINUR_SSO_SECRET
+                  optional: true
+          envFrom:
+            - secretRef:
+                name: arda-secrets
+                optional: true
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              apk add --no-cache ca-certificates curl
+              cat /etc/omni/lab-root-ca.crt >> /etc/ssl/certs/ca-certificates.crt
+              # omnictl and talosctl from the omni-tools volume, fetched once per
+              # version: not 72 MB into the SD card and from GitHub on every run.
+              fetch() { f="/tools/$(echo "$2" | sha256sum | cut -c1-12)-$1"; [ -s "$f" ] ||
+                { curl -fsSL -o "$f.$$" "$2" && chmod +x "$f.$$" && mv "$f.$$" "$f"; }; ln -sf "$f" "/usr/local/bin/$1"; }
+              fetch omnictl "$OMNICTL_URL"
+              chmod +x /usr/local/bin/omnictl
+              # On a fresh ainur, Omni can start well after this Job: wait for it to
+              # write its key and answer, rather than spend the retries and fail.
+              until [ -s /omni-data/automation.key ]; do echo "waiting for Omni's key"; sleep 10; done
+              export OMNI_SERVICE_ACCOUNT_KEY="$(cat /omni-data/automation.key)"
+              until omnictl get clusters >/dev/null 2>&1; do echo "waiting for Omni"; sleep 10; done
+
+              # Until a machine has joined and arda's API answers; a Job that
+              # waits reads as Progressing, where failing retries read as broken.
+              export KUBECONFIG=/tmp/kubeconfig
+              until omnictl kubeconfig /tmp/kubeconfig --cluster "$CLUSTER" \
+                  --service-account --user arda-bootstrap --force >/dev/null 2>&1 \
+                && kubectl get --raw /readyz >/dev/null 2>&1; do
+                echo "waiting for $CLUSTER"; sleep 60
+              done
+
+              # ainur itself, as opposed to arda (KUBECONFIG): this pod's own
+              # service account.
+              ainur() { env -u KUBECONFIG kubectl "$@"; }
+
+              # An Application's health is its apps' health, so the arda root
+              # app's sync waves wait for each wave to be Healthy: Longhorn,
+              # snapshots, VolSync and Kyverno's policies before anything with a
+              # volume, or that volume wouldn't restore
+              # (src/manifests/arda/kyverno-policies.yml). In ainur's argocd-cm;
+              # a Helm upgrade of ainur's Argo CD drops it until the next run.
+              ainur -n argocd patch configmap argocd-cm --type merge -p '{"data":{"resource.customizations.health.argoproj.io_Application":"hs = {}\nhs.status = \"Progressing\"\nhs.message = \"\"\nif obj.status ~= nil and obj.status.health ~= nil then\n  hs.status = obj.status.health.status\n  if obj.status.health.message ~= nil then\n    hs.message = obj.status.health.message\n  end\nend\nreturn hs\n"}}'
+
+              # Each app's Secret, from whichever ARDA_* values are set, before
+              # the apps: VolSync's above all, which a volume needs as it's made.
+              put() {
+                ns=$1; name=$2; shift 2
+                kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
+                kubectl -n "$ns" create secret generic "$name" "$@" \
+                  --dry-run=client -o yaml | kubectl apply -f -
+              }
+              # The lab CA, for arda's metrics and logs collectors to trust
+              # ainur's Prometheus and Loki (src/manifests/arda/monitoring).
+              # The chart reads its other optional fields from the same
+              # Secret, so they're here, empty.
+              put monitoring ainur-telemetry --from-file=ca.crt=/etc/omni/lab-root-ca.crt                 --from-literal=cert= --from-literal=key= --from-literal=tenantId=
+              if [ -n "${ARDA_CLOUDFLARE_API_TOKEN:-}" ]; then
+                put external-dns cloudflare-api-token --from-literal=api-token="$ARDA_CLOUDFLARE_API_TOKEN"
+                put ddns cloudflare-api-token --from-literal=api-token="$ARDA_CLOUDFLARE_API_TOKEN"
+              fi
+              if [ -n "${ARDA_CLOUDFLARE_TUNNEL_TOKEN:-}" ]; then
+                put cloudflared cloudflared-tunnel --from-literal=token="$ARDA_CLOUDFLARE_TUNNEL_TOKEN"
+              fi
+              # external-dns-lan's LAN records in UniFi (src/manifests/arda/external-dns-lan.yml).
+              if [ -n "${ARDA_UNIFI_API_KEY:-}" ]; then
+                put external-dns unifi-api-key --from-literal=UNIFI_API_KEY="$ARDA_UNIFI_API_KEY"
+              fi
+              if [ -n "${ARDA_MINECRAFT_WHITELIST:-}${ARDA_MINECRAFT_BUILDERS:-}" ]; then
+                put minecraft minecraft-players \
+                  --from-literal=whitelist="${ARDA_MINECRAFT_WHITELIST:-}" \
+                  --from-literal=builders="${ARDA_MINECRAFT_BUILDERS:-}"
+              fi
+              if [ -n "${ARDA_DRAGONWILDS_OWNER_ID:-}" ]; then
+                set -- --from-literal=owner-id="$ARDA_DRAGONWILDS_OWNER_ID" \
+                  --from-literal=admin-password="${ARDA_DRAGONWILDS_ADMIN_PASSWORD:-}"
+                if [ -n "${ARDA_DRAGONWILDS_WORLD_PASSWORD:-}" ]; then
+                  set -- "$@" --from-literal=world-password="$ARDA_DRAGONWILDS_WORLD_PASSWORD"
+                fi
+                put dragonwilds dragonwilds "$@"
+              fi
+              # The GitLab runner (src/manifests/arda/gitlab-runner.yml): a glrt-
+              # runner authentication token; the chart wants both keys.
+              if [ -n "${ARDA_GITLAB_RUNNER_TOKEN:-}" ]; then
+                put gitlab-runner gitlab-runner \
+                  --from-literal=runner-token="$ARDA_GITLAB_RUNNER_TOKEN" \
+                  --from-literal=runner-registration-token=
+              fi
+              # The Dex login in front of arda's sites (src/manifests/arda/oauth2-proxy.yml):
+              # Dex's client secret, and the lab CA that dex.kidd.network's
+              # certificate is from.
+              if [ -n "${AINUR_OIDC_CLIENT_SECRET:-}" ] && [ -n "${AINUR_SSO_SECRET:-}" ]; then
+                put oauth2-proxy dex \
+                  --from-literal=client-secret="$AINUR_OIDC_CLIENT_SECRET" \
+                  --from-literal=cookie-seed="$AINUR_SSO_SECRET" \
+                  --from-file=ca.crt=/etc/omni/lab-root-ca.crt
+              fi
+              # Paperless (src/manifests/arda/paperless.yml): its Django key,
+              # admin and scanner passwords and the optional mailbox; and the
+              # same Dex client secret and lab CA as oauth2-proxy's, for its
+              # own "Sign in with Dex".
+              if [ -n "${ARDA_PAPERLESS_SECRET_KEY:-}" ]; then
+                set -- --from-literal=secret-key="$ARDA_PAPERLESS_SECRET_KEY" \
+                  --from-literal=admin-password="${ARDA_PAPERLESS_ADMIN_PASSWORD:-}" \
+                  --from-literal=scanner-password="${ARDA_PAPERLESS_SCANNER_PASSWORD:-}"
+                for v in HOST PORT USER PASSWORD FOLDER; do
+                  eval "x=\${ARDA_PAPERLESS_MAIL_$v:-}"
+                  [ -z "$x" ] || set -- "$@" --from-literal="mail-$(echo "$v" | tr A-Z a-z)=$x"
+                done
+                put paperless paperless "$@"
+              fi
+              if [ -n "${AINUR_OIDC_CLIENT_SECRET:-}" ]; then
+                put paperless dex \
+                  --from-literal=client-secret="$AINUR_OIDC_CLIENT_SECRET" \
+                  --from-file=ca.crt=/etc/omni/lab-root-ca.crt
+              fi
+              # Home Assistant (src/manifests/arda/homeassistant.yml): the lab
+              # CA, for its Dex login to trust dex.kidd.network, and its owner's
+              # password and, if set, the home's location, for its setup CronJob.
+              put homeassistant lab-ca --from-file=ca.crt=/etc/omni/lab-root-ca.crt
+              if [ -n "${ARDA_HOMEASSISTANT_PASSWORD:-}" ]; then
+                set -- --from-literal=owner-password="$ARDA_HOMEASSISTANT_PASSWORD"
+                if [ -n "${ARDA_HOMEASSISTANT_LATITUDE:-}" ] && [ -n "${ARDA_HOMEASSISTANT_LONGITUDE:-}" ]; then
+                  set -- "$@" --from-literal=latitude="$ARDA_HOMEASSISTANT_LATITUDE" \
+                    --from-literal=longitude="$ARDA_HOMEASSISTANT_LONGITUDE"
+                fi
+                put homeassistant homeassistant "$@"
+              fi
+              # Obsidian's CouchDB login (src/manifests/arda/obsidian.yml).
+              if [ -n "${ARDA_OBSIDIAN_PASSWORD:-}" ]; then
+                put obsidian obsidian --from-literal=password="$ARDA_OBSIDIAN_PASSWORD"
+              fi
+              # The media apps' API keys (src/manifests/arda/media.yml): one per
+              # app, derived from one secret, so the apps and the wiring Job
+              # agree on them without a value per app in .env.
+              if [ -n "${ARDA_MEDIA_API_SECRET:-}" ]; then
+                set --
+                for app in sonarr radarr prowlarr bazarr seerr chaptarr comicarr; do
+                  set -- "$@" --from-literal="$app-api-key=$(printf '%s' "$ARDA_MEDIA_API_SECRET:$app" | sha256sum | cut -c1-32)"
+                done
+                # Comicarr's own login (user admin) and Grimmory's MariaDB
+                # (media/comicarr.yaml, grimmory.yaml), from the same secret.
+                for name in comicarr-password grimmory-db-password; do
+                  set -- "$@" --from-literal="$name=$(printf '%s' "$ARDA_MEDIA_API_SECRET:$name" | sha256sum | cut -c1-32)"
+                done
+                # Whose Letterboxd watchlist Radarr follows (media/letterboxd.yaml).
+                if [ -n "${ARDA_LETTERBOXD_USER:-}" ]; then
+                  set -- "$@" --from-literal=letterboxd-user="$ARDA_LETTERBOXD_USER"
+                fi
+                # Comicarr's ComicVine key (media/comicarr.yaml): comics search needs it.
+                if [ -n "${ARDA_COMICVINE_API_KEY:-}" ]; then
+                  set -- "$@" --from-literal=comicvine-api-key="$ARDA_COMICVINE_API_KEY"
+                fi
+                put media media "$@"
+              fi
+              # The key Transmute signs its guest sessions with and its admin
+              # password, both derived from AINUR_SSO_SECRET (not the legacy
+              # OIDC client secret). On an existing DB, rotate.sh / sync-env.sh
+              # updates Transmute's stored admin password in place.
+              if [ -n "${AINUR_SSO_SECRET:-}" ]; then
+                put transmute transmute --from-literal=auth-secret-key="$(printf '%s' "$AINUR_SSO_SECRET:transmute-auth" | sha256sum | cut -c1-64)" \
+                  --from-literal=admin-password="$(printf '%s' "$AINUR_SSO_SECRET:transmute-admin" | sha256sum | cut -c1-32)"
+              fi
+              # CrowdSec (src/manifests/arda/crowdsec.yml): LAPI JWT secret,
+              # agent registration token, and Traefik bouncer key, derived from
+              # AINUR_SSO_SECRET so Argo CD doesn't rotate random chart secrets
+              # on every sync.
+              if [ -n "${AINUR_SSO_SECRET:-}" ]; then
+                cs_bouncer="$(printf '%s' "$AINUR_SSO_SECRET:crowdsec-traefik-bouncer" | sha256sum | cut -c1-48)"
+                put crowdsec crowdsec-secrets \
+                  --from-literal=csLapiSecret="$(printf '%s' "$AINUR_SSO_SECRET:crowdsec-lapi" | sha256sum | cut -c1-64)" \
+                  --from-literal=registrationToken="$(printf '%s' "$AINUR_SSO_SECRET:crowdsec-registration" | sha256sum | cut -c1-48)" \
+                  --from-literal=bouncer-key="$cs_bouncer"
+                put kube-system crowdsec-bouncer-key \
+                  --from-literal=bouncer-key="$cs_bouncer"
+              fi
+              # qBittorrent's VPN (src/manifests/arda/media/qbittorrent.yaml):
+              # a Mullvad WireGuard key and its address. Without them
+              # qBittorrent never starts.
+              if [ -n "${ARDA_MULLVAD_PRIVATE_KEY:-}" ] && [ -n "${ARDA_MULLVAD_ADDRESSES:-}" ]; then
+                set -- --from-literal=private-key="$ARDA_MULLVAD_PRIVATE_KEY" \
+                  --from-literal=addresses="$ARDA_MULLVAD_ADDRESSES"
+                if [ -n "${ARDA_MULLVAD_COUNTRY:-}" ]; then
+                  set -- "$@" --from-literal=country="$ARDA_MULLVAD_COUNTRY"
+                fi
+                put media mullvad "$@"
+              fi
+              # arda's LAN HTTPS certificate, from the lab CA (arda-lan-certificate.yaml),
+              # for arda's Traefik. Copied on every run, so renewals follow.
+              if [ -s /arda-lan-tls/tls.crt ]; then
+                kubectl -n kube-system create secret tls arda-lan-tls \
+                  --cert=/arda-lan-tls/tls.crt --key=/arda-lan-tls/tls.key \
+                  --dry-run=client -o yaml | kubectl apply -f -
+              fi
+              # Every volume's backups (src/manifests/arda/kyverno-policies/volsync.yaml):
+              # one restic repository per volume under arda-backups/volsync/,
+              # all with the same password (restic encrypts before upload).
+              # On Google Drive when ARDA_GDRIVE_TOKEN is set (restic through
+              # rclone, which VolSync's mover carries; scope drive.file, and
+              # pruned files deleted, not binned), else on R2. The same keys
+              # either way, the unused ones empty, so the policy needs no
+              # branches.
+              if [ -n "${ARDA_VOLSYNC_PASSWORD:-}" ] && { [ -n "${ARDA_GDRIVE_TOKEN:-}" ] || [ -n "${ARDA_BACKUP_ACCESS_KEY_ID:-}" ]; }; then
+                if [ -n "${ARDA_GDRIVE_TOKEN:-}" ]; then
+                  base=rclone:gdrive:arda-backups/volsync; s3_id=; s3_key=
+                else
+                  base="s3:${ARDA_BACKUP_ENDPOINT:-}/arda-backups/volsync"
+                  s3_id="$ARDA_BACKUP_ACCESS_KEY_ID"; s3_key="${ARDA_BACKUP_SECRET_ACCESS_KEY:-}"
+                fi
+                put volsync-system volsync-repository \
+                  --from-literal=RESTIC_PASSWORD="$ARDA_VOLSYNC_PASSWORD" \
+                  --from-literal=RESTIC_REPOSITORY_BASE="$base" \
+                  --from-literal=AWS_ACCESS_KEY_ID="$s3_id" \
+                  --from-literal=AWS_SECRET_ACCESS_KEY="$s3_key" \
+                  --from-literal=RCLONE_CONFIG_GDRIVE_TYPE=drive \
+                  --from-literal=RCLONE_CONFIG_GDRIVE_SCOPE=drive.file \
+                  --from-literal=RCLONE_CONFIG_GDRIVE_USE_TRASH=false \
+                  --from-literal=RCLONE_CONFIG_GDRIVE_TOKEN="${ARDA_GDRIVE_TOKEN:-}" \
+                  --from-literal=RCLONE_CONFIG_GDRIVE_CLIENT_ID="${ARDA_GDRIVE_CLIENT_ID:-}" \
+                  --from-literal=RCLONE_CONFIG_GDRIVE_CLIENT_SECRET="${ARDA_GDRIVE_CLIENT_SECRET:-}"
+              fi
+
+              # Register arda in ainur's Argo CD, last: a service account with
+              # cluster-admin on arda and its long-lived token, and arda's API
+              # address and CA as arda itself publishes them. ainur's Argo CD
+              # talks to arda's API directly, not through Omni's proxy.
+              kubectl apply -f - <<EOF
+              apiVersion: v1
+              kind: ServiceAccount
+              metadata:
+                name: argocd-manager
+                namespace: kube-system
+              ---
+              apiVersion: rbac.authorization.k8s.io/v1
+              kind: ClusterRoleBinding
+              metadata:
+                name: argocd-manager
+              roleRef:
+                apiGroup: rbac.authorization.k8s.io
+                kind: ClusterRole
+                name: cluster-admin
+              subjects:
+                - kind: ServiceAccount
+                  name: argocd-manager
+                  namespace: kube-system
+              ---
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: argocd-manager-token
+                namespace: kube-system
+                annotations:
+                  kubernetes.io/service-account.name: argocd-manager
+              type: kubernetes.io/service-account-token
+              EOF
+              until token="$(kubectl -n kube-system get secret argocd-manager-token \
+                  -o jsonpath='{.data.token}' | base64 -d)" && [ -n "$token" ]; do sleep 2; done
+              ca="$(kubectl -n kube-system get configmap kube-root-ca.crt \
+                -o jsonpath='{.data.ca\.crt}' | base64 | tr -d '\n')"
+              api="$(kubectl -n default get endpointslice -l kubernetes.io/service-name=kubernetes \
+                -o jsonpath='https://{.items[0].endpoints[0].addresses[0]}:{.items[0].ports[0].port}')"
+              ainur -n argocd create secret generic cluster-arda \
+                --from-literal=name=arda --from-literal=server="$api" \
+                --from-literal=config="{\"bearerToken\":\"$token\",\"tlsClientConfig\":{\"caData\":\"$ca\"}}" \
+                --dry-run=client -o yaml \
+                | ainur label --local -f - argocd.argoproj.io/secret-type=cluster -o yaml \
+                | ainur apply -f -
+              echo "arda registered in ainur's Argo CD at $api"
+          volumeMounts:
+            - name: tools
+              mountPath: /tools
+            - name: omni-data
+              mountPath: /omni-data
+              readOnly: true
+            - name: lab-root-ca
+              mountPath: /etc/omni/lab-root-ca.crt
+              subPath: ca.crt
+              readOnly: true
+            - name: arda-lan-tls
+              mountPath: /arda-lan-tls
+              readOnly: true
+      # For the automation key on Omni's ReadWriteOnce data volume, as in
+      # omni-cluster-template-sync-job.yaml.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omni
+              topologyKey: kubernetes.io/hostname
+      volumes:
+        - name: tools
+          persistentVolumeClaim:
+            claimName: omni-tools
+        - name: omni-data
+          persistentVolumeClaim:
+            claimName: omni
+            readOnly: true
+        - name: lab-root-ca
+          configMap:
+            name: lab-ca
+        - name: arda-lan-tls
+          secret:
+            secretName: arda-lan-tls
+            optional: true

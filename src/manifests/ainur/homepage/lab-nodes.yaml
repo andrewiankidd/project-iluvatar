@@ -1,0 +1,485 @@
+# The node cards on the Homepages (admin, userpage, kidd.network): a card per
+# machine, both clusters, in Homepage's own markup and classes, so they look
+# and behave like its tiles (theme, hover, grid): the cluster in the corner,
+# the hardware underneath the name, CPU, memory, network, GPU and temperature
+# each with the last hour's graph, and a bar per disk. GPU only where arda's
+# intel-gpu-exporter runs (its x86 nodes) (src/manifests/arda/monitoring/gpu); elsewhere "–".
+#
+# Homepage's custom.js (logo.yaml) loads cards.js and cards.css from here;
+# cards.js fills the Status group (values-admin.yaml: the "Machines"
+# placeholder) from /lab-nodes/data. This service runs fixed queries against
+# ainur's Prometheus (both clusters' metrics) and returns them as JSON: the
+# browser never sends a query of its own. Machines come from node_uname_info,
+# so a new one gets its card with no list here.
+#
+# GPU names: node-exporter's pcidevice gives each graphics device's PCI IDs,
+# named here from the standard pci.ids database, read from the host (Ubuntu
+# on ainur's Pis has it), so nothing is listed or downloaded. The Pis' own
+# GPU isn't a PCI device: no GPU in their line.
+#
+# On each Homepage's own address (the Ingress below), so the page fetches it
+# from the same origin: userpage on the LAN, kidd.network and
+# homepage.kidd.network on the LAN and, through the tunnel, the internet. It
+# answers without a login: the machines' names, hardware and load are public.
+#
+# Drafting: the static files are copied into an emptyDir at start, so a draft
+# can be tried without a commit (kubectl cp into /srv/static); the next
+# restart puts Git's version back.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lab-nodes
+data:
+  server.py: |
+    import json, os, time, urllib.parse, urllib.request
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    PROMETHEUS = "http://kps-prometheus.ainur-monitoring.svc:9090"
+    STATIC = "/srv/static"
+    NODE_DASHBOARD = ("https://grafana.kidd.network/d/7d57716318ee0dddbac5a7f451fb7753/node-exporter-nodes"
+                      "?var-cluster={cluster}&var-instance={instance}")
+    NET = 'device=~"en.*|eth.*"'
+    BY = "max by (cluster, instance)"
+    # Each a value per machine (cluster, instance): its graph, the last hour.
+    METRICS = {
+        "cpu": '100 * (1 - avg by (cluster, instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])))',
+        "mem": f"100 * (1 - {BY} (node_memory_MemAvailable_bytes) / {BY} (node_memory_MemTotal_bytes))",
+        "net": f"sum by (cluster, instance) (rate(node_network_receive_bytes_total{{{NET}}}[5m]))"
+               f" + sum by (cluster, instance) (rate(node_network_transmit_bytes_total{{{NET}}}[5m]))",
+        "temp": f"{BY} (node_thermal_zone_temp)",
+    }
+    # Real disks: filesystems on a device, not tmpfs, overlays or the like.
+    # Netbooted Pis have none (their root is in RAM, over NFS).
+    DISKS = 'fstype=~"ext[234]|xfs|btrfs|f2fs|vfat|zfs", device=~"/dev/.+"'
+    GPU = 'max by (cluster, node) ({__name__=~"igpu_engines_.+_busy"})'
+    PCI_IDS = "/pci.ids"
+    CACHE = {"at": 0, "body": b""}
+
+
+    def pci_name(vendor, device):
+        """The device's name from pci.ids: what's in its brackets if it has
+        them ("UHD Graphics 630"), with the vendor's first word."""
+        vendor, device = vendor.removeprefix("0x").lower(), device.removeprefix("0x").lower()
+        try:
+            lines = open(PCI_IDS, encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        vname = None
+        with lines:
+            for line in lines:
+                if line.startswith("#") or not line.strip():
+                    continue
+                if not line.startswith("\t"):
+                    if vname is not None:
+                        break
+                    if line[:4].lower() == vendor:
+                        vname = line[4:].strip().split()[0]
+                elif vname is not None and not line.startswith("\t\t") and line[1:5].lower() == device:
+                    name = line[5:].strip()
+                    if "[" in name and "]" in name:
+                        name = name[name.rindex("[") + 1:name.rindex("]")]
+                    return f"{vname} {name}"
+        return None
+
+
+    def prom(path, **params):
+        url = f"{PROMETHEUS}/api/v1/{path}?{urllib.parse.urlencode(params)}"
+        with urllib.request.urlopen(url, timeout=20) as r:
+            return json.load(r)["data"]["result"]
+
+
+    def build():
+        now = time.time()
+        machines = prom("query", query="max by (cluster, nodename, instance) (node_uname_info)")
+        ready = {(r["metric"].get("cluster"), r["metric"]["node"]): r["value"][1] == "1"
+                 for r in prom("query", query='kube_node_status_condition{condition="Ready", status="true"}')}
+        series = {}
+        for key, q in METRICS.items():
+            for r in prom("query_range", query=q, start=now - 3600, end=now, step=120):
+                m = r["metric"]
+                series.setdefault((m.get("cluster"), m.get("instance")), {})[key] = [float(v) for _, v in r["values"]]
+        def per_machine(q, key):
+            got = {}
+            for r in prom("query", query=q):
+                m = r["metric"]
+                got[(m.get("cluster"), m.get("instance"))] = key(m, float(r["value"][1]))
+            return got
+
+        cores = per_machine('count by (cluster, instance) (node_cpu_seconds_total{mode="idle"})', lambda m, v: int(v))
+        memory = per_machine(f"{BY} (node_memory_MemTotal_bytes)", lambda m, v: v)
+        # The CPU's name (node-exporter's cpu.info: x86 only; Arm's
+        # /proc/cpuinfo has none) and its top clock.
+        cpu = per_machine("count by (cluster, instance, model_name) (node_cpu_info)", lambda m, v: m.get("model_name"))
+        clock = per_machine(f"{BY} (node_cpu_scaling_frequency_max_hertz)", lambda m, v: v)
+        arch = {(m["metric"].get("cluster"), m["metric"]["instance"]): m["metric"].get("machine")
+                for m in prom("query", query="max by (cluster, instance, machine) (node_uname_info)")}
+        disks = {}
+        size = prom("query", query=f"max by (cluster, instance, device, mountpoint) (node_filesystem_size_bytes{{{DISKS}}})")
+        free = {(r["metric"].get("cluster"), r["metric"]["instance"], r["metric"]["mountpoint"]): float(r["value"][1])
+                for r in prom("query", query=f"max by (cluster, instance, device, mountpoint) (node_filesystem_avail_bytes{{{DISKS}}})")}
+        for r in size:
+            m = r["metric"]
+            k = (m.get("cluster"), m["instance"])
+            total = float(r["value"][1])
+            used = total - free.get(k + (m["mountpoint"],), total)
+            disks.setdefault(k, []).append({"device": m["device"].removeprefix("/dev/"), "mount": m["mountpoint"],
+                                            "size": total, "used": used})
+        gpu = {(r["metric"].get("cluster"), r["metric"].get("node")): [float(v) for _, v in r["values"]]
+               for r in prom("query_range", query=GPU, start=now - 3600, end=now, step=120)}
+        gpus = {}
+        for r in prom("query", query='max by (cluster, instance, vendor_id, device_id) (node_pcidevice_info{class_id=~"0x03.*"})'):
+            m = r["metric"]
+            name = pci_name(m.get("vendor_id", ""), m.get("device_id", ""))
+            if name:
+                gpus.setdefault((m.get("cluster"), m.get("instance")), []).append(name)
+        out = []
+        for m in machines:
+            c, i, name = m["metric"].get("cluster"), m["metric"]["instance"], m["metric"]["nodename"]
+            s = dict(series.get((c, i), {}), gpu=gpu.get((c, name), []))
+            k = (c, i)
+            out.append({
+                "name": name, "cluster": c, "ready": ready.get((c, name)),
+                "hardware": {"cpu": cpu.get(k) or None, "arch": arch.get(k), "cores": cores.get(k),
+                             "clock": clock.get(k), "memory": memory.get(k), "gpus": sorted(set(gpus.get(k, [])))},
+                "disks": sorted(disks.get(k, []), key=lambda d: d["mount"]),
+                "link": NODE_DASHBOARD.format(cluster=c, instance=i),
+                "metrics": {k: {"now": v[-1] if v else None, "series": v} for k, v in
+                            ((k, s.get(k, [])) for k in list(METRICS) + ["gpu"])},
+            })
+        # The control plane first, then the workers; by name within each.
+        out.sort(key=lambda n: (n["cluster"] != "ainur", n["cluster"] or "", n["name"]))
+        return json.dumps({"nodes": out, "at": int(now)}).encode()
+
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            path = urllib.parse.urlparse(self.path).path
+            if path == "/lab-nodes/data":
+                if time.time() - CACHE["at"] > 30:
+                    try:
+                        CACHE.update(at=time.time(), body=build())
+                    except Exception as e:
+                        return self.reply(502, b'{"error": "%s"}' % str(e).encode()[:200], "application/json")
+                return self.reply(200, CACHE["body"], "application/json")
+            if path == "/lab-nodes/healthz":
+                return self.reply(200, b"ok", "text/plain")
+            name = path.removeprefix("/lab-nodes/")
+            kinds = {"cards.js": "text/javascript", "cards.css": "text/css"}
+            if name in kinds:
+                with open(os.path.join(STATIC, name), "rb") as f:
+                    return self.reply(200, f.read(), kinds[name])
+            self.reply(404, b"not found", "text/plain")
+
+        def reply(self, code, body, kind):
+            self.send_response(code)
+            self.send_header("Content-Type", kind)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+
+    ThreadingHTTPServer(("", 8080), Handler).serve_forever()
+  cards.css: |
+    /* Homepage's own placeholder for the grid (values-admin.yaml) stays
+       hidden; cards.js adds the cards beside it. */
+    ul:has(> li.service[data-name="Machines"]) { display: none; }
+    /* Each value's graph behind it, quiet enough to read the number over. */
+    .lab-block { position: relative; overflow: hidden; min-height: 3rem; }
+    .lab-block > div { position: relative; z-index: 1; }
+    .lab-spark { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 75%; pointer-events: none; }
+    .lab-spark .area { fill: currentColor; fill-opacity: 0.12; stroke: none; }
+    .lab-spark .line { fill: none; stroke: currentColor; stroke-opacity: 0.55; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+    /* A bar per disk under the values, its name and use written inside it. */
+    .lab-disks { padding: 0 0.25rem 0.25rem; }
+    .lab-disk { position: relative; height: 1.1rem; margin: 0 0 0.25rem; border-radius: 0.25rem; overflow: hidden; }
+    .lab-disk-fill { position: absolute; top: 0; bottom: 0; left: 0; opacity: 0.4; border-radius: 0.25rem; }
+    .lab-disk-text { position: relative; display: flex; justify-content: space-between; gap: 0.5rem; padding: 0 0.4rem; font-size: 0.68rem; line-height: 1.1rem; white-space: nowrap; }
+    .lab-disk-text .lab-mount { opacity: 0.6; margin-left: 0.3rem; }
+    /* The values' names, once, above their blocks (each block is flex-1 with
+       Homepage's m-1, so these match). */
+    .lab-labels > div { flex: 1; margin: 0 0.25rem; text-align: center; font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+    .lab-block { min-height: 2.5rem; }
+    /* The disks' use, as muted as their mounts. */
+    .lab-disk-text > span:last-child { opacity: 0.6; }
+    /* The values, small, under their blocks (lined up like the names above). */
+    .lab-values > div { flex: 1; margin: 0 0.25rem; text-align: center; font-size: 0.7rem; font-weight: 300; }
+    .lab-block { min-height: 2.25rem; }
+  cards.js: |
+    // The node cards: Homepage's own card markup and classes (copied from its
+    // service cards, widget blocks and Kubernetes status badge), filled from
+    // /lab-nodes/data, refreshed every minute.
+    (function () {
+      var PLACEHOLDER = "Machines";
+      var PRIMARY = "#82aaff", AMBER = "#ffc777", RED = "#ff757f";
+      // label, unit, amber from, red from (none: always the primary colour)
+      var METRICS = [
+        ["cpu", "CPU", "%", 70, 90],
+        ["mem", "Mem", "%", 80, 90],
+        ["net", "Net", "B/s", null, null],
+        ["gpu", "GPU", "%", 70, 90],
+        ["temp", "Temp", "°C", 70, 80],
+      ];
+
+      function el(tag, cls, html) {
+        var e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (html !== undefined) e.innerHTML = html;
+        return e;
+      }
+      function esc(s) {
+        return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; });
+      }
+      function fmt(unit, v) {
+        if (v === null || v === undefined || isNaN(v)) return "–";
+        if (unit === "B/s") {
+          var u = ["B/s", "kB/s", "MB/s", "GB/s"], i = 0;
+          while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; }
+          return (v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)) + " " + u[i];
+        }
+        return Math.round(v) + (unit === "%" ? "%" : " " + unit);
+      }
+      function colour(v, amber, red) {
+        if (v === null || amber === null) return PRIMARY;
+        return v >= red ? RED : v >= amber ? AMBER : PRIMARY;
+      }
+      function spark(series) {
+        if (!series || series.length < 2) return "";
+        var lo = Math.min.apply(null, series), hi = Math.max.apply(null, series);
+        if (hi === lo) { hi = lo + 1; }
+        var pts = series.map(function (v, i) {
+          return [(i / (series.length - 1)) * 100, 30 - ((v - lo) / (hi - lo)) * 28 - 1];
+        });
+        var line = "M" + pts.map(function (p) { return p[0].toFixed(2) + " " + p[1].toFixed(2); }).join(" L");
+        return '<svg class="lab-spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true">' +
+          '<path class="area" d="' + line + ' L100 30 L0 30 Z"/><path class="line" d="' + line + '"/></svg>';
+      }
+      // The corner tag, in the shape of Homepage's status badge: the cluster,
+      // amber and saying so if the node isn't Ready.
+      function tag(n) {
+        var notReady = n.ready === false;
+        var text = esc(n.cluster) + (notReady ? " · not ready" : "");
+        var tone = notReady ? "text-orange-400/50 dark:text-orange-400/80" : "text-theme-500 dark:text-theme-300";
+        return '<div class="w-auto text-center overflow-hidden px-1.5 py-0.5 bg-theme-500/10 dark:bg-theme-900/50 rounded-b-[3px] k8s-status" title="' + text + '">' +
+          '<div class="text-[8px] font-bold ' + tone + ' uppercase">' + text + "</div></div>";
+      }
+      function bytes(v) {
+        var u = ["B", "kB", "MB", "GB", "TB"], i = 0;
+        while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; }
+        return (v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)) + " " + u[i];
+      }
+      // The installed memory, from what the kernel can use (a little less):
+    // the power of two it rounds up to, so 15.4 GiB reads as 16 GB.
+    function installed(bytes) {
+      return Math.pow(2, Math.ceil(Math.log2(bytes / Math.pow(1024, 3)) - 0.01)) + " GB";
+    }
+      // "i5-8500T · 6 cores @ 3.5 GHz · 16 GB · UHD 630": the CPU without its
+      // brand, the GPU without "Graphics"; the Pis, with no CPU name to report,
+      // by their architecture, and no GPU.
+      function hardware(h) {
+        var name = h.cpu ? h.cpu.replace(/\((R|TM)\)/g, "").replace(/\s+CPU\b/, "").replace(/\s*@.*$/, "")
+          .replace(/^\s*(Intel|AMD)\s+(Core\s+)?/, "").replace(/\s+/g, " ").trim() : h.arch;
+        var gpu = (h.gpus || []).map(function (g) { return g.replace(/^\S+\s+/, "").replace(/\s*Graphics\s*/, " ").trim(); }).join(", ");
+        var cores = h.cores ? h.cores + " cores" + (h.clock ? " @ " + (h.clock / 1e9).toFixed(1) + " GHz" : "") : null;
+        var parts = [name, cores, h.memory ? installed(h.memory) : null, gpu || null];
+        return esc(parts.filter(Boolean).join(" · "));
+      }
+      function diskBars(disks) {
+        if (!disks || !disks.length) return "";
+            return '<div class="lab-disks">' + disks.map(function (d) {
+              var pct = d.size ? (d.used / d.size) * 100 : 0;
+              return '<div class="lab-disk bg-theme-200/50 dark:bg-theme-900/20" title="' + esc("/dev/" + d.device + " on " + d.mount) + '">' +
+                '<div class="lab-disk-fill" style="width:' + pct.toFixed(1) + "%;background:" + colour(pct, 80, 90) + '"></div>' +
+                '<div class="lab-disk-text text-theme-700 dark:text-theme-200"><span>/dev/' + esc(d.device) + '<span class="lab-mount">' + esc(d.mount) + "</span></span>" +
+                "<span>" + Math.round(pct) + "% (" + bytes(d.used) + " / " + bytes(d.size) + ")</span></div></div>";
+            }).join("") + "</div>";
+          }
+      function card(n) {
+        var link = esc(n.link);
+        var li = el("li", "service lab-node");
+        li.setAttribute("data-name", n.name);
+        // Only the values this machine reports: none at all (a Pi's GPU)
+        // means no column, rather than one that's always empty.
+        var shown = METRICS.filter(function (m) { var d = n.metrics[m[0]]; return d && d.series && d.series.length; });
+        var blocks = shown.map(function (m) {
+          var d = n.metrics[m[0]] || {};
+          return '<div class="bg-theme-200/50 dark:bg-theme-900/20 rounded-sm m-1 flex-1 flex flex-col items-center justify-center text-center p-1 service-block lab-block" style="color:' +
+            colour(d.now, m[3], m[4]) + '">' + spark(d.series) +
+            "</div>";
+        }).join("");
+        li.innerHTML =
+          '<div class="shadow-md shadow-theme-900/10 dark:shadow-theme-900/20 transition-all mb-2 p-1 rounded-md font-medium text-theme-700 dark:text-theme-200 dark:hover:text-theme-300 bg-theme-100/20 hover:bg-theme-300/20 dark:bg-white/5 dark:hover:bg-white/10 relative overflow-clip service-card">' +
+            '<div class="flex select-none z-0 service-title">' +
+              '<a href="' + link + '" target="_blank" rel="noreferrer" class="shrink-0 flex items-center justify-center w-12 service-icon z-10" aria-label="' + esc(n.name) + '">' +
+                '<div style="width:32px;height:32px;background:linear-gradient(180deg, rgb(var(--color-logo-start)), rgb(var(--color-logo-stop)));mask:url(https://cdn.jsdelivr.net/npm/@mdi/svg@latest/svg/server.svg) no-repeat center / contain;-webkit-mask:url(https://cdn.jsdelivr.net/npm/@mdi/svg@latest/svg/server.svg) no-repeat center / contain"></div></a>' +
+              '<a href="' + link + '" target="_blank" rel="noreferrer" class="flex-1 flex items-center justify-between rounded-r-md service-title-text">' +
+                '<div class="flex-1 px-2 py-2 text-sm text-left z-10 service-name">' + esc(n.name) +
+                  '<p class="text-theme-500 dark:text-theme-300 text-xs font-light service-description">' + hardware(n.hardware || {}) + "</p></div></a>" +
+              '<div class="absolute top-0 right-0 flex flex-row justify-end gap-2 mr-2 z-10 service-tags">' + tag(n) + "</div>" +
+            "</div>" +
+            '<div class="flex flex-row w-full lab-labels text-theme-500 dark:text-theme-400">' +
+              shown.map(function (m) { return "<div>" + m[1] + "</div>"; }).join("") + "</div>" +
+            '<div class="relative flex flex-row w-full service-container">' + blocks + "</div>" +
+            '<div class="flex flex-row w-full lab-values text-theme-700 dark:text-theme-200">' +
+              shown.map(function (m) { var d = n.metrics[m[0]] || {}; return "<div>" + fmt(m[2], d.now) + "</div>"; }).join("") + "</div>" +
+            diskBars(n.disks) +
+          "</div>";
+        return li;
+      }
+
+      var grid = null, last = null;
+      function place() {
+        var holder = document.querySelector('li.service[data-name="' + PLACEHOLDER + '"]');
+        if (!holder) return false;
+        var list = holder.parentElement;
+        if (!grid || !grid.isConnected) {
+          // A list of our own beside Homepage's, with its classes (its grid
+          // and columns, from the group's layout): React leaves it alone.
+          grid = el("ul", list.className + " lab-nodes");
+          list.parentElement.insertBefore(grid, list.nextSibling);
+        }
+        if (last) fill();
+        return true;
+      }
+      function fill() {
+        if (!grid) return;
+        grid.replaceChildren.apply(grid, last.nodes.map(card));
+      }
+      function load() {
+        fetch("/lab-nodes/data", { cache: "no-store" })
+          .then(function (r) { return r.json(); })
+          .then(function (d) { if (d.nodes) { last = d; place() && fill(); } })
+          .catch(function () {});
+      }
+      // Homepage renders after this runs, and may render again: keep placing.
+      new MutationObserver(function () { if (!grid || !grid.isConnected) place(); })
+        .observe(document.documentElement, { childList: true, subtree: true });
+      load();
+      setInterval(load, 60000);
+    })();
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lab-nodes
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lab-nodes
+  template:
+    metadata:
+      labels:
+        app: lab-nodes
+      annotations:
+        # Restarted when the ConfigMap changes (../reloader.yml).
+        configmap.reloader.stakater.com/reload: lab-nodes
+    spec:
+      priorityClassName: ainur-optional
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # The static files somewhere writable, for drafts (see the top).
+        - name: static
+          image: python:3.14-alpine
+          command: ["sh", "-c", "cp /config/cards.js /config/cards.css /srv/static/"]
+          securityContext: &locked
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+            - { name: static, mountPath: /srv/static }
+          resources:
+            requests: { cpu: 5m, memory: 16Mi }
+            limits: { memory: 32Mi }
+      containers:
+        - name: lab-nodes
+          image: python:3.14-alpine
+          command: ["python", "-I", "-u", "/config/server.py"]
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /lab-nodes/healthz
+              port: http
+          securityContext: *locked
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+            - { name: static, mountPath: /srv/static }
+            - { name: pci-ids, mountPath: /pci.ids, readOnly: true }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 96Mi }
+      volumes:
+        - name: config
+          configMap:
+            name: lab-nodes
+        - name: static
+          emptyDir:
+            sizeLimit: 4Mi
+        # The PCI ID database, as the host's Ubuntu ships it.
+        - name: pci-ids
+          hostPath:
+            path: /usr/share/misc/pci.ids
+            type: File
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lab-nodes
+spec:
+  selector:
+    app: lab-nodes
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Under each Homepage's own address, so the page fetches it from the same
+# origin (their certificates are the Homepages' own).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lab-nodes
+  annotations:
+    kubernetes.io/ingress.class: traefik
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - admin.kidd.network
+      secretName: admin-tls
+    - hosts:
+        - userpage.kidd.network
+      secretName: homepage-tls
+    - hosts:
+        - kidd.network
+        - homepage.kidd.network
+      secretName: homepage-public-tls
+  rules:
+    - host: userpage.kidd.network
+      http: &lab-nodes
+        paths:
+          - path: /lab-nodes
+            pathType: Prefix
+            backend:
+              service:
+                name: lab-nodes
+                port:
+                  name: http
+    - host: admin.kidd.network
+      http: *lab-nodes
+    - host: kidd.network
+      http: *lab-nodes
+    - host: homepage.kidd.network
+      http: *lab-nodes

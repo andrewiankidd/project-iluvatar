@@ -1,0 +1,103 @@
+kind: Cluster
+name: talos-default
+kubernetes:
+  version: v1.37.1
+talos:
+  # Keep in step with TALOS_VERSION in ../talos-schematic-job.yaml.
+  version: v1.14.5
+# Every machine's Talos extensions; Omni upgrades a machine in place (one
+# reboot) when this changes. The whole list, not additions: it replaces what
+# the machine booted with. Keep in step with EXTENSIONS in
+# ../talos-schematic-job.yaml, the image new machines boot.
+#   intel-ucode                 CPU microcode
+#   iscsi-tools, util-linux-tools   Longhorn
+#   i915                        the Intel GPU's driver and firmware, for Quick
+#                               Sync transcodes (src/manifests/arda/media)
+systemExtensions:
+  # Crashed valinor-53 two minutes into every boot (2026-11-19) until
+  # i915.enable_dc=0 intel_iommu=igfx_off (KERNEL_ARGS in ../arda-disks-cronjob.yaml).
+  - siderolabs/i915
+  - siderolabs/intel-ucode
+  - siderolabs/iscsi-tools
+  - siderolabs/util-linux-tools
+patches:
+  # Already in the image the machines boot (../talos-schematic-job.yaml);
+  # repeated here so it stays in every cluster member's config regardless.
+  - name: lab-root-ca
+    inline:
+      apiVersion: v1alpha1
+      kind: TrustedRootsConfig
+      name: lab-root-ca
+      certificates: |
+        ${LAB_ROOT_CA_INDENTED}
+  # The NVMe drive, whatever its size; the SATA SSD is Longhorn's.
+  - name: install-nvme
+    inline:
+      machine:
+        install:
+          diskSelector:
+            type: nvme
+  # Longhorn (src/manifests/arda/longhorn.yml) on each node's SATA SSD,
+  # mounted at /var/mnt/longhorn. Talos 1.14 has no kubelet extraMounts (the
+  # v1alpha1 machine.kubelet section is gone); user volumes under /var/mnt
+  # are expected to reach the kubelet without one.
+  - name: longhorn-disk
+    inline:
+      apiVersion: v1alpha1
+      kind: UserVolumeConfig
+      name: longhorn
+      volumeType: disk
+      provisioning:
+        diskSelector:
+          # Only SATA: the NVMe is the system disk. (1.14 has no system_disk.)
+          match: disk.transport == "sata"
+      filesystem:
+        type: xfs
+---
+# The first machine. Both sets draw on the same machines and Omni doesn't
+# fill one before the other, so workers come from their own class
+# (machine-class.yaml), which a machine joins only once this set is full.
+kind: ControlPlane
+machineClass:
+  name: available
+  size: 1
+patches:
+  # Workloads on the control plane too, so one machine is already a cluster
+  # and every node's SSD counts for Longhorn. Talos 1.14 dropped
+  # cluster.allowSchedulingOnControlPlanes: the NoSchedule taint lives in
+  # KubeNodeConfig now. Only here: a worker's config has no such taint, and
+  # deleting one that isn't there fails the whole config. (The control
+  # plane's exclude-from-external-load-balancers label stays; MetalLB
+  # ignores it, src/manifests/arda/metallb.yml.)
+  - name: schedule-on-control-plane
+    inline:
+      apiVersion: v1alpha1
+      kind: KubeNodeConfig
+      taints:
+        node-role.kubernetes.io/control-plane:
+          $patch: delete
+---
+# Every machine after the first, so the cluster grows as machines join.
+kind: Workers
+machineClass:
+  name: arda-workers
+  size: unlimited
+# The workers' own list, replacing the cluster's: i915 too, the Intel GPU's
+# driver for Quick Sync transcodes (src/manifests/arda/media). On the
+# workers first: with it, valinor-53 (the control plane) hard-reset two
+# minutes into every boot (2026-11-19, BACKLOG.md "Media"), and a worker
+# going down doesn't take the cluster with it.
+systemExtensions:
+  - siderolabs/i915
+  - siderolabs/intel-ucode
+  - siderolabs/iscsi-tools
+  - siderolabs/util-linux-tools
+patches:
+  # Says so to the scheduler: the media apps prefer a node with the GPU
+  # (src/manifests/arda/media/kustomization.yaml). Keep with i915 above.
+  - name: gpu-label
+    inline:
+      apiVersion: v1alpha1
+      kind: KubeNodeConfig
+      labels:
+        kidd.network/gpu: intel

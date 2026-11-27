@@ -1,0 +1,185 @@
+# Every Longhorn PVC on arda is backed up nightly (Google Drive, or R2 without
+# ARDA_GDRIVE_TOKEN; arda-bootstrap decides) and, when created,
+# filled from its latest backup: a rebuilt cluster comes back with its data,
+# and a brand-new app (no backup yet) starts empty. Nothing per app.
+#
+# For a PVC <name>, Kyverno makes, in its namespace:
+#   <name>-volsync   Secret: the shared credentials and restic password
+#                    (volsync-system/volsync-repository, from arda-bootstrap),
+#                    and the repository arda-backups/volsync/<namespace>/<name>
+#   <name>-restore   ReplicationDestination, restoring once; the PVC is
+#                    created from it (dataSourceRef, set on creation)
+#   <name>-backup    ReplicationSource: nightly, keeping 7 daily, 4 weekly
+#                    and 6 monthly snapshots
+# and lets VolSync's movers run as root there, so files keep their owners.
+#
+# Opt out with the annotation kidd.network/backup: "false". VolSync's own
+# working PVCs are left alone.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: volsync
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  rules:
+    - name: restore-on-create
+      match: &pvcs
+        any:
+          - resources:
+              kinds: [PersistentVolumeClaim]
+      exclude: &volsyncs
+        any:
+          - resources:
+              selector:
+                matchLabels:
+                  app.kubernetes.io/created-by: volsync
+      preconditions:
+        all:
+          - &longhorn
+            key: "{{ request.object.spec.storageClassName || 'longhorn' }}"
+            operator: Equals
+            value: longhorn
+          - &wanted
+            key: "{{ request.object.metadata.annotations.\"kidd.network/backup\" || 'true' }}"
+            operator: NotEquals
+            value: "false"
+          - key: "{{ request.operation }}"
+            operator: Equals
+            value: CREATE
+          - key: "{{ request.object.spec.dataSourceRef.name || '' }}"
+            operator: Equals
+            value: ""
+      mutate:
+        patchStrategicMerge:
+          spec:
+            dataSourceRef:
+              apiGroup: volsync.backube
+              kind: ReplicationDestination
+              name: "{{ request.object.metadata.name }}-restore"
+
+    - name: repository
+      match: *pvcs
+      exclude: *volsyncs
+      preconditions:
+        all: [*longhorn, *wanted]
+      context:
+        - name: repo
+          apiCall:
+            urlPath: /api/v1/namespaces/volsync-system/secrets/volsync-repository
+            jmesPath: data
+      generate:
+        generateExisting: true
+        synchronize: true
+        # Deleting the policy leaves what it made: Kyverno won't change a
+        # generate rule in place, so changing one means recreating the policy.
+        orphanDownstreamOnPolicyDelete: true
+        apiVersion: v1
+        kind: Secret
+        name: "{{ request.object.metadata.name }}-volsync"
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          type: Opaque
+          data:
+            RESTIC_PASSWORD: "{{ repo.RESTIC_PASSWORD }}"
+            RESTIC_REPOSITORY: "{{ base64_encode(join('/', [base64_decode(repo.RESTIC_REPOSITORY_BASE), request.object.metadata.namespace, request.object.metadata.name])) }}"
+            # R2's (empty on Drive)
+            AWS_ACCESS_KEY_ID: "{{ repo.AWS_ACCESS_KEY_ID || '' }}"
+            AWS_SECRET_ACCESS_KEY: "{{ repo.AWS_SECRET_ACCESS_KEY || '' }}"
+            # Google Drive's, through rclone (VolSync passes every RCLONE_* key)
+            RCLONE_CONFIG_GDRIVE_TYPE: "{{ repo.RCLONE_CONFIG_GDRIVE_TYPE || '' }}"
+            RCLONE_CONFIG_GDRIVE_SCOPE: "{{ repo.RCLONE_CONFIG_GDRIVE_SCOPE || '' }}"
+            RCLONE_CONFIG_GDRIVE_USE_TRASH: "{{ repo.RCLONE_CONFIG_GDRIVE_USE_TRASH || '' }}"
+            RCLONE_CONFIG_GDRIVE_TOKEN: "{{ repo.RCLONE_CONFIG_GDRIVE_TOKEN || '' }}"
+            RCLONE_CONFIG_GDRIVE_CLIENT_ID: "{{ repo.RCLONE_CONFIG_GDRIVE_CLIENT_ID || '' }}"
+            RCLONE_CONFIG_GDRIVE_CLIENT_SECRET: "{{ repo.RCLONE_CONFIG_GDRIVE_CLIENT_SECRET || '' }}"
+
+    - name: restore
+      match: *pvcs
+      exclude: *volsyncs
+      preconditions:
+        all: [*longhorn, *wanted]
+      generate:
+        generateExisting: true
+        synchronize: true
+        # Deleting the policy leaves what it made: Kyverno won't change a
+        # generate rule in place, so changing one means recreating the policy.
+        orphanDownstreamOnPolicyDelete: true
+        apiVersion: volsync.backube/v1alpha1
+        kind: ReplicationDestination
+        name: "{{ request.object.metadata.name }}-restore"
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          spec:
+            trigger:
+              manual: restore-once
+            restic:
+              repository: "{{ request.object.metadata.name }}-volsync"
+              copyMethod: Snapshot
+              volumeSnapshotClassName: longhorn-snapshot
+              storageClassName: longhorn
+              accessModes: "{{ request.object.spec.accessModes }}"
+              capacity: "{{ request.object.spec.resources.requests.storage }}"
+              cacheStorageClassName: longhorn
+              cacheCapacity: 2Gi
+              cleanupCachePVC: true
+              # Kept: Longhorn's snapshots live inside the volume they were
+              # taken from, so the PVC cloning from this one would never
+              # finish if it went. One extra copy of the data, on purpose.
+              cleanupTempPVC: false
+              enableFileDeletion: true
+
+    - name: backup
+      match: *pvcs
+      exclude: *volsyncs
+      preconditions:
+        all: [*longhorn, *wanted]
+      generate:
+        generateExisting: true
+        synchronize: true
+        # Deleting the policy leaves what it made: Kyverno won't change a
+        # generate rule in place, so changing one means recreating the policy.
+        orphanDownstreamOnPolicyDelete: true
+        apiVersion: volsync.backube/v1alpha1
+        kind: ReplicationSource
+        name: "{{ request.object.metadata.name }}-backup"
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          spec:
+            sourcePVC: "{{ request.object.metadata.name }}"
+            trigger:
+              schedule: "0 3 * * *"
+            restic:
+              repository: "{{ request.object.metadata.name }}-volsync"
+              copyMethod: Snapshot
+              volumeSnapshotClassName: longhorn-snapshot
+              storageClassName: longhorn
+              cacheStorageClassName: longhorn
+              cacheCapacity: 2Gi
+              pruneIntervalDays: 7
+              # The last 5 whatever their day, too: a backup run straight after
+              # a failed restore must not prune the good one from earlier that day.
+              retain:
+                last: "5"   # a string, unlike the others (VolSync's CRD)
+                daily: 7
+                weekly: 4
+                monthly: 6
+
+    # Root movers keep files' owners (Minecraft's are uid 1000) on backup
+    # and restore; Talos's baseline Pod Security allows the capabilities
+    # they add.
+    - name: privileged-movers
+      match: *pvcs
+      exclude: *volsyncs
+      preconditions:
+        all: [*longhorn, *wanted]
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: v1
+            kind: Namespace
+            name: "{{ request.object.metadata.namespace }}"
+        patchStrategicMerge:
+          metadata:
+            annotations:
+              volsync.backube/privileged-movers: "true"

@@ -1,0 +1,36 @@
+# The minecraft-shared app (../minecraft.yml). Servers are not listed here:
+# the ApplicationSet deploys each folder under servers/ as its own app.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: minecraft
+resources:
+  - portal
+  - monitoring.yaml
+  - network-policy.yaml
+configMapGenerator:
+  # Mounted at /patches by every server (common/values.yaml). A fixed name,
+  # because the chart refers to it by name: servers pick up a change on
+  # their next restart.
+  - name: minecraft-patches
+    files:
+      - common/patches/geyser.json
+    options:
+      disableNameSuffixHash: true
+  # The info sidecar every server runs (common/values.yaml). Fixed name for
+  # the same reason; servers pick up a change on their next restart.
+  - name: minecraft-info
+    files:
+      - common/info/info.py
+    options:
+      disableNameSuffixHash: true
+  # Plugin files every server is given on each start, by the managed-files
+  # init container (common/values.yaml). Fixed name for the same reason.
+  - name: minecraft-files
+    files:
+      - common/files/forcepack.yml
+      - common/files/pocketmap-default.dsc
+      - common/files/npcs.dsc
+      - common/files/protection.dsc
+      - common/files/bedrock-packs.txt
+    options:
+      disableNameSuffixHash: true

@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>KiddNet Minecraft</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..24,500,0,0&icon_names=add_circle,content_copy,map,refresh&display=block">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%235b8c3a'/%3E%3Crect y='10' width='16' height='6' fill='%23795436'/%3E%3Crect x='3' y='3' width='3' height='3' fill='%2374b04a'/%3E%3Crect x='10' y='5' width='3' height='3' fill='%2374b04a'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #1b1916; --bg-2: #24211d; --panel: #00000066; --line: #ffffff1f;
+    --ink: #f2efe8; --muted: #a8a196; --dim: #77716a;
+    --select: #ffffff; --up: #5fd35a; --down: #ff5555; --accent: #8fd16a;
+    --btn: #5b5b5b; --btn-top: #8a8a8a; --btn-bottom: #2f2f2f; --btn-ink: #f2f2f2;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh; color: var(--ink); background-color: var(--bg);
+    /* An original speckled ground, drawn in CSS. */
+    background-image:
+      radial-gradient(#ffffff08 1px, transparent 1.5px),
+      radial-gradient(#00000033 1px, transparent 1.5px),
+      linear-gradient(var(--bg-2), var(--bg));
+    background-size: 14px 14px, 22px 22px, 100% 100%;
+    background-position: 0 0, 7px 11px, 0 0;
+    font: 18px/1.3 "Pixelify Sans", ui-monospace, monospace;
+    display: flex; flex-direction: column;
+  }
+  .ms { font-family: "Material Symbols Outlined"; font-weight: 500; font-size: 20px; line-height: 1;
+        font-feature-settings: "liga"; -webkit-font-smoothing: antialiased; vertical-align: -4px; }
+  header { text-align: center; padding: 22px 16px 10px; }
+  header h1 { margin: 0; font-size: 22px; font-weight: 600; text-shadow: 2px 2px #0009; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 15px; }
+
+  main { flex: 1; width: 100%; max-width: 720px; margin: 0 auto; padding: 8px 16px 16px; }
+  .list { background: var(--panel); border-top: 2px solid #000a; border-bottom: 2px solid #000a;
+          padding: 4px; display: flex; flex-direction: column; gap: 2px; min-height: 120px; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+
+  .row { display: grid; grid-template-columns: 160px 1fr auto; gap: 12px; align-items: start;
+         padding: 6px; border: 2px solid transparent; cursor: pointer; outline: none; }
+  .title { font-size: 20px; }
+  @media (max-width: 620px) {
+    .row { grid-template-columns: 112px 1fr; }
+    .row .side { grid-column: 2; flex-direction: row; justify-content: flex-start; gap: 12px; }
+  }
+  .row:hover { background: #ffffff0d; }
+  .row[aria-selected="true"] { border-color: var(--select); background: #00000055; }
+  .row:focus-visible { border-color: var(--accent); }
+  .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .desc { color: var(--muted); font-size: 15px; margin-top: 2px;
+          display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .desc.err { color: var(--down); }
+  .side { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+          font-size: 15px; color: var(--muted); white-space: nowrap; }
+  .count { display: flex; align-items: center; gap: 8px; }
+  .count b { color: var(--ink); font-weight: 400; }
+  .bars { display: inline-flex; align-items: flex-end; gap: 1px; height: 12px; }
+  .bars i { width: 2px; background: #ffffff30; }
+  .bars i.on { background: var(--up); }
+  .x { color: var(--down); font-weight: 600; font-size: 16px; }
+
+  .view { position: relative; overflow: hidden; background: #0005; display: block; }
+  .view img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .view .none { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font-size: 13px; }
+  .icon { width: 160px; height: 90px; }
+  @media (max-width: 620px) { .icon { width: 112px; height: 63px; } }
+
+  .detail { margin-top: 10px; background: var(--panel); border: 2px solid #000a; display: none; }
+  .detail.open { display: block; }
+  .banner { aspect-ratio: 16 / 9; max-height: 360px; width: 100%; }
+  .banner .note { position: absolute; left: 8px; bottom: 6px; font-size: 14px; background: #000a; padding: 2px 8px; }
+  .facts { display: flex; flex-wrap: wrap; gap: 4px 18px; padding: 8px 10px; font-size: 15px; color: var(--muted); }
+  .facts b { color: var(--ink); font-weight: 400; }
+  .facts code { font: inherit; color: var(--ink); overflow-wrap: anywhere; }
+
+  .bar { position: sticky; bottom: 0; background: #000000aa; border-top: 2px solid #000;
+         padding: 10px 16px 14px; }
+  .buttons { max-width: 720px; margin: 0 auto; display: grid; gap: 8px; grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 620px) { .buttons { grid-template-columns: repeat(2, 1fr); } .banner { height: 150px; } }
+  .btn { font: inherit; font-size: 16px; color: var(--btn-ink); background: var(--btn); text-decoration: none;
+         border: 2px solid #000; box-shadow: inset 2px 2px var(--btn-top), inset -2px -3px var(--btn-bottom);
+         padding: 7px 8px 8px; text-align: center; cursor: pointer; text-shadow: 1px 1px #000a;
+         display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .btn:hover:not([aria-disabled="true"]) { background: #6f7da8; outline: 2px solid #fff; outline-offset: -2px; }
+  .btn[aria-disabled="true"] { color: #a0a0a0; background: #2c2c2c; box-shadow: none; cursor: default; }
+  .status { max-width: 720px; margin: 0 auto 8px; min-height: 18px; font-size: 14px; color: var(--muted); text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>KiddNet Minecraft</h1>
+  <p>Java and Bedrock players join the same servers, in the same worlds.</p>
+</header>
+<main>
+  <div class="list" id="list" role="listbox" aria-label="Servers"><p class="empty">Loading servers…</p></div>
+  <section class="detail" id="detail" aria-live="polite"></section>
+</main>
+<div class="bar">
+  <div class="status" id="status"></div>
+  <div class="buttons">
+    <button class="btn" id="copy" aria-disabled="true"><span class="ms">content_copy</span>Copy address</button>
+    <a class="btn" id="bedrock" aria-disabled="true"><span class="ms">add_circle</span>Add to Bedrock</a>
+    <a class="btn" id="map" aria-disabled="true" target="_blank" rel="noopener"><span class="ms">map</span>View map</a>
+    <button class="btn" id="refresh"><span class="ms">refresh</span>Refresh</button>
+  </div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+let servers = [], selected = null;
+
+// The address a player types: just the host on the default port.
+function address(s, edition, defaultPort) {
+  const host = s.host || s.address || s.name;
+  return s[edition] && s[edition].port !== defaultPort ? `${host}:${s[edition].port}` : host;
+}
+const range = (r) => !r ? null : r.min === r.max ? r.min : `${r.min} – ${r.max}`;
+
+// What a player sees standing at spawn: the portal photographs it from the
+// server's 3D map every hour (snapshot.py).
+function spawnView(s, cls) {
+  const box = el("div", "view " + cls);
+  if (s.shot) {
+    const img = el("img");
+    img.alt = `${s.title}: the view from spawn`;
+    img.src = s.shot;
+    box.append(img);
+  } else {
+    box.append(el("span", "none", s.java && s.java.up ? "No view yet" : ""));
+  }
+  return box;
+}
+
+// BlueMap's 3D view, looking down on spawn from above and behind.
+function mapLink(s) {
+  if (!s.map) return null;
+  const sp = s.spawn, id = s.bluemap && s.bluemap.id;
+  if (!sp || !id) return s.map;
+  const rotation = ((sp.yaw || 0) - 180) * Math.PI / 180;
+  return `${s.map}/#${id}:${sp.x}:${sp.y}:${sp.z}:120:${rotation.toFixed(2)}:0.9:0:0:perspective`;
+}
+
+function bars(j) {
+  const b = el("span", "bars");
+  const ms = j.latency_ms ?? 0;
+  const lit = ms < 150 ? 5 : ms < 300 ? 4 : ms < 600 ? 3 : ms < 1000 ? 2 : 1;
+  for (let i = 1; i <= 5; i++) { const bar = el("i", i <= lit ? "on" : ""); bar.style.height = `${i * 2 + 2}px`; b.append(bar); }
+  b.title = `${ms} ms`;
+  return b;
+}
+
+function row(s) {
+  const r = el("div", "row");
+  r.setAttribute("role", "option");
+  r.tabIndex = 0;
+  r.dataset.name = s.name;
+  const up = s.java && s.java.up;
+  const mid = el("div");
+  mid.append(el("div", "title", s.title));
+  mid.append(el("div", up ? "desc" : "desc err", up ? s.description : "Can't connect to server"));
+  const side = el("div", "side");
+  const count = el("div", "count");
+  if (up) {
+    const b = el("b", null, `${s.java.online ?? 0}/${s.java.max ?? "?"}`);
+    const names = (s.java.players || []).filter(Boolean);
+    if (names.length) b.title = names.join("\n");
+    count.append(b, bars(s.java));
+  } else {
+    count.append(el("span", "x", "✕"));
+  }
+  side.append(count);
+  const v = s.versions && s.versions.java ? range(s.versions.java) : (up && s.java.version) || "";
+  if (v) side.append(el("div", null, v));
+  r.append(spawnView(s, "icon"), mid, side);
+  r.addEventListener("click", () => select(s.name));
+  r.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(s.name); }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const rows = [...document.querySelectorAll(".row")], i = rows.indexOf(r);
+      const next = rows[i + (e.key === "ArrowDown" ? 1 : -1)];
+      if (next) { next.focus(); select(next.dataset.name); }
+    }
+  });
+  return r;
+}
+
+function setButton(id, enabled, href) {
+  const b = $(id);
+  b.setAttribute("aria-disabled", enabled ? "false" : "true");
+  if (b.tagName === "A") { if (enabled && href) b.href = href; else b.removeAttribute("href"); }
+}
+
+function select(name) {
+  selected = name;
+  for (const r of document.querySelectorAll(".row")) r.setAttribute("aria-selected", r.dataset.name === name);
+  const s = servers.find((x) => x.name === name);
+  const detail = $("detail");
+  detail.replaceChildren();
+  detail.classList.toggle("open", !!s);
+  if (!s) { ["copy", "bedrock", "map"].forEach((id) => setButton(id, false)); return; }
+
+  if (s.shot) {
+    const banner = spawnView(s, "banner");
+    if (s.spawn) banner.append(el("span", "note", `Spawn · ${s.spawn.x}, ${s.spawn.y}, ${s.spawn.z}`));
+    detail.append(banner);
+  }
+  const facts = el("div", "facts");
+  const fact = (label, value) => { const f = el("span", null, label + " "); f.append(value); facts.append(f); };
+  fact("Address", el("code", null, address(s, "java", 25565)));
+  const v = s.versions || {};
+  if (v.java) fact("Java", el("b", null, range(v.java)));
+  if (v.bedrock) fact("Bedrock", el("b", null, range(v.bedrock)));
+  detail.append(facts);
+
+  const bedrock = s.bedrock && s.bedrock.up;
+  const bedrockAddr = `${s.host || s.address}:${s.bedrock ? s.bedrock.port : 19132}`;
+  setButton("copy", true);
+  setButton("bedrock", bedrock, `minecraft://?addExternalServer=${encodeURIComponent(`KiddNet ${s.title}`)}|${bedrockAddr}`);
+  setButton("map", !!s.map, mapLink(s));
+}
+
+function say(text) { $("status").textContent = text; }
+
+$("copy").addEventListener("click", async () => {
+  const s = servers.find((x) => x.name === selected);
+  if (!s) return;
+  const addr = address(s, "java", 25565);
+  try { await navigator.clipboard.writeText(addr); say(`Copied ${addr}`); }
+  catch { say(addr); }
+});
+for (const id of ["bedrock", "map"]) {
+  $(id).addEventListener("click", (e) => { if ($(id).getAttribute("aria-disabled") === "true") e.preventDefault(); });
+}
+$("refresh").addEventListener("click", () => load(true));
+
+async function load(manual) {
+  try {
+    const r = await fetch("data/servers.json", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    const doc = await r.json();
+    servers = doc.servers;
+    const list = $("list");
+    list.replaceChildren(...(servers.length ? servers.map(row) : [el("p", "empty", "No servers are running.")]));
+    if (!servers.some((s) => s.name === selected)) selected = servers.length ? servers[0].name : null;
+    select(selected);
+    say(`Checked ${new Date(doc.updated).toLocaleTimeString()}`);
+  } catch (e) {
+    if (!servers.length) $("list").replaceChildren(el("p", "empty", "Server status is not available yet."));
+    if (manual) say("Could not reach the server list.");
+  }
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,119 @@
+# CyberChef: GCHQ's official image, already unprivileged nginx on 8080.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cyberchef
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cyberchef
+  template:
+    metadata:
+      labels:
+        app: cyberchef
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cyberchef
+          image: ghcr.io/gchq/cyberchef:11.6.0
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          # nginx's pid file and caches; the rest is read-only.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /var/cache/nginx
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: cache
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cyberchef
+spec:
+  selector:
+    app: cyberchef
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Static page served to Traefik only; no outbound connections needed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cyberchef
+spec:
+  podSelector:
+    matchLabels:
+      app: cyberchef
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 8080
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cyberchef
+  annotations:
+    kidd.network/tunnel: "true"
+    # On the public Homepage at kidd.network (copied to ainur's by its
+    # arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Utilities
+    gethomepage.dev/name: CyberChef
+    gethomepage.dev/description: Encode, decode, decrypt and analyse data, in your browser
+    gethomepage.dev/icon: cyberchef.png
+    gethomepage.dev/href: https://cyberchef.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: cyberchef.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cyberchef
+                port:
+                  name: http

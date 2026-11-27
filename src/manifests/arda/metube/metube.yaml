@@ -1,0 +1,185 @@
+# MeTube (../metube.yml). Its image starts as root to own /downloads, then
+# runs MeTube as user 1000.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: downloads
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    # Scratch: files wait here a week for you to save them. Not worth R2
+    # (kyverno-policies/volsync.yaml).
+    kidd.network/backup: "false"
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metube
+  labels:
+    app: metube
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume
+  selector:
+    matchLabels:
+      app: metube
+  template:
+    metadata:
+      labels:
+        app: metube
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: metube
+          image: ghcr.io/alexta69/metube:2026.11.22
+          env:
+            - name: DEFAULT_THEME
+              value: dark
+            # yt-dlp's newest build every night: sites, YouTube above all,
+            # break older ones.
+            - name: YTDL_NIGHTLY_UPDATE_TIME
+              value: "04:00"
+            # A week in the Completed list; removing an entry deletes its file.
+            - name: CLEAR_COMPLETED_AFTER
+              value: "604800"
+            - name: DELETE_FILE_ON_TRASHCAN
+              value: "true"
+            - name: MAX_CONCURRENT_DOWNLOADS
+              value: "2"
+          ports:
+            - name: http
+              containerPort: 8081
+          readinessProbe:
+            tcpSocket:
+              port: http
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 2Gi }
+          volumeMounts:
+            - name: downloads
+              mountPath: /downloads
+        # Files more than a week old go, whatever the list says (the list can
+        # forget a file, e.g. across a restart). MeTube's own state stays.
+        - name: cleanup
+          image: alpine:3.20
+          command:
+            - sh
+            - -c
+            - |
+              while true; do
+                find /downloads -path /downloads/.metube -prune -o -type f -mtime +7 -print -delete
+                find /downloads -mindepth 1 -path /downloads/.metube -prune -o -type d -empty -print -delete
+                sleep 3600
+              done
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: { cpu: 1m, memory: 4Mi }
+            limits: { memory: 32Mi }
+          volumeMounts:
+            - name: downloads
+              mountPath: /downloads
+      volumes:
+        - name: downloads
+          persistentVolumeClaim:
+            claimName: downloads
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: metube
+spec:
+  selector:
+    app: metube
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http
+---
+# Only Traefik reaches MeTube, and yt-dlp may only reach the public internet
+# (plus CoreDNS), blocking SSRF to cluster services and the home LAN.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: metube
+spec:
+  podSelector:
+    matchLabels:
+      app: metube
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 8081
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: metube
+  annotations:
+    # LAN only, behind the Dex login.
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex-users@kubernetescrd
+    # On the internet too, for friends away from home; the sign-in above
+    # (LLDAP's users) guards it there as on the LAN.
+    kidd.network/tunnel: "true"
+    # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    # Also on the users' page (userpage.kidd.network).
+    gethomepage.dev/instance.users: "true"
+    gethomepage.dev/group: Apps
+    gethomepage.dev/name: MeTube
+    gethomepage.dev/description: Download video or audio from YouTube and more
+    gethomepage.dev/icon: metube.png
+    gethomepage.dev/href: https://metube.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: metube.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: metube
+                port:
+                  name: http

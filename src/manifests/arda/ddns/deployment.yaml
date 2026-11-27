@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ddns
+  namespace: ddns
+  labels:
+    app: ddns
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ddns
+  template:
+    metadata:
+      labels:
+        app: ddns
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: ddns
+          image: favonia/cloudflare-ddns:1.18.0
+          env:
+            - name: CLOUDFLARE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflare-api-token
+                  key: api-token
+            - name: DOMAINS
+              value: home.kidd.network
+            - name: PROXIED
+              value: "false"
+            - name: IP6_PROVIDER
+              value: none
+            - name: UPDATE_CRON
+              value: "@every 5m"
+            # Leave the record when the pod stops: other records point at it.
+            - name: DELETE_ON_STOP
+              value: "false"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: { cpu: 5m, memory: 16Mi }
+            limits: { memory: 64Mi }
+---
+# Accepts no inbound connections and only talks to CoreDNS and the public
+# internet (Cloudflare API + public IP lookup).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ddns
+  namespace: ddns
+spec:
+  podSelector:
+    matchLabels:
+      app: ddns
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16

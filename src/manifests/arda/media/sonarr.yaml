@@ -1,0 +1,227 @@
+# Sonarr: series, at sonarr.kidd.network behind the Dex login.
+#
+# Its own login is "External": the Dex login in front is the only one. Its
+# API key is fixed (the media Secret) so the other apps and wiring.yaml can
+# use it; it is set through the environment, which overrides config.xml.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sonarr-config
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sonarr
+  labels:
+    app: sonarr
+    kidd.network/media-volume: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume
+  selector:
+    matchLabels:
+      app: sonarr
+  template:
+    metadata:
+      labels:
+        app: sonarr
+    spec:
+      # The layout under /data (storage.yaml), owned by the apps' user.
+      initContainers:
+        - name: layout
+          image: alpine:3.22
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /data/torrents/tv /data/torrents/movies /data/media/tv /data/media/movies
+              chown 1000:1000 /data /data/torrents /data/torrents/tv /data/torrents/movies /data/media /data/media/tv /data/media/movies
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+      containers:
+        - name: sonarr
+          image: lscr.io/linuxserver/sonarr:4.0.20.3014-ls329
+          env:
+            - { name: PUID, value: "1000" }
+            - { name: PGID, value: "1000" }
+            - { name: TZ, value: Europe/London }
+            - { name: SONARR__AUTH__METHOD, value: External }
+            - name: SONARR__AUTH__APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: media
+                  key: sonarr-api-key
+          ports:
+            - name: http
+              containerPort: 8989
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 20m, memory: 192Mi }
+            limits: { memory: 768Mi }
+        # Its metrics for Prometheus (exportarr, through the media PodMonitor in
+        # metrics.yaml): queue, missing, disk space, health.
+        - name: exportarr
+          image: ghcr.io/onedr0p/exportarr:v2.3.0
+          args: [sonarr]
+          env:
+            - { name: PORT, value: "9707" }
+            - { name: URL, value: "http://localhost:8989" }
+            - name: APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: media
+                  key: sonarr-api-key
+          ports:
+            - name: metrics
+              containerPort: 9707
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: { cpu: 5m, memory: 16Mi }
+            limits: { memory: 64Mi }
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: sonarr-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: media
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sonarr
+spec:
+  selector:
+    app: sonarr
+  ports:
+    - name: http
+      port: 8989
+      targetPort: http
+---
+# External auth (Dex in front): only Traefik, its media peers, and monitoring
+# may reach it; outbound is limited to qBittorrent, Prowlarr, CoreDNS and the
+# public internet (metadata).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sonarr
+spec:
+  podSelector:
+    matchLabels:
+      app: sonarr
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [prowlarr, bazarr, seerr, wiring]
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 8989
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 9707
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: qbittorrent
+      ports:
+        - port: 8080
+    - to:
+        - podSelector:
+            matchLabels:
+              app: prowlarr
+      ports:
+        - port: 9696
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sonarr
+  annotations:
+    # kidd.network/tunnel: true → published via Cloudflare Tunnel (internet)
+    # kidd.network/zero-trust: true → Cloudflare Access app created by
+    #   arda-tunnel CronJob (edge identity layer before Dex on the internet;
+    #   LAN traffic goes straight to arda via UniFi split DNS)
+    kidd.network/tunnel: "true"
+    kidd.network/zero-trust: "true"
+    # Behind the Dex login.
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
+    # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Media
+    gethomepage.dev/name: Sonarr
+    gethomepage.dev/description: Series
+    gethomepage.dev/icon: sonarr.png
+    gethomepage.dev/href: https://sonarr.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: sonarr.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: sonarr
+                port:
+                  name: http

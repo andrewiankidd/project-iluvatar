@@ -1,0 +1,44 @@
+# arda's web traffic comes in through a Cloudflare Tunnel: cloudflared dials
+# out to Cloudflare, and Cloudflare's edge serves HTTPS with its own
+# certificate. Nothing inbound is opened for the web, and no certificates are
+# issued here. Everything the tunnel receives goes to Traefik, which routes it
+# by host like any other request; external-dns-tunnel.yml points the Ingress
+# hosts at the tunnel.
+#
+# Cloudflare's free certificate covers kidd.network and *.kidd.network, one
+# level deep: an Ingress host such as a.b.kidd.network would not get HTTPS.
+#
+# Reads the cloudflared-tunnel Secret: ARDA_CLOUDFLARE_TUNNEL_TOKEN in the
+# bootstrap VM's .env (`cloudflared tunnel token arda` prints it), handed out
+# by src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudflared
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/cloudflared
+  destination:
+    name: arda
+    namespace: cloudflared
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

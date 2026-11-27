@@ -1,0 +1,48 @@
+# FileBrowser Quantum v2.1.0-stable configuration.
+# Proxy auth trusts X-Auth-Request-Email injected by Traefik's
+# oauth2-proxy-dex middleware on `/`; `/public` and `/api/public` strip
+# all X-Auth-Request-* headers at Traefik so external share links stay safe.
+http:
+  port: 8080
+  baseURL: "/"
+  externalUrl: "https://files.kidd.network"
+  trustProxyHeaders: true
+
+server:
+  database:
+    path: "/home/filebrowser/data/database.sqlite"
+  cacheDir: "/home/filebrowser/data/cache"
+  cacheDirCleanup: true
+  logging:
+    - levels: "info|warning|error"
+  sources:
+    - path: "/data"
+      name: "Media"
+      config:
+        defaultEnabled: true
+        defaultPermissions:
+          view: true
+          download: true
+          modify: true
+          create: true
+          delete: true
+
+frontend:
+  name: "Files"
+
+auth:
+  methods:
+    password:
+      enabled: false
+    proxy:
+      enabled: true
+      header: "X-Auth-Request-Email"
+      createUser: true
+
+# Only admins can pass oauth2-proxy-dex, so auto-provisioned accounts get
+# admin + share rights immediately.
+userDefaults:
+  account:
+    permissions:
+      admin: true
+      share: true

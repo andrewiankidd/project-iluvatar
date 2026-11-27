@@ -1,0 +1,100 @@
+# LAPI accepts requests only from CrowdSec agents, Traefik's bouncer, and
+# monitoring; outbound is limited to CoreDNS and the public internet (CrowdSec
+# Central API community blocklists and Hub updates).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: crowdsec-lapi
+  namespace: crowdsec
+spec:
+  podSelector:
+    matchLabels:
+      k8s-app: crowdsec
+      type: lapi
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              k8s-app: crowdsec
+              type: agent
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 8080
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 6060
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+---
+# Agents only serve Prometheus metrics and talk to LAPI, CoreDNS, and the
+# public internet (Hub collection installs at start).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: crowdsec-agent
+  namespace: crowdsec
+spec:
+  podSelector:
+    matchLabels:
+      k8s-app: crowdsec
+      type: agent
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 6060
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              k8s-app: crowdsec
+              type: lapi
+      ports:
+        - port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16

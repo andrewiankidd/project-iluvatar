@@ -1,0 +1,65 @@
+# userpage.kidd.network: what friends and family get, for anyone who signs
+# in with Dex (LLDAP's users). Every public service (no instance annotation),
+# and those marked `gethomepage.dev/instance.users: "true"` (MeTube,
+# Transmute, Seerr). No login of Homepage's own: the shared sign-in proxy
+# stands in front (users.yaml), so its sign-out is the Account bookmark.
+config:
+  settingsString: |
+    title: kidd.network
+    instanceName: users
+    headerStyle: clean
+    # Every link opens in a new tab.
+    target: _blank
+    # The colour theme fixed (Homepage's default, slate): no palette button.
+    color: slate
+    # Installable as an app, with the KiddNet logo (pwa.yaml). The favicon is
+    # also the iPhone home screen's icon; custom.js gives the tab the plain AK.
+    favicon: /images/kiddnet/kiddnet-180.png
+    pwa:
+      icons:
+        - src: /images/kiddnet/kiddnet-192.png
+          sizes: 192x192
+          type: image/png
+        - src: /images/kiddnet/kiddnet-512.png
+          sizes: 512x512
+          type: image/png
+        - src: /images/kiddnet/kiddnet-maskable-512.png
+          sizes: 512x512
+          type: image/png
+          purpose: maskable
+    # The discovered sections first, then the machines last.
+    layout:
+      Media: {}
+      Apps: {}
+      Games: {}
+      Utilities: {}
+      Areas: {}
+      Status:
+        style: row
+        columns: 3
+  # The shared sign-in's sign-out, then kidd.network.
+  bookmarks:
+    - Account:
+        - Sign out:
+            - href: /oauth2/sign_out?rd=https%3A%2F%2Fkidd.network
+              icon: mdi-logout
+              description: Sign out
+  services:
+    # The other two pages.
+    - Areas:
+        - Public:
+            href: https://kidd.network
+            description: Games, media and utilities, no sign-in
+            icon: mdi-earth
+        - Admin Area:
+            href: https://admin.kidd.network
+            description: The whole lab, for admins
+            icon: mdi-shield-account
+    # The node cards (lab-nodes.yaml) go here: "Machines" is only their place.
+    - Status:
+        - Machines:
+            description: The node cards' place (lab-nodes.yaml)
+
+env:
+  - name: HOMEPAGE_ALLOWED_HOSTS
+    value: userpage.kidd.network

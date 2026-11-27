@@ -1,0 +1,53 @@
+# The media apps' metrics, for ainur's Prometheus (through arda's agent). One
+# PodMonitor for the namespace: every pod with a port named metrics, so an app
+# is scraped by giving it one, with no list here. Sonarr, Radarr, Prowlarr and
+# Bazarr carry an exportarr sidecar; qBittorrent's exporter is below.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: media
+spec:
+  selector: {}
+  podMetricsEndpoints:
+    - port: metrics
+---
+# qBittorrent's: speeds, torrents, ratio. A Deployment of its own, not a
+# sidecar: qBittorrent lets in the pod network without a login
+# (qbittorrent.yaml: AuthSubnetWhitelist), but not localhost, and its pod's
+# firewall (gluetun) lets in 8080.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qbittorrent-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qbittorrent-exporter
+  template:
+    metadata:
+      labels:
+        app: qbittorrent-exporter
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exporter
+          image: ghcr.io/martabal/qbittorrent-exporter:v2.0.4
+          env:
+            - { name: QBITTORRENT_BASE_URL, value: "http://qbittorrent:8080" }
+            - { name: EXPORTER_PORT, value: "8090" }
+          ports:
+            - name: metrics
+              containerPort: 8090
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: { cpu: 5m, memory: 16Mi }
+            limits: { memory: 64Mi }

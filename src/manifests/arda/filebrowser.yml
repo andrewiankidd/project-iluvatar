@@ -1,0 +1,41 @@
+# FileBrowser Quantum on arda: browse and share files on the existing `media`
+# volume (shared with qBittorrent, Sonarr, Radarr, etc.) via passworded,
+# expiring links at files.kidd.network.
+#
+# Runs in the `media` namespace so it mounts the existing `media` PVC at /data.
+#
+# Two Ingresses share files.kidd.network (both on the Cloudflare tunnel):
+#   /                 Dex admin login (oauth2-proxy-dex); manages files & shares
+#   /public,          public share links for family/friends (no Dex login;
+#   /api/public       X-Auth-Request-* headers stripped at Traefik)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: filebrowser
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/filebrowser
+  destination:
+    name: arda
+    namespace: media
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

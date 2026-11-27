@@ -1,0 +1,35 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cert-download
+  namespace: ainur-cert
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+    cert-manager.io/cluster-issuer: "local-ca"
+    gethomepage.dev/enabled: "true"
+    # LAN only: the lab CA is for the LAN's own certificates; through Cloudflare
+    # every site has a valid one.
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Lab
+    gethomepage.dev/name: Lab CA
+    gethomepage.dev/description: Trust this lab's certificates
+    gethomepage.dev/icon: mdi-certificate
+    # Its pods, for the status badge (they're app: cert-download).
+    gethomepage.dev/pod-selector: app=cert-download
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - cert.kidd.network
+      secretName: cert-site-tls
+  rules:
+    - host: cert.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cert-download
+                port:
+                  number: 80

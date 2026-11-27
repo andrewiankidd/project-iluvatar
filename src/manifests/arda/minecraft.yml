@@ -1,0 +1,185 @@
+# Minecraft on arda.
+#
+# Every folder under src/manifests/arda/minecraft/servers/ that holds a
+# server.yaml becomes a server. Adding one is a new folder with server.yaml
+# and values.yaml; nothing in this file changes. For a folder named <name>:
+#
+#   <name>.minecraft.kidd.network         Java (TCP 25565) and Bedrock (UDP 19132)
+#   minecraft.kidd.network/map/<name>/    BlueMap 3D web map, through the portal
+#
+# Game traffic cannot go through the Cloudflare Tunnel, so <name>'s record is
+# a DNS-only CNAME to home.kidd.network (ddns.yml) and reaches the server
+# through the router's port forwards (TCP 25565, UDP 19132, TCP 19132 and
+# UDP 19133) to arda's shared LoadBalancer address, 192.168.1.58. ainur's
+# unifi CronJob keeps those forwards in UniFi, from the
+# Service's own ports. Everything on the web goes through the tunnel.
+#
+# The portal (minecraft.kidd.network) finds the servers from their Service
+# labels at runtime; it holds no server list, and serves each map by name.
+# external-dns (external-dns.yml) publishes the server records.
+#
+# Who plays is not in this public repo. The servers read the minecraft-players
+# Secret (whitelist, builders): ARDA_MINECRAFT_* in the bootstrap VM's .env,
+# handed out by src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: minecraft-servers
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - git:
+        repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+        revision: main
+        files:
+          - path: src/manifests/arda/minecraft/servers/*/server.yaml
+      # enabled: "false" in a server.yaml switches that server off; its world
+      # stays (preserveResourcesOnDeletion), only its pod and Services go.
+      selector:
+        matchExpressions:
+          - key: enabled
+            operator: NotIn
+            values: ["false"]
+  syncPolicy:
+    # Removing a server folder must never take its world with it.
+    preserveResourcesOnDeletion: true
+  # A server's app can be paused by hand (its automated sync removed) to stop
+  # the server for maintenance, such as restoring a world
+  # (minecraft/README.md); without this, the ApplicationSet puts it straight
+  # back. Patch it back in afterwards.
+  ignoreApplicationDifferences:
+    - jsonPointers:
+        - /spec/syncPolicy/automated
+  template:
+    metadata:
+      name: 'minecraft-{{ .path.basename }}'
+      namespace: argocd
+      labels:
+        minecraft.kidd.network/server: '{{ .path.basename }}'
+    spec:
+      project: arda
+      sources:
+        - repoURL: https://itzg.github.io/minecraft-server-charts
+          chart: minecraft
+          targetRevision: 5.3.1
+          helm:
+            releaseName: '{{ .path.basename }}'
+            valueFiles:
+              - $values/src/manifests/arda/minecraft/common/values.yaml
+              - '$values/{{ .path.path }}/values.yaml'
+            valuesObject:
+              serviceLabels:
+                minecraft.kidd.network/server: '{{ .path.basename }}'
+              serviceAnnotations:
+                external-dns.kubernetes.io/hostname: '{{ .path.basename }}.minecraft.kidd.network'
+                external-dns.kubernetes.io/target: home.kidd.network
+                minecraft.kidd.network/title: '{{ .title }}'
+                minecraft.kidd.network/description: '{{ .description }}'
+                minecraft.kidd.network/order: '{{ .order }}'
+                minecraft.kidd.network/map: 'https://minecraft.kidd.network/map/{{ .path.basename }}'
+                # 192.168.1.58, shared with the other games (metallb/pool.yaml),
+                # and forwarded from the internet by ainur's unifi CronJob.
+                # Two servers can't share it on the same ports.
+                metallb.io/allow-shared-ip: arda
+                kidd.network/port-forward: "true"
+              extraEnv:
+                # Geyser hands this to NetherNet clients (common/patches/geyser.json).
+                CFG_BEDROCK_ADDRESS: '{{ .path.basename }}.minecraft.kidd.network'
+              minecraftServer:
+                # Bedrock through Geyser, on the same LoadBalancer IP as Java:
+                # RakNet on UDP 19132, NetherNet signaling on TCP 19132 and
+                # its WebRTC on UDP 19133.
+                extraPorts:
+                  - name: bedrock
+                    containerPort: 19132
+                    protocol: UDP
+                    service:
+                      enabled: true
+                      embedded: true
+                      port: 19132
+                  - name: bedrock-signal
+                    containerPort: 19132
+                    protocol: TCP
+                    service:
+                      enabled: true
+                      embedded: true
+                      port: 19132
+                  - name: bedrock-rtc
+                    containerPort: 19133
+                    protocol: UDP
+                    service:
+                      enabled: true
+                      embedded: true
+                      port: 19133
+                  - name: info   # the info sidecar, read by the portal
+                    containerPort: 8099
+                    protocol: TCP
+                    service:
+                      enabled: true
+                      embedded: false
+                      type: ClusterIP
+                      port: 8099
+                  - name: map    # BlueMap; the portal serves it at /map/<name>/
+                    containerPort: 8100
+                    protocol: TCP
+                    service:
+                      enabled: true
+                      embedded: false
+                      type: ClusterIP
+                      port: 8100
+        - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+          targetRevision: main
+          ref: values
+      destination:
+        name: arda
+        namespace: minecraft
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+        # Keep retrying a failed sync: a fresh cluster has to come up on
+        # its own, and most failures are ordering (a CRD, webhook or
+        # Secret not there yet) that resolves itself.
+        retry:
+          limit: -1
+          backoff:
+            duration: 30s
+            factor: 2
+            maxDuration: 10m
+        automated:
+          prune: true
+          selfHeal: true
+---
+# What the servers share: the portal, and the plugin config patches they
+# mount (common/patches). See src/manifests/arda/minecraft/kustomization.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: minecraft-shared
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/minecraft
+  destination:
+    name: arda
+    namespace: minecraft
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

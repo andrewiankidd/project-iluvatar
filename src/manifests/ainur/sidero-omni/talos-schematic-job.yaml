@@ -1,0 +1,224 @@
+# Builds the Talos image the x86 machines PXE boot, with the lab CA and the
+# Omni join config embedded in it, and points ainur-netboot's boot.ipxe at it.
+#
+# This is what lets a machine trust Omni from its first boot onwards: Omni
+# (1.13+) builds each machine's installer from the schematic it booted with,
+# so the embedded TrustedRootsConfig is never lost on install or reboot.
+#
+# The schematic ID is a hash of its content, so re-running is harmless; a new
+# lab CA or join token gives a new ID and a new boot.ipxe.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: talos-schematic
+  namespace: ainur-sidero-omni
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: talos-schematic
+  namespace: ainur-netboot
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: talos-schematic
+  namespace: ainur-netboot
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: talos-schematic
+subjects:
+  - kind: ServiceAccount
+    name: talos-schematic
+    namespace: ainur-sidero-omni
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: talos-schematic
+  namespace: ainur-sidero-omni
+  # A changed Job spec cannot be patched; recreate it instead.
+  annotations:
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      serviceAccountName: talos-schematic
+      restartPolicy: Never
+      containers:
+        - name: schematic
+          image: alpine:3.20
+          env:
+            - name: OMNI_ENDPOINT
+              value: https://omni.kidd.network
+            # Keep in step with omni-config/omni-cluster-template.yaml.
+            - name: TALOS_VERSION
+              value: v1.14.5
+            # The same factory as registries.factories in values.yaml.
+            - name: FACTORY_URL
+              value: https://factory.talos.dev
+            - name: PXE_URL
+              value: https://pxe.factory.talos.dev
+            # ainur's copy of the kernel and initramfs (../pi-netboot/
+            # talos-iso.yaml), served by bootstrap-http: a LAN download,
+            # not ~100 MB from the factory on every boot.
+            - name: LOCAL_URL
+              value: http://192.168.1.59/talos-media
+            # iscsi-tools and util-linux-tools are what Longhorn needs; i915
+            # the Intel GPU's driver, for Quick Sync. Keep in step with
+            # systemExtensions in omni-config/omni-cluster-template.yaml,
+            # which is what machines already installed get.
+            - name: EXTENSIONS
+              value: siderolabs/intel-ucode siderolabs/iscsi-tools siderolabs/util-linux-tools
+            - name: OMNICTL_URL
+              value: https://github.com/siderolabs/omni/releases/download/v1.13.3/omnictl-linux-arm64
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              apk add --no-cache ca-certificates curl
+              cat /etc/omni/lab-root-ca.crt >> /etc/ssl/certs/ca-certificates.crt
+              # omnictl and talosctl from the omni-tools volume, fetched once per
+              # version: not 72 MB into the SD card and from GitHub on every run.
+              fetch() { f="/tools/$(echo "$2" | sha256sum | cut -c1-12)-$1"; [ -s "$f" ] ||
+                { curl -fsSL -o "$f.$$" "$2" && chmod +x "$f.$$" && mv "$f.$$" "$f"; }; ln -sf "$f" "/usr/local/bin/$1"; }
+              fetch omnictl "$OMNICTL_URL"
+              chmod +x /usr/local/bin/omnictl
+              # On a fresh ainur, Omni can start well after this Job: wait for it to
+              # write its key and answer, rather than spend the retries and fail.
+              until [ -s /omni-data/automation.key ]; do echo "waiting for Omni's key"; sleep 10; done
+              export OMNI_SERVICE_ACCOUNT_KEY="$(cat /omni-data/automation.key)"
+              until omnictl get clusters >/dev/null 2>&1; do echo "waiting for Omni"; sleep 10; done
+
+              # The lab CA, then the SideroLink, event sink and log config
+              # that make the machine join Omni.
+              {
+                echo "apiVersion: v1alpha1"
+                echo "kind: TrustedRootsConfig"
+                echo "name: lab-root-ca"
+                echo "certificates: |"
+                # awk, not sed: the CA has no final newline, and sed would glue
+                # the --- below onto its END CERTIFICATE line.
+                awk '{print "  " $0}' /etc/omni/lab-root-ca.crt
+                echo "---"
+                omnictl jointoken machine-config | sed '1{/^---$/d}'
+              } > /tmp/config.yaml
+
+              {
+                echo "customization:"
+                echo "  systemExtensions:"
+                echo "    officialExtensions:"
+                for e in $EXTENSIONS; do echo "      - $e"; done
+                echo "  embeddedMachineConfiguration: |"
+                sed 's/^/    /' /tmp/config.yaml
+              } > /tmp/schematic.yaml
+
+              id="$(curl -fsS -X POST -H 'Content-Type: application/yaml' \
+                --data-binary @/tmp/schematic.yaml "$FACTORY_URL/schematics" \
+                | sed -n 's/.*"id": *"\([0-9a-f]*\)".*/\1/p')"
+              test -n "$id"
+              echo "schematic $id"
+
+              # The boot menu: Talos, or (picked by hand, never the default)
+              # Talos that first wipes the system disk, like the ISO's "Reset
+              # system disk". That's for a machine whose install Omni can't
+              # reach any more, such as one installed by an earlier Omni or
+              # under an earlier lab CA. The wipe is a kernel argument here,
+              # not in the schematic, so it can't follow into the install.
+              #
+              # Each loads the kernel and initramfs from ainur's copy, and
+              # falls back to the factory while that isn't cached yet (a new
+              # schematic, for up to 5 minutes).
+              img="$PXE_URL/image/$id/$TALOS_VERSION"
+              loc="$LOCAL_URL/$id/$TALOS_VERSION"
+              pxe="$(curl -fsS "$PXE_URL/pxe/$id/$TALOS_VERSION/metal-amd64" | sed '/^#!ipxe/d')"
+              echo "$pxe" | grep -q "^kernel $img/kernel-amd64 "
+              echo "$pxe" | grep -q "^initrd $img/initramfs-amd64.xz$"
+              # $1: extra kernel arguments
+              factory() { echo "$pxe" | sed "/^kernel /s|\$|$1|"; }
+              # $1: extra kernel arguments; $2: where to go if it fails
+              local_() { factory "$1" | sed -E -e "s|$img/|$loc/|g" -e "/^(kernel|initrd|boot)/s/\$/ || goto $2/"; }
+              wipe=' talos.experimental.wipe=system'
+              {
+                echo '#!ipxe'
+                echo 'menu Talos'
+                echo 'item talos Talos'
+                echo 'item reset Talos (Reset system disk: wipes it, then joins Omni)'
+                echo 'choose --default talos --timeout 10000 target || goto talos'
+                echo 'goto ${target}'
+                echo ':talos'
+                local_ '' talos-factory
+                echo ':talos-factory'
+                factory ''
+                echo ':reset'
+                local_ "$wipe" reset-factory
+                echo ':reset-factory'
+                factory "$wipe"
+              } > /tmp/boot.ipxe
+              grep -q "^kernel $loc/kernel-amd64 .*$wipe || goto reset-factory$" /tmp/boot.ipxe
+
+              # Served by bootstrap-http as /talos/boot.ipxe, which the
+              # proxy DHCP (../pi-netboot/proxy-dhcp.yaml) hands to iPXE.
+              # ../pi-netboot/talos-iso.yaml caches iso-url for USB, and the
+              # kernel and initramfs at pxe-image-url into cache-dir, for this
+              # menu.
+              {
+                echo "apiVersion: v1"
+                echo "kind: ConfigMap"
+                echo "metadata:"
+                echo "  name: talos-ipxe"
+                echo "  namespace: ainur-netboot"
+                echo "data:"
+                echo "  iso-url: $FACTORY_URL/image/$id/$TALOS_VERSION/metal-amd64.iso"
+                echo "  pxe-image-url: $img"
+                echo "  cache-dir: $id/$TALOS_VERSION"
+                echo "  boot.ipxe: |"
+                sed 's/^/    /' /tmp/boot.ipxe
+              } > /tmp/talos-ipxe.yaml
+
+              sa=/var/run/secrets/kubernetes.io/serviceaccount
+              curl -fsS -o /dev/null -X PATCH \
+                --cacert "$sa/ca.crt" \
+                -H "Authorization: Bearer $(cat "$sa/token")" \
+                -H 'Content-Type: application/apply-patch+yaml' \
+                --data-binary @/tmp/talos-ipxe.yaml \
+                "https://kubernetes.default.svc/api/v1/namespaces/ainur-netboot/configmaps/talos-ipxe?fieldManager=talos-schematic&force=true"
+              cat /tmp/talos-ipxe.yaml
+          volumeMounts:
+            - name: tools
+              mountPath: /tools
+            - name: omni-data
+              mountPath: /omni-data
+              readOnly: true
+            - name: lab-root-ca
+              mountPath: /etc/omni/lab-root-ca.crt
+              subPath: ca.crt
+              readOnly: true
+      # For the automation key on Omni's ReadWriteOnce data volume, as in
+      # omni-cluster-template-sync-job.yaml.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: omni
+              topologyKey: kubernetes.io/hostname
+      volumes:
+        - name: tools
+          persistentVolumeClaim:
+            claimName: omni-tools
+        - name: omni-data
+          persistentVolumeClaim:
+            claimName: omni
+            readOnly: true
+        - name: lab-root-ca
+          configMap:
+            name: lab-ca

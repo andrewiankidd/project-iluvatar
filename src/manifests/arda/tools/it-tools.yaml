@@ -1,0 +1,151 @@
+# IT-Tools. Its image runs nginx as root on port 80; only its built site is
+# taken from it (copied out at start, 13 MB) and served by unprivileged nginx
+# on a read-only filesystem.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: it-tools-nginx
+data:
+  default.conf: |
+    server {
+      listen 8080;
+      root /site;
+      index index.html;
+      # A single-page app: every path is index.html.
+      location / {
+        try_files $uri $uri/ /index.html;
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: it-tools
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: it-tools
+  template:
+    metadata:
+      labels:
+        app: it-tools
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: site
+          image: ghcr.io/corentinth/it-tools:2024.10.22-7ca5933
+          command: ["cp", "-r", "/usr/share/nginx/html/.", "/site/"]
+          securityContext: &restricted
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: site
+              mountPath: /site
+      containers:
+        - name: nginx
+          image: nginxinc/nginx-unprivileged:1.31.7-alpine
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          securityContext: *restricted
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: site
+              mountPath: /site
+              readOnly: true
+            - name: config
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: site
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: config
+          configMap:
+            name: it-tools-nginx
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: it-tools
+spec:
+  selector:
+    app: it-tools
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Static page served to Traefik only; no outbound connections needed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: it-tools
+spec:
+  podSelector:
+    matchLabels:
+      app: it-tools
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 8080
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: it-tools
+  annotations:
+    kidd.network/tunnel: "true"
+    # On the public Homepage at kidd.network (copied to ainur's by its
+    # arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Utilities
+    gethomepage.dev/name: IT-Tools
+    gethomepage.dev/description: Encoders, hashes, converters and generators, in your browser
+    gethomepage.dev/icon: it-tools.png
+    gethomepage.dev/href: https://it-tools.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: it-tools.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: it-tools
+                port:
+                  name: http

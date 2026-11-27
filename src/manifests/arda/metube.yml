@@ -1,0 +1,38 @@
+# MeTube: a web page for yt-dlp. Paste a link (YouTube and 1,000+ other
+# sites), pick video or audio and a quality, and it downloads; then save the
+# file from its Completed list. No accounts, no library, no database: files
+# and the list are kept a week, then deleted.
+#
+# At metube.kidd.network, on the LAN only, behind the Dex login
+# (oauth2-proxy.yml). Off the tunnel: it fetches whatever URL it's given.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metube
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/metube
+  destination:
+    name: arda
+    namespace: metube
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

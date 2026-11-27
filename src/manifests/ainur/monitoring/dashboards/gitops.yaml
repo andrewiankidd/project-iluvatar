@@ -1,0 +1,577 @@
+# GitOps and certificates (Grafana, Cluster folder): Argo CD's apps on both clusters, and cert-manager's certificates (the lab CA's, behind all the LAN's HTTPS).
+# Written by hand from the metrics the apps send (each app's monitor);
+# Grafana loads it like any dashboard (the grafana_dashboard label).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-gitops
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Cluster
+data:
+  gitops.json: |
+    {
+      "uid": "gitops",
+      "title": "GitOps and certificates",
+      "description": "Argo CD's apps on both clusters, and cert-manager's certificates (the lab CA's, behind all the LAN's HTTPS).",
+      "tags": [
+        "cluster"
+      ],
+      "timezone": "browser",
+      "refresh": "1m",
+      "time": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "schemaVersion": 39,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Apps",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "count(argocd_app_info)"
+            }
+          ],
+          "id": 1,
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 4,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Out of sync",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "count(argocd_app_info{sync_status!=\"Synced\"}) or vector(0)"
+            }
+          ],
+          "id": 2,
+          "gridPos": {
+            "x": 4,
+            "y": 0,
+            "w": 4,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Not healthy",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "count(argocd_app_info{health_status!=\"Healthy\"}) or vector(0)"
+            }
+          ],
+          "id": 3,
+          "gridPos": {
+            "x": 8,
+            "y": 0,
+            "w": 4,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Syncs, 24h",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "round(sum(increase(argocd_app_sync_total[24h])))"
+            }
+          ],
+          "id": 4,
+          "gridPos": {
+            "x": 12,
+            "y": 0,
+            "w": 4,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Certificates",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "count(certmanager_certificate_expiration_timestamp_seconds)"
+            }
+          ],
+          "id": 5,
+          "gridPos": {
+            "x": 16,
+            "y": 0,
+            "w": 4,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Soonest expiry",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "d",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 14
+                  },
+                  {
+                    "color": "green",
+                    "value": 30
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "min((certmanager_certificate_expiration_timestamp_seconds - time()) / 86400)"
+            }
+          ],
+          "id": 6,
+          "gridPos": {
+            "x": 20,
+            "y": 0,
+            "w": 4,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "table",
+          "title": "Apps not synced or not healthy",
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "None"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "name"
+                },
+                "properties": [
+                  {
+                    "id": "links",
+                    "value": [
+                      {
+                        "title": "Open in Argo CD (diff, sync)",
+                        "url": "https://argocd.kidd.network/applications/argocd/${__value.raw}",
+                        "targetBlank": true
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "indexByName": {
+                  "name": 0,
+                  "sync_status": 1,
+                  "health_status": 2
+                }
+              }
+            }
+          ],
+          "targets": [
+            {
+              "refId": "A",
+              "instant": true,
+              "format": "table",
+              "expr": "max by (name, sync_status, health_status) (argocd_app_info{sync_status!=\"Synced\"} or argocd_app_info{health_status!=\"Healthy\"})"
+            }
+          ],
+          "id": 7,
+          "gridPos": {
+            "x": 0,
+            "y": 4,
+            "w": 12,
+            "h": 9
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "table",
+          "title": "Certificates, soonest expiry first (days)",
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "None"
+            },
+            "overrides": []
+          },
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "indexByName": {
+                  "namespace": 0,
+                  "name": 1,
+                  "Value": 2
+                }
+              }
+            }
+          ],
+          "targets": [
+            {
+              "refId": "A",
+              "instant": true,
+              "format": "table",
+              "expr": "sort(round(max by (namespace, name) ((certmanager_certificate_expiration_timestamp_seconds - time()) / 86400)))"
+            }
+          ],
+          "id": 8,
+          "gridPos": {
+            "x": 12,
+            "y": 4,
+            "w": 12,
+            "h": 9
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Syncs per hour",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "custom": {
+                "fillOpacity": 20,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              },
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(increase(argocd_app_sync_total[1h]))",
+              "legendFormat": "syncs"
+            }
+          ],
+          "id": 9,
+          "gridPos": {
+            "x": 0,
+            "y": 13,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Apps by health",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "custom": {
+                "fillOpacity": 20,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "normal"
+                }
+              },
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "count by (health_status) (argocd_app_info)",
+              "legendFormat": "{{health_status}}"
+            }
+          ],
+          "id": 10,
+          "gridPos": {
+            "x": 12,
+            "y": 13,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    }

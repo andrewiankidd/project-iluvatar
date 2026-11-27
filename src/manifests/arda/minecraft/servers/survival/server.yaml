@@ -1,0 +1,10 @@
+# Read by the ApplicationSet in src/manifests/arda/minecraft.yml.
+# The folder name is the server's name: survival.minecraft.kidd.network,
+# map.survival.minecraft.kidd.network, Helm release "survival".
+title: Survival
+description: A fresh survival world.
+order: "2"
+# Switched off: not played (kept off 2026-11-22, though four nodes would fit it).
+# Its old world is gone (no volume, no backup): deleting the line below starts
+# a fresh world, backed up nightly like the rest.
+enabled: "false"

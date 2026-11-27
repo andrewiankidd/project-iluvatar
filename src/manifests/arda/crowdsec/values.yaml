@@ -1,0 +1,80 @@
+# CrowdSec chart 0.24.3 on arda (../crowdsec.yml).
+# Talos runs containerd.
+container_runtime: containerd
+
+# Deterministic LAPI JWT secret and agent registration token from
+# arda-bootstrap-job.yaml so Argo CD doesn't rotate random chart secrets on
+# every sync.
+secrets:
+  externalSecret:
+    name: crowdsec-secrets
+    csLapiSecretKey: csLapiSecret
+    registrationTokenKey: registrationToken
+
+# Traefik's JSON access log records cloudflared's pod IP (10.244.x.y) as
+# ClientHost and the real internet visitor in request_Cf-Connecting-Ip.
+# Named 00-* in s02-enrich so it runs BEFORE crowdsecurity/whitelists (which
+# would otherwise drop 10.244.x.y as private) and geoip-enrich. LAN requests
+# carry no CF-Connecting-IP header and stay whitelisted as 192.168.1.x.
+config:
+  parsers:
+    s02-enrich:
+      00-cf-connecting-ip.yaml: |
+        name: local/cf-connecting-ip
+        description: "Use Cloudflare CF-Connecting-IP as source_ip for Traefik tunnel logs"
+        filter: "evt.Parsed.program == 'traefik' && evt.Unmarshaled.traefik != nil && evt.Unmarshaled.traefik['request_Cf-Connecting-Ip'] not in ['', nil]"
+        onsuccess: next_stage
+        statics:
+          - meta: source_ip
+            expression: "evt.Unmarshaled.traefik['request_Cf-Connecting-Ip']"
+          - parsed: remote_addr
+            expression: "evt.Unmarshaled.traefik['request_Cf-Connecting-Ip']"
+
+lapi:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per Longhorn RWO volume (SQLite)
+  env:
+    - name: COLLECTIONS
+      value: "crowdsecurity/traefik crowdsecurity/http-cve crowdsecurity/base-http-scenarios"
+    # Auto-registers the Traefik bouncer middleware on LAPI startup.
+    - name: BOUNCER_KEY_traefik
+      valueFrom:
+        secretKeyRef:
+          name: crowdsec-secrets
+          key: bouncer-key
+  persistentVolume:
+    data:
+      enabled: true
+      size: 1Gi
+    config:
+      enabled: true
+      size: 100Mi
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 384Mi }
+
+agent:
+  acquisition:
+    - namespace: kube-system
+      podName: traefik-*
+      program: traefik
+  env:
+    - name: COLLECTIONS
+      value: "crowdsecurity/traefik crowdsecurity/http-cve crowdsecurity/base-http-scenarios"
+  # Run on the control plane too so Traefik is covered wherever it schedules.
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+  resources:
+    requests: { cpu: 25m, memory: 96Mi }
+    limits: { memory: 256Mi }

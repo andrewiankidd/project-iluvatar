@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-vip
+  namespace: ainur-netboot
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-vip
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: kube-vip
+    namespace: ainur-netboot
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kube-vip-tftp
+  namespace: ainur-netboot
+spec:
+  selector:
+    matchLabels:
+      app: kube-vip-tftp
+  template:
+    metadata:
+      labels:
+        app: kube-vip-tftp
+    spec:
+      serviceAccountName: kube-vip
+      # valar-50: its state and the VIP live there.
+      nodeSelector:
+        kidd.network/role: "control-plane"
+      # The VIP and netbooting the other Pis: evicted last.
+      priorityClassName: ainur-critical
+      hostNetwork: true
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: kube-vip
+          image: ghcr.io/kube-vip/kube-vip:v1.0.2
+          args: ["manager"]
+          securityContext:
+            privileged: true
+          env:
+            - name: address
+              value: "192.168.1.59"
+            - name: vip_interface
+              value: "eth0"
+            - name: lb_enable
+              value: "false"
+            - name: cp_enable
+              value: "true"
+            - name: svc_enable
+              value: "false"
+            - name: cp_namespace
+              value: "ainur-netboot"
+            - name: svc_namespace
+              value: "ainur-netboot"
+            - name: vip_arp
+              value: "true"
+            # Control-plane mode always holds a lease (plndr-cp-lock), even
+            # alone on valar-50, and drops the VIP when it can't renew it. The
+            # defaults (5s lease, 3s to renew) let an API server slowed by the
+            # SD card take netboot and every *.kidd.network name down, so the
+            # lease is long, as for k3s's own controllers (sdcard user-data).
+            - name: vip_leaderelection
+              value: "true"
+            - name: vip_leaseduration
+              value: "60"
+            - name: vip_renewdeadline
+              value: "40"
+            - name: vip_retryperiod
+              value: "5"
+            - name: vip_namespace
+              value: "ainur-netboot"
+            - name: vip_loglevel
+              value: "-4"

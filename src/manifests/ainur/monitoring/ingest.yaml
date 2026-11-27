@@ -1,0 +1,53 @@
+# Where arda's collectors send to (src/manifests/arda/monitoring): Prometheus'
+# remote-write path and Loki's push path, and nothing else of either, over
+# HTTPS with the lab CA. Queries go through Grafana.
+#
+# Unauthenticated, like the rest of the LAN for now: anyone on it could push
+# metrics or logs here (BACKLOG, VLANs).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prometheus-write
+  annotations:
+    cert-manager.io/cluster-issuer: local-ca
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - prometheus.kidd.network
+      secretName: prometheus-write-tls
+  rules:
+    - host: prometheus.kidd.network
+      http:
+        paths:
+          - path: /api/v1/write
+            pathType: Exact
+            backend:
+              service:
+                name: kps-prometheus
+                port:
+                  number: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: loki-push
+  annotations:
+    cert-manager.io/cluster-issuer: local-ca
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - loki.kidd.network
+      secretName: loki-push-tls
+  rules:
+    - host: loki.kidd.network
+      http:
+        paths:
+          - path: /loki/api/v1/push
+            pathType: Exact
+            backend:
+              service:
+                name: loki
+                port:
+                  number: 3100

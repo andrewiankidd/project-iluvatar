@@ -1,0 +1,302 @@
+# Creative: the world carried over from the old 1.16.5 server.
+# Layered over ../../common/values.yaml.
+
+minecraftServer:
+  motd: KiddNet Creative
+  difficulty: easy
+  # Smaller than common's 6G: a few builders, no mobs to speak of. Paper,
+  # BlueMap's renders and Geyser still want a few gigabytes; 2G is where they
+  # start to struggle.
+  memory: 3G
+
+# The heap above plus the JVM's own overhead: it runs at about 3.8Gi, as
+# the image commits the whole heap up front. Goldilocks (../../../goldilocks.yml)
+# says what it should be once it has watched it for a while.
+resources:
+  requests:
+    memory: 4Gi
+  limits:
+    memory: 5Gi
+
+extraEnv:
+  MODE: creative
+  FORCE_GAMEMODE: "true"
+  # Open to anyone: visitors look around and work switches, but only the
+  # members under protection: below can change anything. The image turns the
+  # whitelist on whenever WHITELIST is set, so the shared one is blanked here.
+  ENABLE_WHITELIST: "false"
+  ENFORCE_WHITELIST: "false"
+  WHITELIST: ""
+
+# WorldGuard's __global__ region in each world, set on every start
+# (common/files/protection.dsc). The builders in the minecraft-players Secret
+# build; everyone else may only use doors, buttons, levers, gates and pressure
+# plates. A region inside a world keeps its own members and flags. A flag set
+# to "unset" is cleared.
+protection:
+  worlds: [world, world_nether, world_the_end]
+  flags:
+    passthrough: deny   # non-members: no building, chests or other use...
+    use: allow          # ...except doors, buttons, levers and the like
+    build: unset        # was deny in the nether and end, which barred members too
+
+# NPCs (common/files/npcs.dsc). Changing this list restarts the server.
+#
+#   places:  name: "x y z [yaw [pitch [world]]]"   a spot, and which way to face
+#   areas:   name: "x1 y1 z1 x2 y2 z2 [world]"     a box to wander in
+#
+# In game, /npcspot <name> records where you stand, facing, for places:
+# (it saves to plugins/Denizen/data/npcspots.yml).
+#
+# Each of people: is
+#   name:     shown above the head; &-colour codes work
+#   skin:     a player name, or an https URL of a skin image
+#   lines:    what it says when clicked (one, at random)
+#   trades:   - sell: "8 iron_ingot"      what the player gets
+#               for: "2 emerald"          what they pay: one item, or a list of two
+#             Trading is open only at a shop: entry, once it is there.
+#   closed:   what a shopkeeper says out of hours (default: when it opens)
+#   schedule: from each time (0-23, or "7:30") until the next, one of
+#               shop: <place>    stand there, trading
+#               stand: <place>   stand there
+#               sit: <place>     sit there
+#               sleep: <place>   lie there, e.g. on a bed
+#               wander: <area>   stroll around the area
+#             It walks between them; the last entry runs past midnight.
+#
+# A place or area can also be written out in full instead of named.
+npcs:
+  # Daylight is locked on this world, so the NPCs keep real (UK) time.
+  clock: real
+  places:
+    # The cloth market's stalls, recorded with /npcspot.
+    market-armor-stall: "661.5 65.9 587.7 358.8 -7.4"
+    market-cake-stall: "660.7 66 595.3 185.1 16.8"
+    market-food-stall: "666.6 66 595.9 264.8 9.4"
+    market-tool-stall: "677.2 66 603.3 177.5 1.8"
+    market-art-stall: "686.9 66 606.5 2.3 1.5"
+    market-plant-stall: "688.3 66 615.9 91.9 13.9"
+    market-cake1-stall: "688.2 66 623.7 181.6 22"
+    market-cake2-stall: "692.8 66 623.4 187.8 8.2"
+    # The Lion's Throat: its guard posts and entrance desks.
+    lions-throat-palace-guard: "657.6 67 722.6 258.6 9.7"
+    lions-throat-city-guard: "675.6 67 698.4 294.4 11.7"
+    lions-throat-podium-guard: "670.1 69 711.1 314 16.5"
+    lions-throat-entrance-clerk1: "672.3 67 727.6 269 8.4"
+    lions-throat-entrance-clerk2: "686.1 67 713.7 0.5 11.7"
+  areas:
+    # Around the stalls, for the evening stroll.
+    cloth-market: "655 63 582 698 72 629"
+  # The cloth market's stallholders (the Lion's Throat's staff follow them): shop 8:00 to 18:00, stroll the market in
+  # the evening, and stand at their stalls overnight until they have beds.
+  people:
+    armourer:
+      name: "&7Bertram the Armourer"
+      lines:
+        - "Iron or nothing, I say."
+        - "That chestplate's seen three sieges. Well, two."
+      trades:
+        - sell: "iron_helmet"
+          for: "5 emerald"
+        - sell: "iron_chestplate"
+          for: "9 emerald"
+        - sell: "iron_leggings"
+          for: "7 emerald"
+        - sell: "iron_boots"
+          for: "4 emerald"
+        - sell: "chainmail_chestplate"
+          for: "6 emerald"
+      schedule:
+        - at: 8
+          shop: market-armor-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-armor-stall
+    baker:
+      name: "&6Mabel the Baker"
+      lines:
+        - "Fresh out the oven this morning."
+        - "Cake's for celebrating. Every day's worth celebrating."
+      trades:
+        - sell: "cake"
+          for: "3 emerald"
+        - sell: "6 bread"
+          for: "1 emerald"
+        - sell: "pumpkin_pie"
+          for: "1 emerald"
+      schedule:
+        - at: 8
+          shop: market-cake-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-cake-stall
+    grocer:
+      name: "&2Hugh the Grocer"
+      lines:
+        - "Straight from the farm up the road."
+        - "Apples! Carrots! Taters!"
+      trades:
+        - sell: "8 apple"
+          for: "1 emerald"
+        - sell: "8 carrot"
+          for: "1 emerald"
+        - sell: "8 baked_potato"
+          for: "1 emerald"
+        - sell: "4 cooked_beef"
+          for: "1 emerald"
+        - sell: "emerald"
+          for: ["16 wheat"]
+      schedule:
+        - at: 8
+          shop: market-food-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-food-stall
+    toolsmith:
+      name: "&8Edda the Toolsmith"
+      lines:
+        - "A good tool outlives its owner."
+        - "Shields are half price if you don't ask what they've stopped."
+      trades:
+        - sell: "iron_pickaxe"
+          for: "4 emerald"
+        - sell: "iron_axe"
+          for: "4 emerald"
+        - sell: "iron_shovel"
+          for: "2 emerald"
+        - sell: "iron_sword"
+          for: "5 emerald"
+        - sell: "shield"
+          for: "3 emerald"
+      schedule:
+        - at: 8
+          shop: market-tool-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-tool-stall
+    painter:
+      name: "&dPip the Painter"
+      lines:
+        - "Hold still... no, the other side."
+        - "Every wall deserves a picture."
+      trades:
+        - sell: "2 painting"
+          for: "1 emerald"
+        - sell: "4 item_frame"
+          for: "1 emerald"
+        - sell: "8 white_dye"
+          for: "1 emerald"
+        - sell: "8 blue_dye"
+          for: "1 emerald"
+        - sell: "8 red_dye"
+          for: "1 emerald"
+      schedule:
+        - at: 8
+          shop: market-art-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-art-stall
+    florist:
+      name: "&aRosie the Florist"
+      lines:
+        - "Mind the tulips, they bite. Not really."
+        - "Nothing brightens a house like flowers."
+      trades:
+        - sell: "4 poppy"
+          for: "1 emerald"
+        - sell: "4 dandelion"
+          for: "1 emerald"
+        - sell: "4 cornflower"
+          for: "1 emerald"
+        - sell: "2 rose_bush"
+          for: "1 emerald"
+        - sell: "4 oak_sapling"
+          for: "1 emerald"
+      schedule:
+        - at: 8
+          shop: market-plant-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-plant-stall
+    apprentice:
+      name: "&6Wren the Apprentice"
+      lines:
+        - "Mabel taught me everything. Well, most things."
+        - "Try the cookies, I made them myself!"
+      trades:
+        - sell: "8 cookie"
+          for: "1 emerald"
+        - sell: "cake"
+          for: "3 emerald"
+      schedule:
+        - at: 8
+          shop: market-cake1-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-cake1-stall
+    cupcake-kid:
+      name: "&eTilly"
+      lines:
+        - "Cupcakes! Cupcakes! Well, cookies."
+        - "Mum says I'm the best seller."
+      trades:
+        - sell: "4 cookie"
+          for: "1 emerald"
+        - sell: "2 sweet_berries"
+          for: "1 emerald"
+      schedule:
+        - at: 8
+          shop: market-cake2-stall
+        - at: 18
+          wander: cloth-market
+        - at: 22
+          stand: market-cake2-stall
+    # The Lion's Throat. The guards hold their posts around the clock; the
+    # clerks keep their desks, and stay at them until they have homes.
+    palace-guard:
+      name: "&cPalace Guard"
+      lines:
+        - "Move along."
+        - "The palace is closed to visitors. It's always closed to visitors."
+      schedule:
+        - at: 0
+          stand: lions-throat-palace-guard
+    city-guard:
+      name: "&cCity Guard"
+      lines:
+        - "Keep your blade sheathed inside the walls."
+        - "Quiet night. I like quiet nights."
+      schedule:
+        - at: 0
+          stand: lions-throat-city-guard
+    podium-guard:
+      name: "&cPodium Guard"
+      lines:
+        - "No speeches without a permit."
+        - "I've heard every speech from that podium. Twice."
+      schedule:
+        - at: 0
+          stand: lions-throat-podium-guard
+    entrance-clerk1:
+      name: "&9Osric the Clerk"
+      lines:
+        - "Name? Business? Sign here, and here."
+        - "Welcome to the Lion's Throat. Mind the stairs."
+      schedule:
+        - at: 0
+          stand: lions-throat-entrance-clerk1
+    entrance-clerk2:
+      name: "&9Agnes the Clerk"
+      lines:
+        - "The other desk is for arrivals. This one is for complaints."
+        - "Lost something? Everyone has, in here."
+      schedule:
+        - at: 0
+          stand: lions-throat-entrance-clerk2

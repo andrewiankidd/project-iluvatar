@@ -1,0 +1,43 @@
+# Host devices as Kubernetes resources, so a pod asks for one in its
+# resources instead of mounting the host's /dev (squat's generic device
+# plugin, as on ainur: src/manifests/system-addons/generic-device-plugin.yaml):
+#
+#   devic.es/dri   the Intel GPU (/dev/dri), for Jellyfin's and Plex's Quick
+#                  Sync transcodes. Needs the siderolabs/i915 extension in
+#                  arda's Talos (ainur/sidero-omni/omni-config/omni-cluster-template.yaml),
+#                  which is off (it crashed valinor-53: BACKLOG.md, "Media"),
+#                  so the nodes offer none.
+#   devic.es/tun   /dev/net/tun, for gluetun (media/qbittorrent.yaml).
+#
+# (The plugin's resource domain is devic.es in current builds; older ones,
+# like ainur's docs, say squat.ai.)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  # Not just generic-device-plugin: ainur has its own, in the same Argo CD.
+  name: arda-generic-device-plugin
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/generic-device-plugin
+  destination:
+    name: arda
+    namespace: kube-system
+  syncPolicy:
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

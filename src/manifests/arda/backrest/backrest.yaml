@@ -1,0 +1,236 @@
+# Backrest (../backrest.yml). Its config is made at every start, by the init
+# container, from what is in the backup store: one repository per backed-up
+# volume (arda-backups/volsync/<namespace>/<volume>), so a new app's backups
+# appear without a list to keep. Each is named <namespace>.<volume> (a "/"
+# breaks Backrest's page links). Its dashboard counts only backups Backrest
+# ran itself, so it says "No backups yet": the snapshots are on each
+# repository's page. The store, its credentials and the restic
+# password come from volsync-repository, as VolSync's do. Backrest rewrites
+# its config as it runs, so it lives in an emptyDir, made afresh each start.
+#
+# Only the Google Drive store is listed (rclone: repositories). With
+# ARDA_GDRIVE_TOKEN unset the backups are on R2, and Backrest shows none.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backrest
+  labels:
+    app: backrest
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: backrest
+  template:
+    metadata:
+      labels:
+        app: backrest
+      annotations:
+        # A changed token or password reaches it on the next start.
+        secret.reloader.stakater.com/reload: volsync-repository
+    spec:
+      initContainers:
+        - name: config
+          image: garethgeorge/backrest:v1.14.1-alpine
+          command: [sh, -c]
+          args:
+            - |
+              set -eu
+              case "$RESTIC_REPOSITORY_BASE" in
+                rclone:*) remote="${RESTIC_REPOSITORY_BASE#rclone:}" ;;
+                *) echo "backups are not on Drive ($RESTIC_REPOSITORY_BASE): no repositories listed"; remote= ;;
+              esac
+              esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+              pw=$(esc "$RESTIC_PASSWORD")
+              repos=
+              if [ -n "$remote" ]; then
+                for ns in $(rclone lsf --dirs-only "$remote" | tr -d /); do
+                  for vol in $(rclone lsf --dirs-only "$remote/$ns" | tr -d /); do
+                    # Only restic repositories (a config file at the top).
+                    rclone lsf "$remote/$ns/$vol" | grep -qx config || continue
+                    repos="$repos${repos:+,}
+                {\"id\": \"$ns.$vol\", \"uri\": \"rclone:$remote/$ns/$vol\", \"password\": \"$pw\",
+                 \"flags\": [\"--no-lock\"],
+                 \"prunePolicy\": {\"schedule\": {\"disabled\": true}},
+                 \"checkPolicy\": {\"schedule\": {\"disabled\": true}}}"
+                  done
+                done
+              fi
+              # Version 3: Backrest fills in each repository's GUID itself
+              # (its config migrations 4 to 6).
+              cat > /config/config.json <<EOF
+              {"modno": 1, "version": 3, "instance": "arda",
+               "auth": {"disabled": true},
+               "repos": [$repos
+               ]}
+              EOF
+              echo "$(printf '%s' "$repos" | grep -c '"id"') repositories"
+          envFrom:
+            - secretRef: { name: volsync-repository }
+          volumeMounts:
+            - { name: config, mountPath: /config }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+      containers:
+        - name: backrest
+          image: garethgeorge/backrest:v1.14.1-alpine
+          env:
+            - { name: BACKREST_PORT, value: "0.0.0.0:9898" }
+            - { name: BACKREST_CONFIG, value: /config/config.json }
+            - { name: BACKREST_DATA, value: /data }
+            - { name: XDG_CACHE_HOME, value: /cache }
+            - { name: TZ, value: Europe/London }
+            # rclone's Drive settings, which restic's rclone backend reads from
+            # the environment. Not the whole Secret: a RESTIC_PASSWORD here
+            # makes Backrest refuse to start (its issue 1139); the password
+            # is in each repository's config.
+            - name: RCLONE_CONFIG_GDRIVE_TYPE
+              valueFrom: { secretKeyRef: { name: volsync-repository, key: RCLONE_CONFIG_GDRIVE_TYPE } }
+            - name: RCLONE_CONFIG_GDRIVE_SCOPE
+              valueFrom: { secretKeyRef: { name: volsync-repository, key: RCLONE_CONFIG_GDRIVE_SCOPE } }
+            - name: RCLONE_CONFIG_GDRIVE_USE_TRASH
+              valueFrom: { secretKeyRef: { name: volsync-repository, key: RCLONE_CONFIG_GDRIVE_USE_TRASH } }
+            - name: RCLONE_CONFIG_GDRIVE_TOKEN
+              valueFrom: { secretKeyRef: { name: volsync-repository, key: RCLONE_CONFIG_GDRIVE_TOKEN } }
+            - name: RCLONE_CONFIG_GDRIVE_CLIENT_ID
+              valueFrom: { secretKeyRef: { name: volsync-repository, key: RCLONE_CONFIG_GDRIVE_CLIENT_ID } }
+            - name: RCLONE_CONFIG_GDRIVE_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: volsync-repository, key: RCLONE_CONFIG_GDRIVE_CLIENT_SECRET } }
+          ports:
+            - name: http
+              containerPort: 9898
+          readinessProbe:
+            tcpSocket:
+              port: http
+          volumeMounts:
+            - { name: config, mountPath: /config }
+            - { name: data, mountPath: /data }
+            - { name: cache, mountPath: /cache }
+            # Where a restore lands before it is downloaded.
+            - { name: restores, mountPath: /restores }
+          resources:
+            requests: { cpu: 20m, memory: 128Mi }
+            limits: { memory: 1Gi }
+        # Backrest lists a repository's snapshots only once it has indexed
+        # them, which it does by itself only for repositories added in its
+        # UI or backed up by it. So: index every repository at start, then
+        # every 6 hours, for each night's new backups.
+        - name: index
+          image: garethgeorge/backrest:v1.14.1-alpine
+          command: [sh, -c]
+          args:
+            - |
+              api=http://localhost:9898/v1.Backrest
+              until curl -sf -o /dev/null -H 'Content-Type: application/json' -d '{}' "$api/GetConfig"; do sleep 5; done
+              while :; do
+                ids=$(curl -s -H 'Content-Type: application/json' -d '{}' "$api/GetConfig" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
+                n=0
+                for id in $ids; do
+                  curl -s -o /dev/null -H 'Content-Type: application/json' \
+                    -d "{\"repoId\":\"$id\",\"task\":\"TASK_INDEX_SNAPSHOTS\"}" "$api/DoRepoTask" && n=$((n+1))
+                done
+                echo "$(date -Iseconds) indexing $n repositories"
+                sleep 21600
+              done
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 32Mi }
+      volumes:
+        - name: config
+          emptyDir: {}
+        - name: data
+          emptyDir: {}
+        - name: cache
+          emptyDir: { sizeLimit: 5Gi }
+        - name: restores
+          emptyDir: { sizeLimit: 20Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backrest
+spec:
+  selector:
+    app: backrest
+  ports:
+    - name: http
+      port: 9898
+      targetPort: http
+---
+# Backrest has no login of its own and holds the restic password and Drive
+# token for every backed-up volume: only Traefik (behind Dex + Zero Trust) may
+# reach it, and it may only talk to CoreDNS and the public backup store.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backrest
+spec:
+  podSelector:
+    matchLabels:
+      app: backrest
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 9898
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+---
+# Behind the Dex login (admins) and Cloudflare Access on the internet: it can
+# read every volume's backups.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backrest
+  annotations:
+    kidd.network/tunnel: "true"
+    kidd.network/zero-trust: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Cluster
+    gethomepage.dev/name: Backups
+    gethomepage.dev/description: Browse and restore volume backups
+    gethomepage.dev/icon: backrest.png
+    gethomepage.dev/href: https://backups.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: backups.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: backrest
+                port:
+                  name: http

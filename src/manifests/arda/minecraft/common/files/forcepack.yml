@@ -1,0 +1,61 @@
+# ForcePack: the resource packs every Java player must take to stay on.
+# Installed by the managed-files init container (../values.yaml) on every
+# start, so this file wins over anything edited in game.
+#
+# Bedrock players are left to Geyser (geyser: true), which sends them the
+# Bedrock edition of the packs (bedrock-packs.txt).
+#
+# Clients on 1.20.3 and later stack every pack listed, later ones on top.
+# Each pack is fetched by the client from its own Modrinth file: nothing is
+# rehosted. A new pack version means a new URL and its SHA-1, both listed on
+# the version's Modrinth page.
+
+velocity-mode: false
+prevent-movement: true
+prevent-damage: true
+enable-mc-164316-fix: true
+load-last: false
+await-items-adder-host: false
+use-new-force-pack-screen: true
+try-to-stop-fake-accept-hacks: true
+send-loading-title: true
+delay-pack-sending-by: 0
+
+web-server:
+  enabled: false
+  protocol: "http://"
+  server-ip: localhost
+  port: 8080
+  port-on-url: true
+
+Server:
+  packs:
+    all:
+      urls:
+        # Faithful 32x, 26.3-september-2026 (Modrinth version lDYpMiqk)
+        - "https://cdn.modrinth.com/data/w0TnApzs/versions/lDYpMiqk/Faithful%2032x%20-%2026.3.zip"
+        # Ideal 3D Rails & Ladders 1.5 for 26.3 (Modrinth version 8FlYUEYs)
+        - "https://cdn.modrinth.com/data/NHnK5x2v/versions/8FlYUEYs/Ideal-3D-Rails-%26-Ladders-1.5-26.3.zip"
+      generate-hash: false
+      hashes:
+        - "0f20dfdff314da4da3bdf365f66718e8c344075b"
+        - "f600993822966934a411d162ce5a5235338bf61d"
+
+  Actions:
+    ACCEPTED:            { kick: false, Commands: [] }
+    DOWNLOADED:          { kick: false, Commands: [] }
+    SUCCESSFULLY_LOADED: { kick: false, Commands: [] }
+    DECLINED:            { kick: true,  Commands: [] }
+    FAILED_DOWNLOAD:     { kick: true,  Commands: [] }
+    FAILED_RELOAD:       { kick: true,  Commands: [] }
+    DISCARDED:           { kick: true,  Commands: [] }
+
+  Update GUI Speed: 20
+  Update GUI: true
+  verify: true
+  resend: true
+  force-invalid-size: false
+  geyser: true
+  # Operators get the packs too: everyone sees the same world.
+  bypass-permission: false
+  debug: false

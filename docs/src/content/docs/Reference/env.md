@@ -1,0 +1,80 @@
+---
+title: .env Reference
+slug: reference/env
+description: Every setting in bootstrap/netboot/.env, the one file you edit to bring up the lab.
+draft: false
+---
+
+Everything the bootstrap needs that isn't in Git lives in `bootstrap/netboot/.env`. Start from `.env.example` next to it, which has the same sections. The file is gitignored: secrets go here, never in the repo.
+
+:::note[Pushed, never served]
+Nothing from this file is served over HTTP or written into an image. The Pis' images hold only `AINUR_PUSH_PUBKEY`; the bootstrap VM's `pi-secrets-pusher` reads this file every 30 seconds and SSHes the values to ainur with `AINUR_PUSH_KEY`. So a changed value reaches ainur within a minute while the VM runs, with nothing to rebuild.
+:::
+
+Values with a `$` in them (a bcrypt hash) need single quotes: `AINUR_DEX_ADMIN_HASH='$2y$10$...'`. Both the VM's scripts and Docker Compose read the file, and both leave single-quoted values alone.
+
+## Build
+
+| Setting | Default | |
+|---|---|---|
+| `COMPOSE_PROFILE` | `debian-netboot` | `debian-netboot` builds the image and serves netboot. `debian-sdcard` writes an SD card image to `bootstrap/netboot/download/` instead. `netboot` only serves. |
+| `DOWNLOAD_LINK` | Ubuntu 24.04 for Pi | The OS image the build starts from. |
+| `ASSETS_DIR` | `ubuntuserver` | Which `assets/` folder (cloud-init and overlays) goes with it. |
+| `CLEAN_BOOT_FILES` / `CLEAN_OS_FILES` | `true` / `false` | Start the boot or OS export from scratch on each build. |
+| `FORCE_REEXTRACT` | `false` | Extract the downloaded image again even if it was already. |
+
+## Bootstrap VM
+
+| Setting | Default | |
+|---|---|---|
+| `VM_NAME` | `netboot-$COMPOSE_PROFILE-vm` | The Multipass VM. |
+| `VM_OS`, `VM_CPUS`, `VM_MEMORY`, `VM_DISK` | `22.04`, `8`, `4G`, `15G` | Its size. |
+| `VM_REBUILD` | `false` | Delete and recreate the VM on the next start. |
+| `VM_NETWORK` | the first wired network | The network the VM bridges onto, as `multipass networks` names it. It must be the Pis' LAN. |
+| `BOOTSTRAP_IP_ADDRESS` | `192.168.1.66` | The VM's fixed address on the LAN: TFTP, NFS and HTTP for netboot. |
+| `NFS_VERSION`, `NFS_EXPORT_0`, `NFS_LOG_LEVEL` | | The VM's NFS server. |
+
+## Pis
+
+Used by [`rebootstrap.sh`](/project-iluvatar/getting-started/rebootstrap-ainur/).
+
+| Setting | Default | |
+|---|---|---|
+| `PI_HOSTS` | `192.168.1.50 192.168.1.51 192.168.1.52` | The Pis. |
+| `PI_USER` | `ubuntu` | Their user. |
+
+## ainur secrets
+
+The bootstrap VM pushes these to ainur's k3s server, which makes them into an `ainur-secrets` Secret in each namespace that reads one (Dex, Argo CD, Omni, Homepage, monitoring and netboot).
+
+| Setting | |
+|---|---|
+| `AINUR_PUSH_KEY`, `AINUR_PUSH_PUBKEY` | The only way into the Pis: an SSH key pair, the private key as one line of base64. The images trust the public half; the pushers and `rebootstrap.sh` use the private one. There's no password. `.env.example` has the commands to make one. |
+| `AINUR_K3S_TOKEN`, `AINUR_K3S_AGENT_TOKEN` | k3s's join tokens, server and agent. Pushed to a Pi while it boots, never put in its image. |
+| `AINUR_DEX_ADMIN_HASH` | bcrypt hash of the admin password: `admin@kidd.network` in Dex, so every login through it, and `admin` in ntfy. Set it with `scripts/set-admin-password.sh` (asks for one, or `--generate`), which writes the hash here and waits until ainur has it: the pusher carries it over and Reloader restarts Dex and ntfy. Then change it in the ntfy app on your phone. |
+| `AINUR_OIDC_CLIENT_SECRET` | The client secret Dex shares with Argo CD, Headlamp, Omni and Homepage. |
+| `AINUR_HOMEPAGE_AUTH_SECRET` | Homepage's session cookie key, 32 characters or more. |
+| `AINUR_DEADMAN_URL` | The dead man's switch: an ntfy.sh URL Alertmanager reschedules an alert at every 10 minutes, so it reaches your phone if ainur goes quiet for 30. Its topic is the password: make it unguessable, and subscribe to it on ntfy.sh in the ntfy app. `.env.example` has the form. |
+| `AINUR_LAB_CA_CRT`, `AINUR_LAB_CA_KEY` | The lab root CA, each a PEM file as one line of base64 (`base64 -w0`). With them, a rebuilt ainur keeps the CA your devices and the arda machines already trust; without them it makes a new one on its first boot, and every arda machine has to be reset to trust it. Leave them empty for the very first bootstrap, then copy that CA in: `.env.example` has the commands. No `ainur-secrets` copy keeps the key. |
+
+## arda secrets
+
+Kept on ainur as its `arda-secrets` Secret; once arda is up, a Job hands each to its app there.
+
+| Setting | |
+|---|---|
+| `ARDA_CLOUDFLARE_API_TOKEN` | Cloudflare token with Zone:DNS:Edit, for external-dns and ddns. |
+| `ARDA_CLOUDFLARE_TUNNEL_TOKEN` | The `arda` tunnel's token (`cloudflared tunnel token arda`). |
+| `ARDA_MINECRAFT_WHITELIST`, `ARDA_MINECRAFT_BUILDERS` | Minecraft UUIDs, comma-separated: who may join survival, and who may build on creative. |
+| `ARDA_DRAGONWILDS_OWNER_ID`, `ARDA_DRAGONWILDS_ADMIN_PASSWORD`, `ARDA_DRAGONWILDS_WORLD_PASSWORD` | The Dragonwilds owner's Player ID, the Server Management password, and an optional join password. |
+| `ARDA_BACKUP_ACCESS_KEY_ID`, `ARDA_BACKUP_SECRET_ACCESS_KEY`, `ARDA_BACKUP_ENDPOINT` | S3 keys and endpoint for arda's volume backups to Cloudflare R2 (VolSync, into the `arda-backups` bucket). For an R2 API token: its ID, the SHA-256 of its value, and `https://<account id>.r2.cloudflarestorage.com`. |
+| `ARDA_UNIFI_API_KEY`, `ARDA_UNIFI_URL` | A UniFi OS API key (*Settings → Control Plane → Integrations*) for the router's port forwards to arda's games, which ainur's `unifi` CronJob keeps from the Services marked `kidd.network/port-forward: "true"`, and for arda's LAN DNS records (`external-dns-lan`); and the console's address, if not `https://192.168.1.1`. |
+| `ARDA_VOLSYNC_PASSWORD` | The restic password for every arda volume's backups: VolSync backs each Longhorn volume up nightly to `arda-backups/volsync/<namespace>/<pvc>` in R2, with the `ARDA_BACKUP_*` keys, and restores it when a fresh cluster creates the volume again. Any long random string. **Lose it and every backup is unreadable**: keep a copy outside the lab. |
+| `ARDA_GITLAB_RUNNER_TOKEN` | A GitLab runner authentication token (`glrt-…`) for arda's CI runner (`gitlab-runner`, Kubernetes executor). Create a runner in GitLab, or reuse an existing runner's token to make arda another manager of it; its tags are set in GitLab. |
+| `ARDA_OBSIDIAN_PASSWORD` | The password of user `obsidian` on arda's Self-hosted LiveSync CouchDB at `obsidian-sync.kidd.network` (public, through the tunnel). The Obsidian apps sync with a username and password, so this is the one login not in Dex. Any long random string. |
+| `ARDA_HOMEASSISTANT_PASSWORD` | Home Assistant on arda (`homeassistant.kidd.network`): the password of its owner, user `admin`, made by the setup CronJob on a fresh volume (later changes go through Home Assistant's profile page), which also logs in with it each run. The fallback beside the Dex login, and what the companion app can log in with directly. Any long random string. |
+| `ARDA_HOMEASSISTANT_LATITUDE`, `ARDA_HOMEASSISTANT_LONGITUDE` | Optional: the home's location in decimal degrees, which Home Assistant's setup CronJob applies (sun, weather, presence). Kept in `.env` because the repository is public. Without them, set it on the Settings > System > General map. |
+| `ARDA_PAPERLESS_SECRET_KEY`, `ARDA_PAPERLESS_ADMIN_PASSWORD`, `ARDA_PAPERLESS_SCANNER_PASSWORD` | Paperless-ngx on arda (`paperless.kidd.network`): Django's signing key, the password of the local superuser `paperless` (set at the first start only; also usable by the phone apps), and the password of user `scanner` on the LAN-only SMB share `\\192.168.1.58\scan` that a scanner saves to. Any random strings; keep the scanner's short enough to type on a scanner's panel. Without the secret key nothing is handed out. |
+| `ARDA_PAPERLESS_MAIL_HOST`, `ARDA_PAPERLESS_MAIL_USER`, `ARDA_PAPERLESS_MAIL_PASSWORD`, `ARDA_PAPERLESS_MAIL_PORT`, `ARDA_PAPERLESS_MAIL_FOLDER` | Optional: a mailbox Paperless fetches over IMAP, consuming PDF and image attachments. Port 993 (TLS) and folder `INBOX` unless set. Without the host, user and password, mail stays off. Best a mailbox of its own, e.g. a Gmail address with an app password. |
+| `ARDA_MEDIA_API_SECRET` | The seed of the media apps' API keys on arda (Sonarr, Radarr, Prowlarr, Bazarr, Seerr): `arda-bootstrap` derives one key per app from it, so the apps and the `wiring` CronJob that connects them agree without a value per app. Any long random string. |
+| `ARDA_MULLVAD_PRIVATE_KEY`, `ARDA_MULLVAD_ADDRESSES`, `ARDA_MULLVAD_COUNTRY` | qBittorrent's VPN: a Mullvad WireGuard key, for the gluetun sidecar in qBittorrent's pod. On mullvad.net, *Account → WireGuard configuration*, Linux: generate a key, pick any server, download the `.conf`, and take `PrivateKey` and `Address` from its `[Interface]` (the IPv4 address alone is enough). The country is optional (gluetun's `SERVER_COUNTRIES`, e.g. `UK`). Until the key and address are set, qBittorrent never starts. |

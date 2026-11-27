@@ -1,0 +1,12 @@
+# The servers' metrics, for ainur's Prometheus (through arda's agent): every
+# pod here with a port named metrics, which is each server's mc-monitor
+# sidecar (common/values.yaml), so a new server is scraped with no change
+# here. Players online, the most allowed, and how fast the server answers.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: minecraft
+spec:
+  selector: {}
+  podMetricsEndpoints:
+    - port: metrics

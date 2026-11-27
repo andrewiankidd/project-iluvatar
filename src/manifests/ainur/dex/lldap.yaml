@@ -1,0 +1,350 @@
+# LLDAP: the lab's users and groups, behind Dex (values.yaml: its LDAP
+# connector). One place to add people, put them in groups and set passwords:
+# its web page at lldap.kidd.network (LAN only), where people can also change
+# their own. Dex reads it, so every Dex login carries the person's groups:
+#
+#   admins   the whole lab (admin apps check for it)
+#   users    the apps trusted to friends and family
+#
+# The bootstrap CronJob below keeps those groups, puts LLDAP's own admin
+# (admin@kidd.network) in both, and keeps a read-only account, dex, that Dex
+# looks people up with. People are added in the web page; what's here only
+# makes sure the groups and those two accounts exist.
+#
+# On ainur with Dex (identity is control-plane work), on valar-50's NVMe like
+# Omni. ainur has no volume backups, so the lldap-backup CronJob saves the
+# database to R2 nightly (restic, arda-backups/lldap, the ARDA_BACKUP_* keys
+# and password, read from ainur-sidero-omni's arda-secrets), and an init
+# container restores the latest if LLDAP ever starts with no database.
+#
+# Secrets, from AINUR_* in the bootstrap .env (ainur-secrets):
+#   AINUR_LLDAP_ADMIN_PASSWORD  LLDAP's admin (user admin) on the web page
+#   AINUR_LLDAP_DEX_PASSWORD    the dex account's
+#   AINUR_LLDAP_JWT_SECRET, AINUR_LLDAP_KEY_SEED  its session and password keys
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: lldap-data
+  namespace: ainur-dex
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lldap
+  namespace: ainur-dex
+---
+# The backup's R2 keys live in ainur-sidero-omni's arda-secrets: lldap may read
+# that one Secret, nothing else there.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lldap-backup-keys
+  namespace: ainur-sidero-omni
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [arda-secrets]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lldap-backup-keys
+  namespace: ainur-sidero-omni
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lldap-backup-keys
+subjects:
+  - kind: ServiceAccount
+    name: lldap
+    namespace: ainur-dex
+---
+# The restic settings, from arda-secrets, for the restore and the backup.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lldap-restic
+  namespace: ainur-dex
+data:
+  restic-env.sh: |
+    # Sourced: exports the restic settings, or exits 0 with none.
+    k() { kubectl -n ainur-sidero-omni get secret arda-secrets -o "jsonpath={.data.$1}" | base64 -d; }
+    export AWS_ACCESS_KEY_ID="$(k ARDA_BACKUP_ACCESS_KEY_ID)"
+    export AWS_SECRET_ACCESS_KEY="$(k ARDA_BACKUP_SECRET_ACCESS_KEY)"
+    export RESTIC_PASSWORD="$(k ARDA_VOLSYNC_PASSWORD)"
+    endpoint="$(k ARDA_BACKUP_ENDPOINT)"
+    if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$RESTIC_PASSWORD" ] || [ -z "$endpoint" ]; then
+      echo "no ARDA_BACKUP_* settings: no backups"
+      exit 0
+    fi
+    export RESTIC_REPOSITORY="s3:$endpoint/arda-backups/lldap"
+    apk add -q --no-cache restic sqlite
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lldap
+  namespace: ainur-dex
+  annotations:
+    # The secrets are read at start (../reloader.yml).
+    secret.reloader.stakater.com/reload: ainur-secrets
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer
+  selector:
+    matchLabels:
+      app: lldap
+  template:
+    metadata:
+      labels:
+        app: lldap
+    spec:
+      serviceAccountName: lldap
+      priorityClassName: ainur-critical
+      # valar-50, with its NVMe, where the volume lives (as Omni's).
+      nodeSelector:
+        kidd.network/role: control-plane
+      initContainers:
+        # A new volume: the last backup, if there is one.
+        - name: restore
+          image: alpine/kubectl:1.37.1
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              if [ -s /data/users.db ]; then echo "database present"; exit 0; fi
+              . /restic/restic-env.sh
+              if restic snapshots --latest 1 --json 2>/dev/null | grep -q '"id"'; then
+                restic restore latest --target /restore
+                cp /restore/backup/users.db /data/users.db
+                echo "restored the last backup"
+              else
+                echo "no backup yet: a new database"
+              fi
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: restic, mountPath: /restic, readOnly: true }
+            - { name: restore, mountPath: /restore }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 256Mi }
+      containers:
+        - name: lldap
+          image: lldap/lldap:v0.6.3
+          env:
+            - { name: UID, value: "1000" }
+            - { name: GID, value: "1000" }
+            - { name: TZ, value: Europe/London }
+            - { name: LLDAP_LDAP_BASE_DN, value: "dc=kidd,dc=network" }
+            - { name: LLDAP_LDAP_USER_EMAIL, value: admin@kidd.network }
+            - { name: LLDAP_HTTP_URL, value: https://lldap.kidd.network }
+            - name: LLDAP_LDAP_USER_PASS
+              valueFrom: { secretKeyRef: { name: ainur-secrets, key: AINUR_LLDAP_ADMIN_PASSWORD } }
+            # admin's password is .env's, set again at every start (and
+            # Reloader restarts LLDAP when it changes): change it with
+            # scripts/set-admin-password.sh, not on LLDAP's page.
+            - { name: LLDAP_FORCE_LDAP_USER_PASS_RESET, value: always }
+            - name: LLDAP_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: ainur-secrets, key: AINUR_LLDAP_JWT_SECRET } }
+            - name: LLDAP_KEY_SEED
+              valueFrom: { secretKeyRef: { name: ainur-secrets, key: AINUR_LLDAP_KEY_SEED } }
+          ports:
+            - { name: http, containerPort: 17170 }
+            - { name: ldap, containerPort: 3890 }
+          readinessProbe:
+            tcpSocket:
+              port: ldap
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: lldap-data
+        - name: restic
+          configMap:
+            name: lldap-restic
+        - name: restore
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lldap
+  namespace: ainur-dex
+spec:
+  selector:
+    app: lldap
+  ports:
+    - { name: http, port: 17170, targetPort: http }
+    - { name: ldap, port: 3890, targetPort: ldap }
+---
+# Its web page, on the LAN: people and groups, and each person's password.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lldap
+  namespace: ainur-dex
+  annotations:
+    kubernetes.io/ingress.class: traefik
+    cert-manager.io/cluster-issuer: local-ca
+    kidd.network/tunnel: "true"
+    kidd.network/zero-trust: "true"
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Cluster
+    gethomepage.dev/name: Users and groups
+    gethomepage.dev/description: "Add people, put them in admins or users, set passwords (LLDAP; sign in as admin)"
+    gethomepage.dev/icon: mdi-account-group
+    gethomepage.dev/pod-selector: app=lldap
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - lldap.kidd.network
+      secretName: lldap-tls
+  rules:
+    - host: lldap.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: lldap
+                port:
+                  name: http
+---
+# The groups, LLDAP's admin in both, and Dex's read-only account: made if
+# missing, every 10 minutes (LLDAP's own bootstrap script). People and their
+# memberships otherwise come from the web page; nothing here removes them.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lldap-bootstrap
+  namespace: ainur-dex
+data:
+  admins.json: |
+    {"name": "admins"}
+  users.json: |
+    {"name": "users"}
+  admin.json: |
+    {"id": "admin", "email": "admin@kidd.network", "displayName": "Admin", "groups": ["admins", "users"]}
+  dex.json: |
+    {"id": "dex", "email": "dex@kidd.network", "displayName": "Dex (read-only)", "password_file": "/secrets/dex", "groups": ["lldap_strict_readonly"]}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: lldap-bootstrap
+  namespace: ainur-dex
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 600
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          containers:
+            - name: bootstrap
+              image: lldap/lldap:v0.6.3
+              command:
+                - bash
+                - -c
+                - |
+                  set -eu
+                  mkdir -p /tmp/groups /tmp/users /secrets
+                  cp /bootstrap/admins.json /bootstrap/users.json /tmp/groups/
+                  cp /bootstrap/admin.json /bootstrap/dex.json /tmp/users/
+                  printf '%s' "$DEX_PASSWORD" > /secrets/dex
+                  GROUP_CONFIGS_DIR=/tmp/groups USER_CONFIGS_DIR=/tmp/users /app/bootstrap.sh
+              env:
+                - { name: LLDAP_URL, value: "http://lldap.ainur-dex.svc:17170" }
+                - { name: LLDAP_ADMIN_USERNAME, value: admin }
+                - name: LLDAP_ADMIN_PASSWORD
+                  valueFrom: { secretKeyRef: { name: ainur-secrets, key: AINUR_LLDAP_ADMIN_PASSWORD } }
+                - name: DEX_PASSWORD
+                  valueFrom: { secretKeyRef: { name: ainur-secrets, key: AINUR_LLDAP_DEX_PASSWORD } }
+              volumeMounts:
+                - { name: bootstrap, mountPath: /bootstrap, readOnly: true }
+                - { name: secrets, mountPath: /secrets }
+              resources:
+                requests: { cpu: 10m, memory: 32Mi }
+                limits: { memory: 128Mi }
+          volumes:
+            - name: bootstrap
+              configMap:
+                name: lldap-bootstrap
+            - name: secrets
+              emptyDir:
+                medium: Memory
+---
+# Nightly to R2: a consistent copy of the database (sqlite's .backup), then
+# restic. 03:40, after Omni's.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: lldap-backup
+  namespace: ainur-dex
+spec:
+  schedule: "40 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: lldap
+          restartPolicy: Never
+          # Beside the volume, on valar-50.
+          nodeSelector:
+            kidd.network/role: control-plane
+          containers:
+            - name: backup
+              image: alpine/kubectl:1.37.1
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  . /restic/restic-env.sh
+                  rc=0; restic cat config >/dev/null 2>&1 || rc=$?
+                  if [ "$rc" = 10 ]; then restic init; elif [ "$rc" != 0 ]; then exit "$rc"; fi
+                  mkdir -p /backup
+                  sqlite3 /data/users.db ".backup /backup/users.db"
+                  restic backup /backup --host lldap
+                  restic forget --keep-daily 14 --keep-weekly 8 --prune
+              volumeMounts:
+                # Writable: sqlite may need its lock files beside the database.
+                - { name: data, mountPath: /data }
+                - { name: restic, mountPath: /restic, readOnly: true }
+              resources:
+                requests: { cpu: 10m, memory: 32Mi }
+                limits: { memory: 256Mi }
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: lldap-data
+            - name: restic
+              configMap:
+                name: lldap-restic

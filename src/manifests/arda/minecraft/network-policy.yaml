@@ -1,0 +1,37 @@
+# Game servers exposed to the internet: egress restricted to CoreDNS and the
+# public internet (Mojang auth, Modrinth, Geyser/Floodgate, BlueMap textures),
+# blocking other cluster namespaces and the home LAN. Excludes the portal (has
+# its own policy) and VolSync mover pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: minecraft-servers
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: NotIn
+        values: [minecraft-portal]
+      - key: app.kubernetes.io/created-by
+        operator: NotIn
+        values: [volsync]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16

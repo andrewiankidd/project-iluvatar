@@ -1,0 +1,49 @@
+# Backups of every arda volume to Cloudflare R2, and restores from them:
+# VolSync, with restic. Kyverno (kyverno-policies.yml) gives each Longhorn
+# PVC a nightly ReplicationSource and a ReplicationDestination it fills from
+# when created, so a rebuilt cluster comes back with its data.
+#
+# Longhorn still stores and replicates the volumes; this is what gets them
+# off-site and back.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: volsync
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  source:
+    repoURL: https://backube.github.io/helm-charts
+    chart: volsync
+    targetRevision: 0.17.0
+    helm:
+      valuesObject:
+        # Its metrics without the auth proxy's token check: the ServiceMonitor
+        # the chart makes sends no token, so arda's Prometheus agent got 401.
+        # Volume names and sync state, in-cluster only. They feed ainur's
+        # VolumeBackupMissing alert (src/manifests/ainur/monitoring).
+        metrics:
+          disableAuth: true
+  destination:
+    name: arda
+    namespace: volsync-system
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

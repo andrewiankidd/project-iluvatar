@@ -1,0 +1,62 @@
+# A GitLab CI runner on arda, for gitlab.com: the Kubernetes executor, each
+# job a pod in this namespace. It takes over from the Multipass VM runner on
+# the Windows PC, which registered with the same runner authentication token:
+# both are managers of one runner in GitLab, with its tags (set in GitLab,
+# not here), so either can take a job and the VM can simply be switched off.
+#
+# Jobs that build images keep the VM's way, a docker:dind service with TLS
+# certificates in /certs/client, so pipelines need no change. That means
+# privileged job pods, so this namespace is privileged under Talos's Pod
+# Security; see gitlab-runner/values.yaml for why not rootless BuildKit.
+#
+# Reads the gitlab-runner Secret (runner-token), from ARDA_GITLAB_RUNNER_TOKEN
+# in the bootstrap VM's .env, handed out by
+# src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml. Without it the
+# runner pod waits in ContainerCreating.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gitlab-runner
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  sources:
+    - repoURL: https://charts.gitlab.io
+      chart: gitlab-runner
+      targetRevision: 0.94.3
+      helm:
+        valueFiles:
+          - $values/src/manifests/arda/gitlab-runner/values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      path: src/manifests/arda/gitlab-runner
+      directory:
+        include: network-policy.yaml
+  destination:
+    name: arda
+    namespace: gitlab-runner
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Talos enforces the baseline Pod Security standard; docker:dind needs
+    # privileged job pods.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

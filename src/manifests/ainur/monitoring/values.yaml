@@ -1,0 +1,262 @@
+# kube-prometheus-stack 93.4.1 on ainur (../monitoring.yml): the lab's
+# Prometheus, Alertmanager and Grafana. ainur's own metrics are scraped here;
+# arda's arrive by remote write from the same chart in agent mode there
+# (src/manifests/arda/monitoring), labelled cluster="arda", so every
+# dashboard and rule covers both. Logs are Loki's (loki-values.yaml).
+#
+# Everything with data runs on valar-50, on its NVMe (local-path-kept, so a
+# rebuilt ainur keeps its history).
+fullnameOverride: kps
+
+crds:
+  enabled: true
+
+# k3s runs etcd (it has none here: SQLite), the scheduler, controller-manager
+# and kube-proxy inside its own process: nothing separate to scrape, and
+# their rules would only alert that they're missing.
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+windowsMonitoring:
+  enabled: false
+# Its scrape needs a Service in kube-system, which the ainur Argo CD project
+# doesn't deploy to.
+coreDns:
+  enabled: false
+
+defaultRules:
+  rules:
+    etcd: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    kubeControllerManager: false
+    kubeProxy: false
+    windows: false
+
+prometheus:
+  prometheusSpec:
+    nodeSelector:
+      kidd.network/role: control-plane
+    scrapeInterval: 60s
+    evaluationInterval: 60s
+    retention: 15d
+    retentionSize: 8GB
+    # arda's Prometheus (agent mode) writes here.
+    enableRemoteWriteReceiver: true
+    # Every ServiceMonitor, PodMonitor and rule in the cluster, not just the
+    # chart's own.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    # cluster="ainur" on everything scraped here, as arda's carry
+    # cluster="arda".
+    scrapeClasses:
+      - name: cluster
+        default: true
+        relabelings:
+          - targetLabel: cluster
+            replacement: ainur
+    resources:
+      requests:
+        memory: 512Mi
+      limits:
+        memory: 2Gi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path-kept
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 10Gi
+
+alertmanager:
+  alertmanagerSpec:
+    nodeSelector:
+      kidd.network/role: control-plane
+    # AINUR_NTFY_TOKEN, for posting to ntfy (ntfy.yaml), and
+    # AINUR_DEADMAN_URL, the dead man's switch below.
+    secrets:
+      - ainur-secrets
+  # Warnings and critical alerts to your phone, through ntfy's lab-alerts
+  # topic, resolved ones too. The always-firing Watchdog and info-level alerts
+  # go nowhere.
+  config:
+    route:
+      receiver: "null"
+      group_by: [alertname, cluster]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      routes:
+        # The dead man's switch. Watchdog always fires while Prometheus and
+        # Alertmanager work; every 10 minutes it reschedules one alert on the
+        # public ntfy.sh, 30 minutes ahead, replacing the last (ntfy's
+        # sequence ID). If ainur, its monitoring or its internet dies, the
+        # rescheduling stops and that alert reaches your phone: the one alarm
+        # that can't come from ainur. The URL, with its unguessable topic, is
+        # AINUR_DEADMAN_URL in .env; ntfy.sh allows 250 messages a day
+        # without an account, and this sends 144.
+        - receiver: deadman
+          matchers:
+            - alertname = "Watchdog"
+          group_wait: 0s
+          group_interval: 1m
+          repeat_interval: 10m
+        - receiver: ntfy
+          matchers:
+            - severity =~ "warning|critical"
+            - alertname != "Watchdog"
+    receivers:
+      - name: deadman
+        webhook_configs:
+          - url_file: /etc/alertmanager/secrets/ainur-secrets/AINUR_DEADMAN_URL
+            send_resolved: false
+      - name: "null"
+      - name: ntfy
+        webhook_configs:
+          - url: http://ntfy.ainur-monitoring.svc/lab-alerts?template=alertmanager
+            send_resolved: true
+            http_config:
+              authorization:
+                credentials_file: /etc/alertmanager/secrets/ainur-secrets/AINUR_NTFY_TOKEN
+    inhibit_rules:
+      # A critical alert hides the warning of the same name and cluster.
+      - source_matchers: ['severity = "critical"']
+        target_matchers: ['severity = "warning"']
+        equal: [alertname, cluster]
+
+prometheusOperator:
+  nodeSelector:
+    kidd.network/role: control-plane
+  admissionWebhooks:
+    patch:
+      nodeSelector:
+        kidd.network/role: control-plane
+
+kube-state-metrics:
+  nodeSelector:
+    kidd.network/role: control-plane
+
+grafana:
+  nodeSelector:
+    kidd.network/role: control-plane
+  defaultDashboardsTimezone: browser
+  # The admin login from a Secret made once (grafana-share.yaml). Left to the
+  # chart, the password is random on every render (Argo CD can't look up the
+  # last one), so its checksum changed and Grafana restarted on every push,
+  # losing its database: sessions and the shared dashboard.
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  # Dashboards come from config (the chart's, and ConfigMaps labelled
+  # grafana_dashboard), so Grafana itself holds nothing worth keeping.
+  persistence:
+    enabled: false
+  sidecar:
+    dashboards:
+      # A cluster selector on the chart's dashboards: ainur and arda.
+      multicluster:
+        global:
+          enabled: true
+      # Folders, from each dashboard ConfigMap's grafana_folder annotation:
+      #   Lab      the lab's own (Homepage's status and charts; the rack screen)
+      #   Cluster  the chart's: Kubernetes, nodes, Prometheus, Alertmanager
+      #   Apps     the workloads' own
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+      # The chart's dashboards all go in Cluster.
+      annotations:
+        grafana_folder: Cluster
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      uid: loki
+      url: http://loki.ainur-monitoring.svc:3100
+      access: proxy
+  # The lab CA, for Dex.
+  extraConfigmapMounts:
+    - name: lab-ca
+      configMap: lab-ca
+      mountPath: /etc/ssl/local-ca
+      readOnly: true
+  grafana.ini:
+    server:
+      root_url: https://grafana.kidd.network
+    # The private Homepage embeds panels (dashboards/homepage-dashboard.yaml) in iframes.
+    # Same site (kidd.network), so Grafana's session cookie goes with them.
+    security:
+      allow_embedding: true
+    # Dex is the only way in: no password login, so the chart's default admin
+    # password is never usable.
+    auth:
+      disable_login_form: true
+    # Basic auth for the API only (the login form stays off): the
+    # grafana-share CronJob (grafana-share.yaml) logs in with the chart's
+    # random admin password, which only the cluster can read.
+    auth.basic:
+      enabled: true
+    auth.generic_oauth:
+      enabled: true
+      name: Dex
+      # Dex's grafana client is public (PKCE): no secret to hand out.
+      client_id: grafana
+      use_pkce: true
+      scopes: openid profile email groups offline_access
+      auth_url: https://dex.kidd.network/auth
+      token_url: https://dex.kidd.network/token
+      api_url: https://dex.kidd.network/userinfo
+      tls_client_ca: /etc/ssl/local-ca/ca.crt
+      allow_sign_up: true
+      auto_login: true
+      # Admin for LLDAP's admins group; anyone else is turned away
+      # (role_attribute_strict: no role, no login).
+      role_attribute_path: "contains(not_null(groups, ''), 'admins') && 'Admin' || ''"
+      role_attribute_strict: true
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    annotations:
+      cert-manager.io/cluster-issuer: local-ca
+      kidd.network/tunnel: "true"
+      kidd.network/zero-trust: "true"
+      gethomepage.dev/enabled: "true"
+      gethomepage.dev/instance: admin
+      gethomepage.dev/group: Cluster
+      gethomepage.dev/name: Grafana
+      gethomepage.dev/description: Metrics and logs
+      gethomepage.dev/icon: mdi-chart-line
+      gethomepage.dev/pod-selector: app.kubernetes.io/name=grafana
+    hosts:
+      - grafana.kidd.network
+    tls:
+      - hosts:
+          - grafana.kidd.network
+        secretName: grafana-tls
+
+# Node dashboards for Linux only: no AIX or macOS machines here.
+nodeExporter:
+  operatingSystems:
+    aix:
+      enabled: false
+    darwin:
+      enabled: false
+
+# node-exporter: the chart's own filesystem filters (setting extraArgs replaces
+# them), the CPU's model name (cpu.info) and the PCI devices' IDs (pcidevice,
+# for the GPU's), both off by default, for the node cards on the private
+# Homepage (homepage/lab-nodes.yaml).
+prometheus-node-exporter:
+  extraArgs:
+    - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
+    - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$
+    - --collector.cpu.info
+    - --collector.pcidevice

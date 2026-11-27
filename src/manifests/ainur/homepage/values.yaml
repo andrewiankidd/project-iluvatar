@@ -1,0 +1,59 @@
+# Shared by the three Homepage instances (../homepage.yml); values-admin.yaml,
+# values-users.yaml and values-public.yaml add the name, host and login.
+image:
+  tag: v2.8.0
+
+enableRbac: true
+serviceAccount:
+  create: true
+
+config:
+  bookmarks: []
+  services: []
+  # No node bar on either page: Homepage's kubernetes widget sees only the
+  # cluster it runs on (ainur). The private page's At a glance covers both
+  # clusters (values-admin.yaml). Kubernetes stays on below, for discovery.
+  widgets: []
+  kubernetes:
+    mode: cluster
+
+# The lab CA, for talking to Dex (NODE_EXTRA_CA_CERTS in values-users.yaml).
+persistence:
+  lab-ca:
+    enabled: true
+    type: configMap
+    name: lab-ca
+    mountPath: /etc/ssl/local-ca
+    readOnly: true
+  # The logo, header and footer (logo.yaml).
+  custom-css:
+    enabled: true
+    type: configMap
+    name: homepage-logo
+    mountPath: /app/config/custom.css
+    subPath: custom.css
+    readOnly: true
+  custom-js:
+    enabled: true
+    type: configMap
+    name: homepage-logo
+    mountPath: /app/config/custom.js
+    subPath: custom.js
+    readOnly: true
+  # The app icons (pwa.yaml), served at /images/kiddnet/: the whole
+  # ConfigMap as a directory, so a new icon needs no mount of its own.
+  pwa-icons:
+    enabled: true
+    type: configMap
+    name: homepage-pwa
+    mountPath: /app/public/images/kiddnet
+    readOnly: true
+
+# Eviction and scheduling priority (user-data: 00-priority-classes.yaml).
+priorityClassName: ainur-optional
+
+# Restarted when the logo's files change (logo.yaml): they're mounted one by
+# one, so a running Homepage never sees an edit (Reloader, ../reloader.yml).
+controller:
+  annotations:
+    configmap.reloader.stakater.com/reload: homepage-logo,homepage-pwa

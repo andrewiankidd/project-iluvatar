@@ -1,0 +1,180 @@
+# Keeps the dashboards tagged shared (dashboards/: homepage-status-dashboard.yaml,
+# homepage-dashboard.yaml, rack-dashboard.yaml) shared, so the private
+# Homepage can embed them and the rack screen can show one, all with no
+# Grafana login. A shared dashboard is read-only and runs only its own saved
+# queries; nothing else in Grafana opens up. Grafana
+# keeps nothing on disk, so a restart forgets the shares: every 2 minutes
+# this checks them and makes them again if missing, each under its own fixed
+# link token. The tokens are made once, at random, into the grafana-share
+# Secret in ainur-homepage, one key per dashboard uid; Homepage reads them as
+# HOMEPAGE_VAR_GRAFANA_SHARE_<uid> (homepage/values-admin.yaml). Tag a new
+# dashboard shared and it's shared too. Grafana is on the LAN only, so the
+# links work only there.
+#
+# It also makes Grafana's admin login once, at random, into the
+# grafana-admin Secret here (values.yaml: grafana.admin), and uses it for
+# Grafana's API. On a fresh cluster Grafana waits for that Secret.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana-share
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: grafana-share
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [grafana-admin]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: grafana-share
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: grafana-share
+subjects:
+  - kind: ServiceAccount
+    name: grafana-share
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: grafana-share
+  namespace: ainur-homepage
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [grafana-share]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: grafana-share
+  namespace: ainur-homepage
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: grafana-share
+subjects:
+  - kind: ServiceAccount
+    name: grafana-share
+    namespace: ainur-monitoring
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: grafana-share
+spec:
+  schedule: "*/2 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 600
+      template:
+        spec:
+          serviceAccountName: grafana-share
+          restartPolicy: Never
+          priorityClassName: ainur-optional
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: share
+              image: curlimages/curl:8.17.0
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  sa=/var/run/secrets/kubernetes.io/serviceaccount
+                  kube() { curl -sf --cacert "$sa/ca.crt" \
+                    -H "Authorization: Bearer $(cat "$sa/token")" "$@"; }
+                  api=https://kubernetes.default.svc/api/v1/namespaces
+                  # One key of a Secret, from the API's JSON (spaced or not).
+                  field() { sed -n "s/.*\"$1\": *\"\([^\"]*\)\".*/\1/p" | base64 -d; }
+                  rand() { head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+                  # make NAMESPACE NAME '"key":"value",...'
+                  make() { kube -X POST -H 'Content-Type: application/json' \
+                    "$api/$1/secrets" -d "{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"$2\"},\"stringData\":{$3}}" >/dev/null; }
+
+                  # Grafana's admin login: made once, then kept.
+                  if s="$(kube "$api/ainur-monitoring/secrets/grafana-admin")"; then
+                    GF_USER="$(printf '%s' "$s" | field admin-user)"
+                    GF_PASSWORD="$(printf '%s' "$s" | field admin-password)"
+                  else
+                    GF_USER=admin
+                    GF_PASSWORD="$(rand)$(rand)"
+                    make ainur-monitoring grafana-admin \
+                      "\"admin-user\":\"$GF_USER\",\"admin-password\":\"$GF_PASSWORD\""
+                    echo "made Grafana's admin login"
+                  fi
+
+                  # Grafana up (a restart takes a minute or so).
+                  H=http://monitoring-grafana.ainur-monitoring.svc
+                  for _ in $(seq 18); do
+                    curl -sf -o /dev/null "$H/api/health" && break
+                    sleep 5
+                  done
+                  # Grafana's API, as its admin; the password over stdin.
+                  gf() { printf 'user = "%s:%s"\n' "$GF_USER" "$GF_PASSWORD" | curl -s -K - "$@"; }
+
+                  # What to share: every dashboard tagged shared.
+                  uids="$(gf "$H/api/search?type=dash-db&tag=shared" \
+                    | grep -o '"uid":"[^"]*"' | cut -d'"' -f4)"
+                  [ -n "$uids" ] || { echo "no dashboards tagged shared yet"; exit 1; }
+
+                  # Their link tokens, one per dashboard uid, made once and kept.
+                  S=$api/ainur-homepage/secrets/grafana-share
+                  s="$(kube "$S")" || { make ainur-homepage grafana-share ''; s="$(kube "$S")"; }
+                  failed=0
+                  for uid in $uids; do
+                    T="$(printf '%s' "$s" | field "$uid")"
+                    if [ "${#T}" != 32 ]; then
+                      T="$(rand)"
+                      kube -X PATCH -H 'Content-Type: application/merge-patch+json' "$S" \
+                        -d "{\"stringData\":{\"$uid\":\"$T\"}}" >/dev/null
+                      echo "$uid: made its link token"
+                    fi
+                    G=$H/api/dashboards/uid/$uid/public-dashboards
+                    cur="$(gf "$G")"
+                    case "$cur" in
+                      *"\"accessToken\":\"$T\""*'"isEnabled":true'*) echo "$uid: shared"; continue ;;
+                    esac
+                    id="$(printf '%s' "$cur" | sed -n 's/^{"uid":"\([^"]*\)".*/\1/p')"
+                    [ -z "$id" ] || gf -X DELETE "$G/$id" >/dev/null
+                    out="$(gf -X POST -H 'Content-Type: application/json' "$G" \
+                      -d "{\"isEnabled\":true,\"share\":\"public\",\"accessToken\":\"$T\"}")"
+                    case "$out" in
+                      *"\"accessToken\":\"$T\""*) echo "$uid: shared again" ;;
+                      *) echo "$uid: couldn't share: $out"; failed=1 ;;
+                    esac
+                  done
+                  exit "$failed"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+                limits:
+                  memory: 64Mi

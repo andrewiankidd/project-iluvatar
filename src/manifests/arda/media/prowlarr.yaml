@@ -1,0 +1,207 @@
+# Prowlarr: indexers for Sonarr and Radarr (left empty: chosen in its UI), at prowlarr.kidd.network behind the Dex login.
+#
+# Its own login is "External": the Dex login in front is the only one. Its
+# API key is fixed (the media Secret) so the other apps and wiring.yaml can
+# use it; it is set through the environment, which overrides config.xml.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prowlarr-config
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prowlarr
+  labels:
+    app: prowlarr
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume
+  selector:
+    matchLabels:
+      app: prowlarr
+  template:
+    metadata:
+      labels:
+        app: prowlarr
+    spec:
+      containers:
+        - name: prowlarr
+          image: lscr.io/linuxserver/prowlarr:3.0.2.5780-ls169
+          env:
+            - { name: PUID, value: "1000" }
+            - { name: PGID, value: "1000" }
+            - { name: TZ, value: Europe/London }
+            - { name: PROWLARR__AUTH__METHOD, value: External }
+            - name: PROWLARR__AUTH__APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: media
+                  key: prowlarr-api-key
+          ports:
+            - name: http
+              containerPort: 9696
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests: { cpu: 20m, memory: 128Mi }
+            limits: { memory: 512Mi }
+        # Its metrics for Prometheus (exportarr, through the media PodMonitor in
+        # metrics.yaml): queue, missing, disk space, health.
+        - name: exportarr
+          image: ghcr.io/onedr0p/exportarr:v2.3.0
+          args: [prowlarr]
+          env:
+            - { name: PORT, value: "9707" }
+            - { name: URL, value: "http://localhost:9696" }
+            - name: APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: media
+                  key: prowlarr-api-key
+          ports:
+            - name: metrics
+              containerPort: 9707
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: { cpu: 5m, memory: 16Mi }
+            limits: { memory: 64Mi }
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: prowlarr-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prowlarr
+spec:
+  selector:
+    app: prowlarr
+  ports:
+    - name: http
+      port: 9696
+      targetPort: http
+---
+# External auth (Dex in front): only Traefik, its media peers, and monitoring
+# may reach it; outbound is limited to Sonarr, Radarr, gluetun's proxy
+# (qbittorrent:8888), CoreDNS and the public internet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prowlarr
+spec:
+  podSelector:
+    matchLabels:
+      app: prowlarr
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [sonarr, radarr, chaptarr, comicarr, wiring]
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 9696
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 9707
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: sonarr
+      ports:
+        - port: 8989
+    - to:
+        - podSelector:
+            matchLabels:
+              app: radarr
+      ports:
+        - port: 7878
+    - to:
+        - podSelector:
+            matchLabels:
+              app: qbittorrent
+      ports:
+        - port: 8888
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prowlarr
+  annotations:
+    kidd.network/tunnel: "true"
+    kidd.network/zero-trust: "true"
+    # Behind the Dex login (and Cloudflare Access on the internet).
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
+    # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Media
+    gethomepage.dev/name: Prowlarr
+    gethomepage.dev/description: Indexers
+    gethomepage.dev/icon: prowlarr.png
+    gethomepage.dev/href: https://prowlarr.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: prowlarr.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prowlarr
+                port:
+                  name: http

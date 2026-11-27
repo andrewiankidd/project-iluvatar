@@ -1,0 +1,25 @@
+# Goldilocks chart 11.2.1 on arda (../goldilocks.yml), with the VPA (5.1.0)
+# and metrics-server (3.14.0) charts it bundles.
+
+# Recommendations only: the recommender watches usage and suggests requests;
+# no updater or admission controller, so nothing is ever resized for us.
+vpa:
+  enabled: true
+  updater:
+    enabled: false
+  admissionController:
+    enabled: false
+
+metrics-server:
+  enabled: true
+  # Talos's kubelets serve self-signed certificates.
+  args:
+    - --kubelet-insecure-tls
+
+# Every namespace, not just ones labelled goldilocks.fairwinds.com/enabled.
+controller:
+  flags:
+    on-by-default: "true"
+dashboard:
+  flags:
+    on-by-default: "true"

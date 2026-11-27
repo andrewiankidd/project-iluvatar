@@ -1,0 +1,63 @@
+# CrowdSec on arda: reads arda's Traefik JSON access logs (every internet
+# request to both arda and ainur enters through cloudflared -> arda's Traefik),
+# detects scanners/brute-force/CVE probes using CF-Connecting-IP, pulls the
+# CrowdSec community blocklist, and blocks abusive IPs in Traefik via the
+# crowdsec-bouncer Middleware (crowdsec/middleware.yaml).
+#
+# Runs on arda (not ainur) because the Cloudflare tunnel lives on arda; LAN
+# traffic to ainur's VIP bypasses arda's Traefik, so a CrowdSec fault can never
+# lock out LAN control-plane access.
+#
+# Reads crowdsec-secrets (and kube-system/crowdsec-bouncer-key for Traefik),
+# derived from AINUR_SSO_SECRET by arda-bootstrap-job.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crowdsec
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  sources:
+    - repoURL: https://crowdsecurity.github.io/helm-charts
+      chart: crowdsec
+      targetRevision: 0.24.3
+      helm:
+        releaseName: crowdsec
+        valueFiles:
+          - $values/src/manifests/arda/crowdsec/values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      path: src/manifests/arda/crowdsec
+      directory:
+        include: '{middleware.yaml,network-policy.yaml}'
+  destination:
+    name: arda
+    namespace: crowdsec
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Talos enforces the baseline Pod Security standard; the CrowdSec agent
+    # DaemonSet mounts host /var/log/pods and /var/log/containers to tail
+    # Traefik's access logs.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,0 +1,24 @@
+# The homeassistant app (../homeassistant.yml).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: homeassistant
+resources:
+  - deployment.yaml
+  - voice.yaml
+  - ollama.yaml
+  - setup.yaml
+  - metrics.yaml
+configMapGenerator:
+  # configuration.yaml and http.json, from Git; the hash suffix restarts Home
+  # Assistant on a change, which is how it picks them up anyway.
+  - name: homeassistant-config
+    files:
+      - configuration.yaml
+      - http.json
+  # Python's strict certificate checks, relaxed for the lab CA (see the file).
+  - name: homeassistant-sitecustomize
+    files:
+      - sitecustomize.py
+  - name: homeassistant-setup
+    files:
+      - setup.py

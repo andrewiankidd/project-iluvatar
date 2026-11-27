@@ -1,0 +1,35 @@
+# minecraft.kidd.network, through the Cloudflare Tunnel: HTTPS is Cloudflare's
+# (../../cloudflared.yml), and external-dns-tunnel publishes the host.
+#
+# Only this one name: Cloudflare's free certificate stops one level below
+# kidd.network, so nothing under minecraft.kidd.network could have HTTPS.
+# The servers' maps are paths here instead (/map/<name>/, nginx.conf.template).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: portal
+  annotations:
+    kidd.network/tunnel: "true"
+    # On the public Homepage at kidd.network (copied to ainur's by its
+    # arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Games
+    gethomepage.dev/name: Minecraft
+    gethomepage.dev/description: The servers, and their 3D maps
+    gethomepage.dev/icon: mdi-minecraft
+    gethomepage.dev/href: https://minecraft.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: minecraft.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: portal
+                port:
+                  name: http

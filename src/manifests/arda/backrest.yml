@@ -1,0 +1,35 @@
+# Backrest at backups.kidd.network: a web UI over arda's volume backups (the
+# restic repositories VolSync writes, kyverno-policies/volsync.yaml). Browse
+# each volume's snapshots by date, see their files, and restore or download
+# one. Read-only: it runs no backups, prunes or checks of its own, and opens
+# the repositories without locking them. LAN only, behind the Dex login.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: backrest
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/backrest
+  destination:
+    name: arda
+    # Beside volsync-repository, the Secret it reads (from arda-bootstrap).
+    namespace: volsync-system
+  syncPolicy:
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

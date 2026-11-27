@@ -1,0 +1,22 @@
+# Omni's data (/data: its etcd, machine configs and the automation key),
+# defined here rather than by the chart (values.yaml: persistence.existingClaim).
+# On valar-50's NVMe at a fixed path (storageclass.yaml), so it outlives a
+# rebuilt ainur; backed up nightly to R2 (omni-backup-cronjob.yaml) for when
+# the NVMe itself doesn't.
+# Wave -3, with omni-restore, which binds it: local-path makes a volume only
+# once a pod using it is scheduled, and Argo CD waits for a wave's claims to
+# be bound before starting the next.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: omni
+  namespace: ainur-sidero-omni
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path-kept
+  resources:
+    requests:
+      storage: 20Gi

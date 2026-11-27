@@ -1,0 +1,34 @@
+# Longhorn at longhorn.kidd.network: LAN only (no tunnel), behind the Dex login (../oauth2-proxy.yml),
+# since it has no login of its own. On the private Homepage (copied to ainur's
+# by its arda-homepage CronJob).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: longhorn-ui
+  namespace: longhorn-system
+  annotations:
+    kidd.network/tunnel: "true"
+    kidd.network/zero-trust: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Cluster
+    gethomepage.dev/name: Longhorn
+    gethomepage.dev/description: Volumes, replicas and snapshots
+    gethomepage.dev/icon: longhorn.png
+    gethomepage.dev/href: https://longhorn.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: longhorn.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: longhorn-frontend
+                port:
+                  number: 80

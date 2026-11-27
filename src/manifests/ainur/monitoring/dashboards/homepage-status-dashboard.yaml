@@ -1,0 +1,512 @@
+# The status tiles at the top of the private Homepage (userpage.kidd.network),
+# two rows of four (../../homepage/values-admin.yaml): is anything wrong now? Red or
+# orange when it is. Tagged shared, so ../grafana-share.yaml shares it with no
+# login and Homepage embeds it; keep its uid, which Homepage's link names.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage-status-dashboard
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Lab
+data:
+  homepage-status.json: |
+    {
+      "uid": "homepagestatus",
+      "title": "Lab status",
+      "description": "The status strip the private Homepage embeds.",
+      "tags": [
+        "shared"
+      ],
+      "timezone": "browser",
+      "refresh": "1m",
+      "timepicker": {"hidden": true},
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "schemaVersion": 39,
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+        "transparent": true,
+          "title": "Alerts firing",
+          "gridPos": {
+          "x": 0,
+          "y": 0,
+          "w": 6,
+          "h": 3
+        },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#c3e88d",
+                    "value": null
+                  },
+                  {
+                    "color": "#ff757f",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "value",
+            "wideLayout": true,
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "count(ALERTS{alertstate=\"firing\",alertname!~\"Watchdog|InfoInhibitor\"}) or vector(0)"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "stat",
+        "transparent": true,
+          "title": "Nodes not ready",
+          "gridPos": {
+          "x": 6,
+          "y": 0,
+          "w": 6,
+          "h": 3
+        },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#c3e88d",
+                    "value": null
+                  },
+                  {
+                    "color": "#ff757f",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "value",
+            "wideLayout": true,
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "count(kube_node_status_condition{condition=\"Ready\",status=\"true\"} == 0) or vector(0)"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "type": "stat",
+        "transparent": true,
+          "title": "Checks failing",
+          "gridPos": {
+          "x": 12,
+          "y": 0,
+          "w": 6,
+          "h": 3
+        },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#c3e88d",
+                    "value": null
+                  },
+                  {
+                    "color": "#ff757f",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "value",
+            "wideLayout": true,
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "count(probe_success{probe=~\"tunnel|port-forward\"} == 0) or vector(0)"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "type": "stat",
+        "transparent": true,
+          "title": "Backups missed",
+          "gridPos": {
+          "x": 18,
+          "y": 0,
+          "w": 6,
+          "h": 3
+        },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#c3e88d",
+                    "value": null
+                  },
+                  {
+                    "color": "#ff757f",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "value",
+            "wideLayout": true,
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "count(volsync_volume_out_of_sync{role=\"source\"} == 1) or vector(0)"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "type": "stat",
+        "transparent": true,
+          "title": "Omni backed up",
+          "gridPos": {
+          "x": 0,
+          "y": 3,
+          "w": 6,
+          "h": 3
+        },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#c3e88d",
+                    "value": null
+                  },
+                  {
+                    "color": "#ff966c",
+                    "value": 129600
+                  },
+                  {
+                    "color": "#ff757f",
+                    "value": 172800
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "value",
+            "wideLayout": true,
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "time() - max(kube_cronjob_status_last_successful_time{cronjob=\"omni-backup\"})"
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "type": "stat",
+        "transparent": true,
+          "title": "Longhorn used",
+          "gridPos": {
+          "x": 6,
+          "y": 3,
+          "w": 6,
+          "h": 3
+        },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "decbytes",
+              "decimals": 1,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#82aaff",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "value",
+            "wideLayout": true,
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(longhorn_node_storage_usage_bytes)"
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "type": "stat",
+        "transparent": true,
+          "title": "Longhorn full",
+          "gridPos": {
+          "x": 12,
+          "y": 3,
+          "w": 6,
+          "h": 3
+        },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#c3e88d",
+                    "value": null
+                  },
+                  {
+                    "color": "#ff966c",
+                    "value": 70
+                  },
+                  {
+                    "color": "#ff757f",
+                    "value": 85
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "value",
+            "wideLayout": true,
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "100 * sum(longhorn_node_storage_usage_bytes) / sum(longhorn_node_storage_capacity_bytes)"
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "type": "stat",
+        "transparent": true,
+          "title": "Pod restarts, 1h",
+          "gridPos": {
+          "x": 18,
+          "y": 3,
+          "w": 6,
+          "h": 3
+        },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#c3e88d",
+                    "value": null
+                  },
+                  {
+                    "color": "#ff966c",
+                    "value": 5
+                  },
+                  {
+                    "color": "#ff757f",
+                    "value": 20
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "value",
+            "wideLayout": true,
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "round(sum(increase(kube_pod_container_status_restarts_total[1h])))"
+            }
+          ]
+        }
+      ]
+    }

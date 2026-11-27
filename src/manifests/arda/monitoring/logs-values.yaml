@@ -1,0 +1,32 @@
+# k8s-monitoring 4.6.1 on arda (../logs.yml): arda's pod logs and Kubernetes
+# events, into ainur's Loki (src/manifests/ainur/monitoring), labelled
+# cluster="arda". Metrics go by values.yaml's Prometheus agent instead.
+cluster:
+  name: arda
+
+destinations:
+  ainur-loki:
+    type: loki
+    url: https://loki.kidd.network/loki/api/v1/push
+    # The ainur-telemetry Secret (arda-bootstrap-job.yaml) holds the lab CA,
+    # which ainur's endpoints are signed with, as ca.crt. The chart then reads
+    # its other optional fields from it too, so the Secret has them, empty.
+    secret:
+      create: false
+      name: ainur-telemetry
+    tls:
+      caKey: ca.crt
+
+podLogsViaLoki:
+  enabled: true
+  collector: alloy-logs
+
+clusterEvents:
+  enabled: true
+  collector: alloy-singleton
+
+collectors:
+  alloy-logs:
+    presets: [filesystem-log-reader, daemonset]
+  alloy-singleton:
+    presets: [singleton]

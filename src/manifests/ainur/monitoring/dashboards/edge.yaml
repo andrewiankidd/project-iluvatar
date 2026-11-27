@@ -1,0 +1,675 @@
+# Edge (Grafana, Cluster folder): what reaches the sites: arda's Traefik, the Cloudflare tunnel, the outside checks, and where visitors come from (unique visitors: Traefik's access log, in Loki).
+# Written by hand from the metrics the apps send (each app's monitor);
+# Grafana loads it like any dashboard (the grafana_dashboard label).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-edge
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Cluster
+data:
+  edge.json: |
+    {
+      "uid": "edge",
+      "title": "Edge",
+      "description": "what reaches the sites: arda's Traefik, the Cloudflare tunnel, the outside checks, and where visitors come from.",
+      "tags": [
+        "cluster"
+      ],
+      "timezone": "browser",
+      "refresh": "1m",
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "schemaVersion": 39,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Requests/s",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "decimals": 1,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(traefik_router_requests_total[5m]))"
+            }
+          ],
+          "id": 1,
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 6,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Server errors (5xx)/s",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "decimals": 2,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 0.05
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(traefik_router_requests_total{code=~\"5..\"}[5m])) or vector(0)"
+            }
+          ],
+          "id": 2,
+          "gridPos": {
+            "x": 6,
+            "y": 0,
+            "w": 6,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Tunnel connections",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 2
+                  },
+                  {
+                    "color": "green",
+                    "value": 4
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(cloudflared_tunnel_ha_connections)"
+            }
+          ],
+          "id": 3,
+          "gridPos": {
+            "x": 12,
+            "y": 0,
+            "w": 6,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Outside checks failing",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "count(probe_success{probe=~\"tunnel|port-forward\"} == 0) or vector(0)"
+            }
+          ],
+          "id": 4,
+          "gridPos": {
+            "x": 18,
+            "y": 0,
+            "w": 6,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Requests by site (arda's Traefik)",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "normal"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "topk(10, sum by (site) (label_replace(rate(traefik_router_requests_total[5m]), \"site\", \"$1\", \"router\", \"(.*)-kidd-network@kubernetes\")))",
+              "legendFormat": "{{site}}"
+            }
+          ],
+          "id": 5,
+          "gridPos": {
+            "x": 0,
+            "y": 4,
+            "w": 12,
+            "h": 9
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Errors by site (4xx and 5xx)",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (site, code) (label_replace(rate(traefik_router_requests_total{code=~\"[45]..\"}[5m]), \"site\", \"$1\", \"router\", \"(.*)-kidd-network@kubernetes\")) > 0",
+              "legendFormat": "{{site}} {{code}}"
+            }
+          ],
+          "id": 6,
+          "gridPos": {
+            "x": 12,
+            "y": 4,
+            "w": 12,
+            "h": 9
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Through the tunnel",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(cloudflared_tunnel_total_requests[5m]))",
+              "legendFormat": "requests"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(rate(cloudflared_tunnel_request_errors[5m]))",
+              "legendFormat": "errors"
+            }
+          ],
+          "id": 7,
+          "gridPos": {
+            "x": 0,
+            "y": 13,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Outside checks: time to answer",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "fillOpacity": 0,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max by (instance) (probe_duration_seconds{probe=~\"tunnel|port-forward\"})",
+              "legendFormat": "{{instance}}"
+            }
+          ],
+          "id": 8,
+          "gridPos": {
+            "x": 12,
+            "y": 13,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "geomap",
+          "title": "Visitors by country, last 24 hours (through the tunnel)",
+          "description": "Unique visitors (by address, from Cloudflare's CF-Connecting-IP) per country, from arda's Traefik access log in Loki. A marker per country, larger for more.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "continuous-YlRd"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "view": {
+              "id": "coords",
+              "lat": 30,
+              "lon": 0,
+              "zoom": 1.4
+            },
+            "controls": {
+              "showZoom": true,
+              "mouseWheelZoom": false,
+              "showAttribution": true
+            },
+            "basemap": {
+              "type": "default",
+              "name": "Basemap",
+              "config": {}
+            },
+            "layers": [
+              {
+                "type": "markers",
+                "name": "Visitors",
+                "tooltip": true,
+                "location": {
+                  "mode": "lookup",
+                  "lookup": "country",
+                  "gazetteer": "public/gazetteer/countries.json"
+                },
+                "config": {
+                  "showLegend": true,
+                  "style": {
+                    "size": {
+                      "field": "Visitors",
+                      "fixed": 8,
+                      "min": 8,
+                      "max": 30
+                    },
+                    "color": {
+                      "field": "Visitors",
+                      "fixed": "dark-green"
+                    },
+                    "opacity": 0.7,
+                    "symbol": {
+                      "mode": "fixed",
+                      "fixed": "img/icons/marker/circle.svg"
+                    },
+                    "text": {
+                      "mode": "field",
+                      "field": "Visitors",
+                      "fixed": ""
+                    },
+                    "textConfig": {
+                      "fontSize": 11,
+                      "offsetX": 0,
+                      "offsetY": 0,
+                      "textAlign": "center",
+                      "textBaseline": "middle"
+                    }
+                  }
+                }
+              }
+            ],
+            "tooltip": {
+              "mode": "details"
+            }
+          },
+          "transformations": [
+            {
+              "id": "labelsToFields",
+              "options": {
+                "mode": "columns"
+              }
+            },
+            {
+              "id": "merge",
+              "options": {}
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "indexByName": {
+                  "country": 0,
+                  "Value": 1
+                },
+                "renameByName": {
+                  "Value": "Visitors"
+                }
+              }
+            }
+          ],
+          "targets": [
+            {
+              "refId": "A",
+              "queryType": "instant",
+              "expr": "sort_desc(count by (country) (sum by (ip, country) (count_over_time({cluster=\"arda\", namespace=\"kube-system\", container=\"traefik\"} |= \"Cf-Connecting-Ip\" | json | request_Cf_Connecting_Ip != \"\" | label_format ip=\"{{.request_Cf_Connecting_Ip}}\", country=\"{{.request_Cf_Ipcountry}}\" [24h]))))"
+            }
+          ],
+          "id": 9,
+          "gridPos": {
+            "x": 0,
+            "y": 21,
+            "w": 16,
+            "h": 12
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Unique visitors, last 24 hours",
+          "description": "Distinct addresses through the tunnel (Cloudflare's CF-Connecting-IP), from arda's Traefik access log in Loki. LAN visits aren't counted.",
+          "options": {
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "background",
+            "graphMode": "none",
+            "textMode": "value"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "0",
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "blue"
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "queryType": "instant",
+              "expr": "count(sum by (ip) (count_over_time({cluster=\"arda\", namespace=\"kube-system\", container=\"traefik\"} |= \"Cf-Connecting-Ip\" | json | request_Cf_Connecting_Ip != \"\" | label_format ip=\"{{.request_Cf_Connecting_Ip}}\", country=\"{{.request_Cf_Ipcountry}}\" [24h])))"
+            }
+          ],
+          "id": 11,
+          "gridPos": {
+            "x": 16,
+            "y": 21,
+            "w": 8,
+            "h": 4
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        },
+        {
+          "type": "table",
+          "title": "Top countries, last 24 hours (unique visitors)",
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "None"
+            },
+            "overrides": []
+          },
+          "transformations": [
+            {
+              "id": "labelsToFields",
+              "options": {
+                "mode": "columns"
+              }
+            },
+            {
+              "id": "merge",
+              "options": {}
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "indexByName": {
+                  "country": 0,
+                  "Value": 1
+                },
+                "renameByName": {
+                  "Value": "Visitors"
+                }
+              }
+            }
+          ],
+          "targets": [
+            {
+              "refId": "A",
+              "queryType": "instant",
+              "expr": "sort_desc(count by (country) (sum by (ip, country) (count_over_time({cluster=\"arda\", namespace=\"kube-system\", container=\"traefik\"} |= \"Cf-Connecting-Ip\" | json | request_Cf_Connecting_Ip != \"\" | label_format ip=\"{{.request_Cf_Connecting_Ip}}\", country=\"{{.request_Cf_Ipcountry}}\" [24h]))))"
+            }
+          ],
+          "id": 10,
+          "gridPos": {
+            "x": 16,
+            "y": 25,
+            "w": 8,
+            "h": 8
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ]
+    }

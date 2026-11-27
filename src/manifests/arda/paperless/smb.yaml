@@ -1,0 +1,22 @@
+# The scanner's SMB share (deployment.yaml's samba container) on arda's LAN
+# address, 192.168.1.58, beside the games and Traefik (../metallb).
+#
+# LAN only: no kidd.network/port-forward, so ainur's unifi CronJob never
+# opens 445 to the internet, and no external-dns hostname, so no public DNS
+# record. paperless.kidd.network's LAN record is the same address, so a
+# scanner can be given either.
+apiVersion: v1
+kind: Service
+metadata:
+  name: paperless-smb
+  annotations:
+    metallb.io/allow-shared-ip: arda
+spec:
+  type: LoadBalancer
+  selector:
+    app: paperless
+  ports:
+    - name: smb
+      port: 445
+      targetPort: smb
+      protocol: TCP

@@ -1,0 +1,161 @@
+# Obsidian in a browser: linuxserver/obsidian, the desktop app on a Selkies
+# remote desktop, at obsidian.kidd.network, at home and through the tunnel.
+# The Dex login guards it (../oauth2-proxy.yml); it has no login of its own.
+#
+# Its vaults and settings live in /config. To share notes with the other
+# devices, install Self-hosted LiveSync in its vault and point it at
+# http://couchdb.obsidian.svc:5984 (couchdb.yaml).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: web-config
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  labels:
+    app: obsidian-web
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume
+  selector:
+    matchLabels:
+      app: obsidian-web
+  template:
+    metadata:
+      labels:
+        app: obsidian-web
+    spec:
+      containers:
+        - name: obsidian
+          image: lscr.io/linuxserver/obsidian:v1.15.1-ls153
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: Europe/London
+          ports:
+            # Plain HTTP; Traefik in front does the HTTPS the browser side needs.
+            - name: http
+              containerPort: 3000
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            # Electron wants more shared memory than the default 64 MB.
+            - name: shm
+              mountPath: /dev/shm
+          readinessProbe:
+            tcpSocket:
+              port: http
+          resources:
+            requests: { cpu: 100m, memory: 512Mi }
+            limits: { memory: 2Gi }
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: web-config
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  selector:
+    app: obsidian-web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+# No login of its own: only Traefik (behind Dex) may reach it. Outbound to
+# CouchDB, CoreDNS and the public internet (community plugins), not LAN/cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: obsidian-web
+spec:
+  podSelector:
+    matchLabels:
+      app: obsidian-web
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 3000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: couchdb
+      ports:
+        - port: 5984
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    # Off the tunnel for now: LAN only.
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
+    # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Apps
+    gethomepage.dev/name: Obsidian
+    gethomepage.dev/description: Notes, in the browser
+    gethomepage.dev/icon: obsidian.png
+    gethomepage.dev/href: https://obsidian.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: obsidian.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http

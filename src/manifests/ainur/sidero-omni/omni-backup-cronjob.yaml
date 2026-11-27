@@ -1,0 +1,118 @@
+# Backs up Omni's data and its GPG key to R2 every night, with restic, to
+# arda-backups/omni (the bucket arda's VolSync uses, with its password).
+# omni-restore-job.yaml puts them back when valar-50's NVMe is new.
+#
+# Omni's embedded etcd has no client port to snapshot through, and copying
+# it live could catch it mid-write, so Omni is stopped for the backup: a
+# minute or less at 03:30, for about 135 MB, most of it unchanged. It's
+# started again however the backup goes. Argo CD ignores Omni's replica
+# count (../sidero-omni.yml), so it doesn't restart Omni mid-backup.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: omni-backup
+  namespace: ainur-sidero-omni
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: omni-backup
+  namespace: ainur-sidero-omni
+rules:
+  - apiGroups: [apps]
+    resources: [deployments, deployments/scale]
+    resourceNames: [omni]
+    verbs: [get, patch, update]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: omni-backup
+  namespace: ainur-sidero-omni
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: omni-backup
+subjects:
+  - kind: ServiceAccount
+    name: omni-backup
+    namespace: ainur-sidero-omni
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: omni-backup
+  namespace: ainur-sidero-omni
+spec:
+  # 03:32: a minute none of the other CronJobs here use, since they need Omni.
+  schedule: "32 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          serviceAccountName: omni-backup
+          restartPolicy: Never
+          # valar-50, where the volumes live.
+          nodeSelector:
+            kidd.network/role: control-plane
+          containers:
+            - name: backup
+              image: alpine/kubectl:1.37.1
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  s() { cat "/arda-secrets/$1" 2>/dev/null || true; }
+                  export AWS_ACCESS_KEY_ID="$(s ARDA_BACKUP_ACCESS_KEY_ID)"
+                  export AWS_SECRET_ACCESS_KEY="$(s ARDA_BACKUP_SECRET_ACCESS_KEY)"
+                  export RESTIC_PASSWORD="$(s ARDA_VOLSYNC_PASSWORD)"
+                  endpoint="$(s ARDA_BACKUP_ENDPOINT)"
+                  if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$RESTIC_PASSWORD" ] || [ -z "$endpoint" ]; then
+                    echo "no ARDA_BACKUP_* settings; nothing to back up to"
+                    exit 0
+                  fi
+                  export RESTIC_REPOSITORY="s3:$endpoint/arda-backups/omni"
+                  apk add -q --no-cache restic
+                  rc=0; restic cat config >/dev/null 2>&1 || rc=$?
+                  if [ "$rc" = 10 ]; then restic init; elif [ "$rc" != 0 ]; then exit "$rc"; fi
+                  [ -d /backup/omni/etcd ] || { echo "Omni has no data to back up"; exit 1; }
+
+                  trap 'kubectl -n ainur-sidero-omni scale deploy/omni --replicas=1' EXIT
+                  kubectl -n ainur-sidero-omni scale deploy/omni --replicas=0
+                  kubectl -n ainur-sidero-omni wait --for=delete pod \
+                    -l app.kubernetes.io/name=omni --timeout=120s
+                  started=$(date +%s)
+                  restic backup --host omni --tag nightly /backup/omni /backup/gpg
+                  echo "Omni was down for the backup for $(( $(date +%s) - started ))s"
+                  kubectl -n ainur-sidero-omni scale deploy/omni --replicas=1
+                  trap - EXIT
+
+                  restic forget --host omni --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune
+              volumeMounts:
+                - name: omni
+                  mountPath: /backup/omni
+                  readOnly: true
+                - name: gpg
+                  mountPath: /backup/gpg
+                  readOnly: true
+                - name: arda-secrets
+                  mountPath: /arda-secrets
+                  readOnly: true
+          volumes:
+            - name: omni
+              persistentVolumeClaim:
+                claimName: omni
+            - name: gpg
+              persistentVolumeClaim:
+                claimName: omni-gpg-backup
+            - name: arda-secrets
+              secret:
+                secretName: arda-secrets

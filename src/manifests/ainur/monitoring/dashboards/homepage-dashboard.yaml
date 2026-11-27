@@ -1,0 +1,72 @@
+# Charts for the private Homepage (userpage.kidd.network,
+# ../../homepage/values-admin.yaml): one row of four panels, shared without a
+# login by ../grafana-share.yaml (it's tagged shared) and embedded whole. Grafana loads
+# it like any dashboard (the grafana_dashboard label); keep its uid, which
+# the share is made for.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage-dashboard
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Lab
+data:
+  homepage.json: |
+    {
+      "uid": "homepage",
+      "title": "Both clusters, last 6 hours",
+      "description": "The panels the private Homepage embeds.",
+      "tags": ["shared"],
+      "timezone": "browser",
+      "refresh": "1m",
+      "timepicker": {"hidden": true},
+      "time": {"from": "now-6h", "to": "now"},
+      "schemaVersion": 39,
+      "panels": [
+        {
+          "id": 1, "type": "timeseries", "title": "CPU",
+          "gridPos": {"x": 0, "y": 0, "w": 6, "h": 7},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100,
+            "custom": {"fillOpacity": 15, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+          "targets": [{"refId": "A", "legendFormat": "{{cluster}}",
+            "expr": "100 * (1 - avg by (cluster) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])))"}]
+        },
+        {
+          "id": 2, "type": "timeseries", "title": "Memory",
+          "gridPos": {"x": 6, "y": 0, "w": 6, "h": 7},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100,
+            "custom": {"fillOpacity": 15, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+          "targets": [{"refId": "A", "legendFormat": "{{cluster}}",
+            "expr": "100 * (1 - sum by (cluster) (node_memory_MemAvailable_bytes) / sum by (cluster) (node_memory_MemTotal_bytes))"}]
+        },
+        {
+          "id": 3, "type": "timeseries", "title": "Network (out below 0)",
+          "gridPos": {"x": 12, "y": 0, "w": 6, "h": 7},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "Bps",
+            "custom": {"fillOpacity": 15, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+          "targets": [
+            {"refId": "A", "legendFormat": "{{cluster}} in",
+              "expr": "sum by (cluster) (rate(node_network_receive_bytes_total{device=~\"en.*|eth.*\"}[5m]))"},
+            {"refId": "B", "legendFormat": "{{cluster}} out",
+              "expr": "-sum by (cluster) (rate(node_network_transmit_bytes_total{device=~\"en.*|eth.*\"}[5m]))"}
+          ]
+        },
+        {
+          "id": 4, "type": "timeseries", "title": "Hottest zone per machine",
+          "gridPos": {"x": 18, "y": 0, "w": 6, "h": 7},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "fieldConfig": {"defaults": {"unit": "celsius",
+            "custom": {"fillOpacity": 0, "lineWidth": 2, "showPoints": "never"}}, "overrides": []},
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+          "targets": [{"refId": "A", "legendFormat": "{{nodename}}",
+            "expr": "max by (nodename) (node_thermal_zone_temp * on (cluster, instance) group_left (nodename) node_uname_info)"}]
+        }
+      ]
+    }

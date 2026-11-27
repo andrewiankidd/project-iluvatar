@@ -1,0 +1,9 @@
+# Survival: a new world generated on first start.
+# Layered over ../../common/values.yaml.
+
+minecraftServer:
+  motd: KiddNet Survival
+  difficulty: normal
+
+extraEnv:
+  MODE: survival

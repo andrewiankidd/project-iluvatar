@@ -1,0 +1,19 @@
+# Home Assistant's entities, for ainur's Prometheus (through arda's agent):
+# its Prometheus integration (configuration.yaml), with the long-lived token
+# setup.py keeps in the homeassistant-metrics Secret. Until that exists, the
+# operator skips this monitor.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: homeassistant
+spec:
+  selector:
+    matchLabels:
+      app: homeassistant
+  endpoints:
+    - port: http
+      path: /api/prometheus
+      interval: 60s
+      bearerTokenSecret:
+        name: homeassistant-metrics
+        key: token

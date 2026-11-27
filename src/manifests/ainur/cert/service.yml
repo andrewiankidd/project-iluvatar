@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: cert-download
+  namespace: ainur-cert
+spec:
+  selector:
+    app: cert-download
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+

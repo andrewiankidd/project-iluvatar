@@ -1,0 +1,41 @@
+# Public utilities, no login: IT-Tools and CyberChef. Both are static pages
+# that do all their work in the visitor's browser. Nothing is uploaded,
+# stored, or fetched by the server, so publishing them costs nothing but a
+# little bandwidth, which Cloudflare's cache absorbs.
+#
+#   it-tools.kidd.network    IT-Tools: ~80 developer utilities
+#   cyberchef.kidd.network   CyberChef: GCHQ's data-wrangling tool
+#
+# On the internet through the Cloudflare tunnel, at home through arda's
+# Traefik (LAN DNS), and on the public Homepage at kidd.network.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tools
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/tools
+  destination:
+    name: arda
+    namespace: tools
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

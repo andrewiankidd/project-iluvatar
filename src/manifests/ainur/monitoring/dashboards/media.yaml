@@ -1,0 +1,684 @@
+# Media (Grafana, Apps folder): the library, downloads and what is wanted, from Sonarr, Radarr, Prowlarr, Bazarr and qBittorrent.
+# Written by hand from the metrics the apps send (each app's monitor);
+# Grafana loads it like any dashboard (the grafana_dashboard label).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-media
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Apps
+data:
+  media.json: |
+    {
+      "uid": "media",
+      "title": "Media",
+      "description": "the library, downloads and what is wanted, from Sonarr, Radarr, Prowlarr, Bazarr and qBittorrent.",
+      "tags": [
+        "apps"
+      ],
+      "timezone": "browser",
+      "refresh": "1m",
+      "time": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "schemaVersion": 39,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Series",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(sonarr_series_total)"
+            }
+          ],
+          "id": 1,
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 3,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Episodes missing",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(sonarr_episode_missing_total)"
+            }
+          ],
+          "id": 2,
+          "gridPos": {
+            "x": 3,
+            "y": 0,
+            "w": 3,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Movies",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(radarr_movie_total)"
+            }
+          ],
+          "id": 3,
+          "gridPos": {
+            "x": 6,
+            "y": 0,
+            "w": 3,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Movies missing",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(radarr_movie_missing_total)"
+            }
+          ],
+          "id": 4,
+          "gridPos": {
+            "x": 9,
+            "y": 0,
+            "w": 3,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Subtitles missing",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(bazarr_subtitles_missing_total)"
+            }
+          ],
+          "id": 5,
+          "gridPos": {
+            "x": 12,
+            "y": 0,
+            "w": 3,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Indexers enabled",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(prowlarr_indexer_enabled_total)"
+            }
+          ],
+          "id": 6,
+          "gridPos": {
+            "x": 15,
+            "y": 0,
+            "w": 3,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Health issues",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum({__name__=~\"(sonarr|radarr|prowlarr|bazarr)_system_health_issues\"}) or vector(0)"
+            }
+          ],
+          "id": 7,
+          "gridPos": {
+            "x": 18,
+            "y": 0,
+            "w": 3,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Free space",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "decimals": 1,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 50000000000.0
+                  },
+                  {
+                    "color": "green",
+                    "value": 200000000000.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "min(qbittorrent_global_free_space_on_disk_bytes)"
+            }
+          ],
+          "id": 8,
+          "gridPos": {
+            "x": 21,
+            "y": 0,
+            "w": 3,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "qBittorrent speed (up below 0)",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "Bps",
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(qbittorrent_global_download_speed_bytes)",
+              "legendFormat": "down"
+            },
+            {
+              "refId": "B",
+              "expr": "-sum(qbittorrent_global_upload_speed_bytes)",
+              "legendFormat": "up"
+            }
+          ],
+          "id": 9,
+          "gridPos": {
+            "x": 0,
+            "y": 4,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Torrents",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "custom": {
+                "fillOpacity": 20,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              },
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(qbittorrent_global_torrents)",
+              "legendFormat": "torrents"
+            }
+          ],
+          "id": 10,
+          "gridPos": {
+            "x": 12,
+            "y": 4,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Library downloaded",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "custom": {
+                "fillOpacity": 0,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(sonarr_episode_downloaded_total)",
+              "legendFormat": "episodes"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(radarr_movie_downloaded_total)",
+              "legendFormat": "movies"
+            }
+          ],
+          "id": 11,
+          "gridPos": {
+            "x": 0,
+            "y": 12,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Wanted",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "custom": {
+                "fillOpacity": 0,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              },
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(sonarr_episode_missing_total)",
+              "legendFormat": "episodes missing"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(radarr_movie_missing_total)",
+              "legendFormat": "movies missing"
+            },
+            {
+              "refId": "C",
+              "expr": "sum(bazarr_subtitles_missing_total)",
+              "legendFormat": "subtitles missing"
+            }
+          ],
+          "id": 12,
+          "gridPos": {
+            "x": 12,
+            "y": 12,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    }

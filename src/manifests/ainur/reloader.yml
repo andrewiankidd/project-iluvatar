@@ -1,0 +1,55 @@
+# Reloader: restarts a workload when a Secret or ConfigMap it names changes.
+# The values in ainur-secrets are read into env at start (Dex's admin hash,
+# ntfy's users), so changing one in .env reached nothing until a manual
+# rollout restart. Now the pusher applies it, and Reloader restarts whatever
+# is annotated secret.reloader.stakater.com/reload: ainur-secrets
+# (scripts/set-admin-password.sh). No list here: the annotations are it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reloader
+  namespace: ainur
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: ainur
+  source:
+    repoURL: https://stakater.github.io/stakater-charts
+    chart: reloader
+    targetRevision: 2.2.20
+    helm:
+      valuesObject:
+        reloader:
+          # A pod annotation, not an injected env var: Argo CD leaves an
+          # annotation it didn't write alone, where it would revert the env
+          # var and restart the workload again.
+          reloadStrategy: annotations
+          # A Secret made after its workload started counts as a change too:
+          # grafana-share's token, made by a CronJob after Homepage is up.
+          reloadOnCreate: true
+          readOnlyRootFileSystem: true
+          deployment:
+            resources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+              limits:
+                memory: 128Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ainur-reloader
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

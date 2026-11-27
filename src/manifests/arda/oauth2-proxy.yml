@@ -1,0 +1,48 @@
+# The Dex login in front of arda's sites: one oauth2-proxy, used by Traefik
+# as a forward-auth Middleware. Users are Dex's (ainur's dex/values.yaml),
+# so they are managed in one place for both clusters: LLDAP. Two tiers, two
+# proxies: oauth2-proxy-dex lets only the admins group through,
+# oauth2-proxy-dex-users the users group too (oauth2-proxy/middleware.yaml).
+#
+# To put a site behind it, annotate its Ingress:
+#   traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
+#
+# The login itself happens at auth.kidd.network (Dex's "arda" client), and
+# its cookie is for all of .kidd.network, so one login covers every site.
+# auth.kidd.network and dex.kidd.network are both on the tunnel, so it works
+# away from home.
+#
+# Reads the dex Secret (client-secret, and ca.crt: the lab CA, for Dex's
+# certificate), put here by ainur's arda-bootstrap Job from
+# AINUR_OIDC_CLIENT_SECRET. Nothing new in .env.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: oauth2-proxy
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/oauth2-proxy
+  destination:
+    name: arda
+    namespace: oauth2-proxy
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

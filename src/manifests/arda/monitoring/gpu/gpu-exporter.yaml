@@ -1,0 +1,56 @@
+# The Intel GPUs' use (the ProDesks' UHD 630, which Jellyfin and Plex
+# transcode on): onedr0p's intel-gpu-exporter, which runs intel_gpu_top and
+# serves its engines' busy %, frequency and power for Prometheus. On every x86
+# node: each ProDesk has the GPU, with i915 on all four since 2026-11-21
+# (BACKLOG.md, "Media"). Not kidd.network/gpu: that label only keeps the media
+# apps off the control plane, and its GPU is there too.
+#
+# Privileged: intel_gpu_top reads the GPU's counters through the kernel's
+# perf interface. This namespace already allows it (monitoring.yml).
+#
+# The image has only a moving tag (rolling), so it's pinned by digest.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: intel-gpu-exporter
+spec:
+  selector:
+    matchLabels:
+      app: intel-gpu-exporter
+  template:
+    metadata:
+      labels:
+        app: intel-gpu-exporter
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: exporter
+          image: ghcr.io/onedr0p/intel-gpu-exporter@sha256:90a95483bf5d3752f4db2ab2e1663f19bba307fd832bf53557cbdc38c3701f84
+          env:
+            # intel_gpu_top's sample, in ms.
+            - { name: REFRESH_PERIOD_MS, value: "10000" }
+          ports:
+            - name: metrics
+              containerPort: 8080
+          securityContext:
+            privileged: true
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+---
+# Scraped with the node's name, so its figures can be matched to the machine
+# (the node cards on the private Homepage: ainur's homepage/lab-nodes.yaml).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: intel-gpu-exporter
+spec:
+  selector:
+    matchLabels:
+      app: intel-gpu-exporter
+  podMetricsEndpoints:
+    - port: metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node

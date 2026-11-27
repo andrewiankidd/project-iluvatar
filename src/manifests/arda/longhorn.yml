@@ -1,0 +1,55 @@
+# Longhorn on arda: the default storage class, on each node's SATA SSD (a
+# Talos user volume at /var/mnt/longhorn, from the cluster template in
+# src/manifests/ainur/sidero-omni/omni-config), and the in-cluster snapshots
+# VolSync backs up from (longhorn/snapshot-class.yaml). Backups to R2 are
+# VolSync's (volsync.yml), not Longhorn's.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: longhorn
+  namespace: argocd
+  annotations:
+    # Before anything with a volume: see kyverno-policies.yml.
+    argocd.argoproj.io/sync-wave: "-3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  sources:
+    - repoURL: https://charts.longhorn.io
+      chart: longhorn
+      targetRevision: 1.13.0
+      helm:
+        valueFiles:
+          - $values/src/manifests/arda/longhorn/values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      path: src/manifests/arda/longhorn
+      directory:
+        # Its UI at longhorn.kidd.network, behind the Dex login (longhorn/ingress.yaml).
+        include: '{snapshot-class.yaml,ingress.yaml}'
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      ref: values
+  destination:
+    name: arda
+    namespace: longhorn-system
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Talos enforces the baseline Pod Security standard; Longhorn needs more.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,0 +1,306 @@
+# Grimmory: the reading side of the library, at grimmory.kidd.network. Books,
+# comics, manga and audiobooks in one reader, from the folders Chaptarr and
+# Comicarr file into (/data/media/books, audiobooks, comics, manga), with
+# Kobo and KOReader sync, OPDS and send-to-Kindle.
+#
+# No login of its own: it trusts the users-tier Dex login in front
+# (oauth2-proxy-dex-users, LLDAP's users and admins), whose headers name the
+# user. A first visit makes the account; LLDAP's admins become Grimmory
+# admins. Trusting headers means nothing else may reach it: the
+# NetworkPolicy below lets in only Traefik and the wiring job, which makes
+# the four libraries (wiring.mjs).
+#
+# Its database is MariaDB (Grimmory's only option), in a pod of its own.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grimmory-data
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi   # covers, thumbnails, caches
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grimmory-db
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grimmory-db
+  labels:
+    app: grimmory-db
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: grimmory-db
+  template:
+    metadata:
+      labels:
+        app: grimmory-db
+    spec:
+      containers:
+        - name: mariadb
+          image: lscr.io/linuxserver/mariadb:11.4.8
+          env:
+            - { name: PUID, value: "1000" }
+            - { name: PGID, value: "1000" }
+            - { name: TZ, value: Europe/London }
+            - { name: MYSQL_DATABASE, value: grimmory }
+            - { name: MYSQL_USER, value: grimmory }
+            - name: MYSQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: media, key: grimmory-db-password } }
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: media, key: grimmory-db-password } }
+          ports:
+            - name: mysql
+              containerPort: 3306
+          readinessProbe:
+            exec:
+              command: [mariadb-admin, ping, -h, localhost]
+            periodSeconds: 10
+          volumeMounts:
+            - name: db
+              mountPath: /config
+          resources:
+            requests: { cpu: 20m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: db
+          persistentVolumeClaim:
+            claimName: grimmory-db
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grimmory-db
+spec:
+  selector:
+    app: grimmory-db
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+---
+# Only Grimmory reaches its database; MariaDB needs no outbound connections.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grimmory-db
+spec:
+  podSelector:
+    matchLabels:
+      app: grimmory-db
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: grimmory
+      ports:
+        - port: 3306
+  egress: []
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grimmory
+  labels:
+    app: grimmory
+    kidd.network/media-volume: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: grimmory
+  template:
+    metadata:
+      labels:
+        app: grimmory
+    spec:
+      initContainers:
+        # The libraries' folders, and BookDrop's (anything dropped there is
+        # imported), owned by the apps' user.
+        - name: layout
+          image: alpine:3.22
+          command:
+            - sh
+            - -c
+            - |
+              for d in books audiobooks comics manga bookdrop; do
+                mkdir -p "/data/media/$d" && chown 1000:1000 "/data/media/$d"
+              done
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+      containers:
+        - name: grimmory
+          image: ghcr.io/grimmory-tools/grimmory:v3.5.1
+          env:
+            - { name: USER_ID, value: "1000" }
+            - { name: GROUP_ID, value: "1000" }
+            - { name: TZ, value: Europe/London }
+            - { name: DATABASE_URL, value: "jdbc:mariadb://grimmory-db:3306/grimmory" }
+            - { name: DATABASE_USERNAME, value: grimmory }
+            - name: DATABASE_PASSWORD
+              valueFrom: { secretKeyRef: { name: media, key: grimmory-db-password } }
+            - { name: SWAGGER_ENABLED, value: "false" }
+            # The Dex login's headers (oauth2-proxy's X-Auth-Request-*,
+            # passed on by the dex-users Middleware): the user is their
+            # email, and LLDAP's admins group makes an admin.
+            - { name: REMOTE_AUTH_ENABLED, value: "true" }
+            - { name: REMOTE_AUTH_CREATE_NEW_USERS, value: "true" }
+            - { name: REMOTE_AUTH_HEADER_USER, value: X-Auth-Request-User }
+            - { name: REMOTE_AUTH_HEADER_NAME, value: X-Auth-Request-Preferred-Username }
+            - { name: REMOTE_AUTH_HEADER_EMAIL, value: X-Auth-Request-Email }
+            - { name: REMOTE_AUTH_HEADER_GROUPS, value: X-Auth-Request-Groups }
+            - { name: REMOTE_AUTH_ADMIN_GROUP, value: admins }
+            - { name: REMOTE_AUTH_GROUPS_DELIMITER, value: '\s*,\s*' }
+          ports:
+            - name: http
+              containerPort: 6060
+          startupProbe:
+            httpGet:
+              path: /api/v1/healthcheck
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60   # first start migrates the database
+          readinessProbe:
+            httpGet:
+              path: /api/v1/healthcheck
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 10
+          volumeMounts:
+            - name: app-data
+              mountPath: /app/data
+            - name: data
+              mountPath: /data
+            - name: data
+              mountPath: /bookdrop
+              subPath: media/bookdrop
+          resources:
+            requests: { cpu: 50m, memory: 768Mi }
+            limits: { memory: 2Gi }
+      volumes:
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: grimmory-data
+        - name: data
+          persistentVolumeClaim:
+            claimName: media
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grimmory
+spec:
+  selector:
+    app: grimmory
+  ports:
+    - name: http
+      port: 6060
+      targetPort: http
+---
+# It trusts its login headers, so only Traefik (behind the Dex login) and
+# the wiring job may reach it; any other pod could otherwise claim to be
+# anyone. Its kubelet's probes still get in: kube-router lets a node reach
+# its own pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grimmory
+spec:
+  podSelector:
+    matchLabels:
+      app: grimmory
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: wiring
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 6060
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: grimmory-db
+      ports:
+        - port: 3306
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grimmory
+  annotations:
+    # LAN only, behind the users-tier Dex login (friends and family too).
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex-users@kubernetescrd
+    # On both signed-in Homepages (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/instance.users: "true"
+    gethomepage.dev/group: Media
+    gethomepage.dev/name: Grimmory
+    gethomepage.dev/description: Books, comics, manga and audiobooks
+    gethomepage.dev/icon: mdi-bookshelf
+    gethomepage.dev/href: https://grimmory.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: grimmory.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grimmory
+                port:
+                  name: http

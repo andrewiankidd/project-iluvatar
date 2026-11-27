@@ -1,0 +1,350 @@
+# Games (Grafana, Apps folder): the Minecraft servers' players and response, from each server's mc-monitor. Dragonwilds sends nothing.
+# Written by hand from the metrics the apps send (each app's monitor);
+# Grafana loads it like any dashboard (the grafana_dashboard label).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-games
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Apps
+data:
+  games.json: |
+    {
+      "uid": "games",
+      "title": "Games",
+      "description": "the Minecraft servers' players and response, from each server's mc-monitor. Dragonwilds sends nothing.",
+      "tags": [
+        "apps"
+      ],
+      "timezone": "browser",
+      "refresh": "1m",
+      "time": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "schemaVersion": 39,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Players online",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(minecraft_status_players_online_count) or vector(0)"
+            }
+          ],
+          "id": 1,
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 6,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Servers up",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(minecraft_status_healthy)"
+            }
+          ],
+          "id": 2,
+          "gridPos": {
+            "x": 6,
+            "y": 0,
+            "w": 6,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Servers down",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "count(minecraft_status_healthy == 0) or vector(0)"
+            }
+          ],
+          "id": 3,
+          "gridPos": {
+            "x": 12,
+            "y": 0,
+            "w": 6,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Slowest answer",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "decimals": 2,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max(minecraft_status_response_time_seconds)"
+            }
+          ],
+          "id": 4,
+          "gridPos": {
+            "x": 18,
+            "y": 0,
+            "w": 6,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Players online",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "custom": {
+                "fillOpacity": 20,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "normal"
+                }
+              },
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (server) (label_replace(minecraft_status_players_online_count, \"server\", \"$1\", \"pod\", \"(.*)-minecraft-[^-]+-[^-]+\"))",
+              "legendFormat": "{{server}}"
+            }
+          ],
+          "id": 5,
+          "gridPos": {
+            "x": 0,
+            "y": 4,
+            "w": 12,
+            "h": 9
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Response time",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "fillOpacity": 0,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              },
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max by (server) (label_replace(minecraft_status_response_time_seconds, \"server\", \"$1\", \"pod\", \"(.*)-minecraft-[^-]+-[^-]+\"))",
+              "legendFormat": "{{server}}"
+            }
+          ],
+          "id": 6,
+          "gridPos": {
+            "x": 12,
+            "y": 4,
+            "w": 12,
+            "h": 9
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    }

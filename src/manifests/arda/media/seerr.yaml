@@ -1,0 +1,184 @@
+# Seerr: where films and series are asked for, at seerr.kidd.network.
+# Overseerr (Plex only) and Jellyseerr (Jellyfin and Emby) merged into Seerr
+# in 2026; it serves Plex and Jellyfin both.
+#
+# Its own login, not Dex: its users are the media server's users (sign in
+# with a Jellyfin or Plex account), and requests are tracked per user.
+#
+# Its first run is a wizard in the browser: sign in with Jellyfin's admin
+# (or a Plex account), pick the libraries. Only the UI can do that; once it's
+# done, wiring.yaml adds Sonarr and Radarr through Seerr's API on its next
+# run. Its API key is fixed (API_KEY, from the media Secret) for that.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seerr-config
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seerr
+  labels:
+    app: seerr
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume
+  selector:
+    matchLabels:
+      app: seerr
+  template:
+    metadata:
+      labels:
+        app: seerr
+    spec:
+      securityContext:
+        # The image runs as node (1000); a new volume is root's.
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: seerr
+          image: ghcr.io/seerr-team/seerr:v3.5.2
+          env:
+            - { name: TZ, value: Europe/London }
+            - { name: PORT, value: "5055" }
+            - name: API_KEY
+              valueFrom: { secretKeyRef: { name: media, key: seerr-api-key } }
+          ports:
+            - name: http
+              containerPort: 5055
+          readinessProbe:
+            httpGet:
+              path: /api/v1/status
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          resources:
+            requests: { cpu: 20m, memory: 192Mi }
+            limits: { memory: 768Mi }
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: seerr-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seerr
+spec:
+  selector:
+    app: seerr
+  ports:
+    - name: http
+      port: 5055
+      targetPort: http
+---
+# Only Traefik and wiring reach Seerr; outbound is limited to Sonarr, Radarr,
+# Jellyfin, Plex, CoreDNS and the public internet (TMDB / Plex auth).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: seerr
+spec:
+  podSelector:
+    matchLabels:
+      app: seerr
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: wiring
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 5055
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: sonarr
+      ports:
+        - port: 8989
+    - to:
+        - podSelector:
+            matchLabels:
+              app: radarr
+      ports:
+        - port: 7878
+    - to:
+        - podSelector:
+            matchLabels:
+              app: jellyfin
+      ports:
+        - port: 8096
+    - to:
+        - podSelector:
+            matchLabels:
+              app: plex
+      ports:
+        - port: 32400
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: seerr
+  annotations:
+    kidd.network/tunnel: "true"
+    kidd.network/zero-trust: "true"
+    # Its own login (Jellyfin or Plex users), behind Cloudflare Access on the internet.
+    # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    # Also on the users' page (userpage.kidd.network).
+    gethomepage.dev/instance.users: "true"
+    gethomepage.dev/group: Media
+    gethomepage.dev/name: Seerr
+    gethomepage.dev/description: Ask for films and series
+    gethomepage.dev/icon: seerr.png
+    gethomepage.dev/href: https://seerr.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: seerr.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: seerr
+                port:
+                  name: http

@@ -1,0 +1,11 @@
+{
+  "file": "/data/plugins/Geyser-Spigot/config.yml",
+  "ops": [
+    { "$set": { "path": "$.bedrock.transport", "value": "both" } },
+    { "$set": { "path": "$.bedrock['webrtc-port']", "value": "19133", "value-type": "int" } },
+    { "$put": { "path": "$.bedrock.signaling", "key": "advertise-addresses", "value": "${CFG_BEDROCK_ADDRESS}", "value-type": "list of auto" } },
+    { "$set": { "path": "$.bedrock.signaling['stun-discovery']", "value": "false", "value-type": "bool" } },
+    { "$set": { "path": "$.java['auth-type']", "value": "floodgate" } },
+    { "$set": { "path": "$.advanced['resource-pack-urls']", "value": [] } }
+  ]
+}

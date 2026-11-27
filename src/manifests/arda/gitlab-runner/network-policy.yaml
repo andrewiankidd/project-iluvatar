@@ -1,0 +1,34 @@
+# CI job pods (labelled by gitlab-runner/values.yaml) may only reach CoreDNS
+# and the public internet (gitlab.com, package registries, container registries),
+# blocking lateral movement to arda's services and the home LAN. The runner
+# manager pod itself is not selected so it can still talk to the Kubernetes API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gitlab-runner-jobs
+  namespace: gitlab-runner
+spec:
+  podSelector:
+    matchLabels:
+      kidd.network/gitlab-job: "true"
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16

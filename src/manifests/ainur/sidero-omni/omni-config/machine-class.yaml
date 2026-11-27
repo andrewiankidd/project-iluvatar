@@ -1,0 +1,20 @@
+# Every x86 machine that joins Omni; omni-cluster-template.yaml takes its
+# machines from here. Applied by ../omni-cluster-template-sync-job.yaml.
+metadata:
+  namespace: default
+  type: MachineClasses.omni.sidero.dev
+  id: available
+spec:
+  matchlabels:
+    - omni.sidero.dev/arch = amd64
+---
+# arda's workers: machines the arda-disks CronJob has labelled
+# kidd.network/arda-worker, which it does only once talos-default has its
+# control plane, so the first machine is always the control plane.
+metadata:
+  namespace: default
+  type: MachineClasses.omni.sidero.dev
+  id: arda-workers
+spec:
+  matchlabels:
+    - omni.sidero.dev/arch = amd64, kidd.network/arda-worker

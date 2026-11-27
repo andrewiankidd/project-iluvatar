@@ -1,0 +1,116 @@
+# Ollama, the local LLM behind Assist, on CPU (BACKLOG: GPUs are out of
+# budget). setup.py adds it to Home Assistant as the "Local" pipeline's
+# conversation agent, with Home Assistant's own intent matching first: plain
+# commands ("turn off the kitchen light") never reach the model, and the rest
+# take a few seconds on a ProDesk.
+#
+# The model is Home Assistant's suggested one for Ollama, pulled at start into
+# the volume (a no-op when it's already there; offline, the copy on the
+# volume is used). Home Assistant keeps it loaded, so it holds its ~3 GB of
+# memory all the time.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  labels:
+    app: ollama
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      # No <NAME>_PORT=tcp://... variables from the Services (Ollama reads OLLAMA_*).
+      enableServiceLinks: false
+      containers:
+        - name: ollama
+          image: ollama/ollama:0.40.17
+          env:
+            # Must match MODEL in setup.yaml.
+            - name: MODEL
+              value: qwen3:4b-instruct
+          command:
+            - sh
+            - -c
+            - |
+              ollama serve &
+              until ollama list >/dev/null 2>&1; do sleep 1; done
+              ollama pull "$MODEL" || echo "couldn't pull $MODEL; using what's on the volume"
+              wait
+          ports:
+            - name: http
+              containerPort: 11434
+          volumeMounts:
+            - name: data
+              mountPath: /root/.ollama
+          readinessProbe:
+            httpGet:
+              path: /api/version
+              port: http
+          resources:
+            requests: { cpu: "1", memory: 3Gi }
+            limits: { memory: 6Gi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: ollama-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+spec:
+  selector:
+    app: ollama
+  ports:
+    - name: http
+      port: 11434
+      targetPort: http
+---
+# Outbound restricted to CoreDNS and the public internet (model pulls),
+# blocking other cluster services and the home LAN. Ingress stays open because
+# Home Assistant runs on hostNetwork.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ollama
+spec:
+  podSelector:
+    matchLabels:
+      app: ollama
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16

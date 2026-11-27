@@ -1,0 +1,7 @@
+bootstrap/netboot/.env
+bootstrap/netboot/.env.bak.*
+bootstrap/netboot/assets/raspios/boot/.config
+bootstrap/netboot/output/**
+
+# Claude Code workspace settings (per-machine, not for sharing)
+.claude/

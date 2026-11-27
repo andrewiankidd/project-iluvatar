@@ -1,0 +1,441 @@
+# Notes and alerts (Grafana, Apps folder): Obsidian's sync server (CouchDB) and ntfy, the lab's alerts to phones.
+# Written by hand from the metrics the apps send (each app's monitor);
+# Grafana loads it like any dashboard (the grafana_dashboard label).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-notes
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Apps
+data:
+  notes.json: |
+    {
+      "uid": "notes",
+      "title": "Notes and alerts",
+      "description": "Obsidian's sync server (CouchDB) and ntfy, the lab's alerts to phones.",
+      "tags": [
+        "apps"
+      ],
+      "timezone": "browser",
+      "refresh": "1m",
+      "time": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "schemaVersion": 39,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "CouchDB requests/s",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "decimals": 2,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(couchdb_httpd_status_codes[5m]))"
+            }
+          ],
+          "id": 1,
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 6,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "CouchDB errors/s",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "decimals": 2,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.01
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(couchdb_httpd_status_codes{code=~\"5..\"}[5m])) or vector(0)"
+            }
+          ],
+          "id": 2,
+          "gridPos": {
+            "x": 6,
+            "y": 0,
+            "w": 6,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "ntfy subscribers",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(ntfy_subscribers_total)"
+            }
+          ],
+          "id": 3,
+          "gridPos": {
+            "x": 12,
+            "y": 0,
+            "w": 6,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "stat",
+          "title": "ntfy messages, 24h",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "round(sum(increase(ntfy_messages_published_success[24h])))"
+            }
+          ],
+          "id": 4,
+          "gridPos": {
+            "x": 18,
+            "y": 0,
+            "w": 6,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Obsidian sync (CouchDB) requests by status",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "normal"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (code) (rate(couchdb_httpd_status_codes[5m]))",
+              "legendFormat": "{{code}}"
+            }
+          ],
+          "id": 5,
+          "gridPos": {
+            "x": 0,
+            "y": 4,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "CouchDB reads and writes",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(couchdb_database_reads_total[5m]))",
+              "legendFormat": "reads"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(rate(couchdb_database_writes_total[5m]))",
+              "legendFormat": "writes"
+            }
+          ],
+          "id": 6,
+          "gridPos": {
+            "x": 12,
+            "y": 4,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "ntfy messages published, per hour",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "custom": {
+                "fillOpacity": 20,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(ntfy_messages_published_success[5m])) * 3600",
+              "legendFormat": "published"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(rate(ntfy_messages_published_failure[5m])) * 3600",
+              "legendFormat": "failed"
+            }
+          ],
+          "id": 7,
+          "gridPos": {
+            "x": 0,
+            "y": 12,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "ntfy subscribers and topics",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "custom": {
+                "fillOpacity": 0,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(ntfy_subscribers_total)",
+              "legendFormat": "subscribers"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(ntfy_topics_total)",
+              "legendFormat": "topics"
+            }
+          ],
+          "id": 8,
+          "gridPos": {
+            "x": 12,
+            "y": 12,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    }

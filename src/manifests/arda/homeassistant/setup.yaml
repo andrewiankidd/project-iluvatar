@@ -1,0 +1,107 @@
+# Runs setup.py every 10 minutes: on a fresh volume, onboarding, the
+# integrations and the voice pipeline are in place within a few runs of Home
+# Assistant starting, and nobody sees the first-visit page. Afterwards each
+# run checks and changes nothing.
+#
+# Home Assistant's own image, for its Python and aiohttp; it talks to Home
+# Assistant through the Service, not the volume.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: homeassistant-setup
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 3600
+      template:
+        spec:
+          serviceAccountName: homeassistant-setup
+          restartPolicy: Never
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: setup
+              image: ghcr.io/home-assistant/home-assistant:2026.11.2
+              command: ["python3", "/setup/setup.py"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+              env:
+                - name: HA_URL
+                  value: http://homeassistant:8123
+                # The client the tokens are for: the web frontend's own.
+                - name: CLIENT_ID
+                  value: https://homeassistant.kidd.network/
+                # What Home Assistant connects to, as it sees them: it is on
+                # the host network, so Services by full name, and the Matter
+                # Server on localhost (deployment.yaml).
+                - name: WYOMING
+                  value: whisper.homeassistant.svc:10300 piper.homeassistant.svc:10200
+                - name: OLLAMA_URL
+                  value: http://ollama.homeassistant.svc:11434
+                - name: MATTER_URL
+                  value: ws://localhost:5580/ws
+                # Must match MODEL in ollama.yaml.
+                - name: MODEL
+                  value: qwen3:4b-instruct
+                - name: OWNER_PASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: homeassistant, key: owner-password, optional: true }
+                - name: LATITUDE
+                  valueFrom:
+                    secretKeyRef: { name: homeassistant, key: latitude, optional: true }
+                - name: LONGITUDE
+                  valueFrom:
+                    secretKeyRef: { name: homeassistant, key: longitude, optional: true }
+              volumeMounts:
+                - name: setup
+                  mountPath: /setup
+              resources:
+                requests: { cpu: 10m, memory: 64Mi }
+                limits: { memory: 256Mi }
+          volumes:
+            - name: setup
+              configMap:
+                name: homeassistant-setup
+---
+# For setup.py's metrics token: it may make the homeassistant-metrics Secret
+# and read and replace it, nothing else.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: homeassistant-setup
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: homeassistant-setup
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [homeassistant-metrics]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: homeassistant-setup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: homeassistant-setup
+subjects:
+  - kind: ServiceAccount
+    name: homeassistant-setup

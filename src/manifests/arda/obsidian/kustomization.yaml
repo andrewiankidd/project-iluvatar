@@ -1,0 +1,12 @@
+# The obsidian app (../obsidian.yml).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: obsidian
+resources:
+  - couchdb.yaml
+  - web.yaml
+configMapGenerator:
+  # CouchDB's settings for LiveSync; the hash suffix restarts CouchDB on a change.
+  - name: couchdb-config
+    files:
+      - livesync.ini

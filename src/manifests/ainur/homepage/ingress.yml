@@ -1,0 +1,67 @@
+# userpage.kidd.network: the users' page (values-users.yaml), through its
+# sign-in proxy (users.yaml). On the internet too (the tunnel), for friends.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: homepage-users
+  namespace: ainur-homepage
+  annotations:
+    kidd.network/tunnel: "true"
+    kubernetes.io/ingress.class: "traefik"
+    cert-manager.io/cluster-issuer: "local-ca"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - userpage.kidd.network
+      secretName: homepage-tls
+  rules:
+    - host: userpage.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: oauth2-proxy-users
+                port:
+                  name: http
+---
+# kidd.network itself is outside the *.kidd.network wildcard: it needs its own
+# DNS record on the LAN.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: homepage-public
+  namespace: ainur-homepage
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+    cert-manager.io/cluster-issuer: "local-ca"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - kidd.network
+        - homepage.kidd.network
+      secretName: homepage-public-tls
+  rules:
+    - host: kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: homepage-public
+                port:
+                  number: 3000
+    - host: homepage.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: homepage-public
+                port:
+                  number: 3000

@@ -1,0 +1,38 @@
+# Transmute: converts and compresses files (images, video, audio,
+# documents, spreadsheets, subtitles, fonts) on arda, nothing sent elsewhere.
+# At transmute.kidd.network, on the LAN only, behind the Dex login
+# (oauth2-proxy.yml). Transmute's own accounts are off: past the Dex login
+# each browser gets its own guest workspace, kept 30 days.
+#
+# Off the tunnel: files are uploaded to it and converted on arda's CPU.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: transmute
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/transmute
+  destination:
+    name: arda
+    namespace: transmute
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,0 +1,1242 @@
+#cloud-config
+
+hostname: valar
+
+# No passwords, and no secrets: this file and the SD card image are both
+# served on the LAN. The only way in is the push key (AINUR_PUSH_PUBKEY, its
+# public half), which push-secrets.sh uses to hand a booting Pi its k3s
+# tokens and ainur its Secrets.
+ssh_pwauth: false
+disable_root: true
+
+package_update: true
+
+package_upgrade: false
+
+users:
+  - name: ubuntu
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ${AINUR_PUSH_PUBKEY}
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: sudo,adm
+
+chpasswd:
+  expire: false
+
+packages:
+  - zstd
+  - util-linux
+  - coreutils
+  - findutils
+  - openssl
+  - nfs-common
+  - open-iscsi
+  - xfsprogs
+  - gdisk
+  - parted
+
+write_files:
+  # No OnFailure=emergency.target on cloud-final: the Pis have no password,
+  # so an emergency shell can't be logged into, and it stops sshd, so the
+  # push key can't get in either. A failed stage leaves the Pi running.
+
+  # Ensure TUN module is loaded
+  - path: /etc/modules-load.d/tun.conf
+    permissions: '0644'
+    owner: root:root
+    content: |
+      tun
+
+  # Deterministic hostname setter script (called from runcmd)
+  - path: /usr/local/sbin/set-hostname.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      base=$(hostname | cut -d'.' -f1)
+      ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+      if [ -n "$ip" ]; then
+        suf=${ip##*.}
+      else
+        mac=$(tr -d ':' </sys/class/net/eth0/address)
+        suf=${mac: -4}
+      fi
+      hn="${base}-${suf}"
+      hostnamectl set-hostname "$hn"
+      printf '%s\n' "$hn" > /etc/hostname
+      if grep -q '^127.0.1.1' /etc/hosts; then
+        sed -i "s/^127.0.1.1.*/127.0.1.1 $hn/" /etc/hosts
+      else
+        echo "127.0.1.1 $hn" >> /etc/hosts
+      fi
+
+  # Prepare SSH host keys and restart sshd
+  - path: /usr/local/sbin/ssh-prepare.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      echo "[prepare] generating SSH host keys and restarting sshd"
+      ssh-keygen -A || true
+      systemctl restart ssh || true
+
+  - path: /etc/systemd/system/ssh-prepare.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Prepare SSH host keys and restart sshd
+      Wants=local-fs.target
+      After=local-fs.target
+      Before=nvme-prepare.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/ssh-prepare.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Prepare the NVMe for persistent volumes (idempotent: only formats uninitialized
+  # devices). ainur's go on valar-50's, through local-path (the k3s server's
+  # --default-local-storage-path); the netbooted Pis' stay free.
+  - path: /usr/local/sbin/nvme-prepare.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      log() { echo "[nvme-prepare] $(date -Iseconds) $*"; }
+      log "starting NVMe preparation"
+
+      DISK="${NVME_DISK:-}"
+      if [ -z "${DISK}" ]; then
+        DISK=$(lsblk -ndo NAME,TYPE | awk '$2=="disk" && $1 ~ /^nvme/ {print "/dev/"$1; exit}')
+        [ -n "${DISK:-}" ] && log "auto-detected NVMe disk: $DISK"
+      fi
+      # No NVMe disk present; nothing to do
+      if [ -z "${DISK:-}" ] || [ ! -b "$DISK" ]; then
+        log "no NVMe disk present; skipping"
+        exit 0
+      fi
+
+      PART="${DISK}p1"
+      # Create single GPT partition if none exists
+      if [ ! -b "$PART" ]; then
+        log "creating GPT partition on $DISK"
+        if command -v sgdisk >/dev/null 2>&1; then
+          sgdisk -Z "$DISK" || true
+          sgdisk -n1:0:0 -t1:8300 "$DISK"
+        else
+          parted -s "$DISK" mklabel gpt mkpart primary xfs 0% 100%
+        fi
+        partprobe "$DISK" || true
+        udevadm settle || true
+      else
+        log "found existing partition: $PART"
+      fi
+
+      DEV="$PART"
+      # Format XFS only if no filesystem is present
+      FSTYPE=$(blkid -o value -s TYPE "$DEV" || true)
+      if [ -z "${FSTYPE:-}" ]; then
+        log "formatting $DEV as XFS"
+        mkfs.xfs -f "$DEV"
+      else
+        log "existing filesystem detected on $DEV: $FSTYPE"
+      fi
+
+      UUID=$(blkid -s UUID -o value "$DEV")
+      MNT="${NVME_MNT:-/var/mnt/nvme}"
+      mkdir -p "$MNT"
+      if ! grep -q "$UUID" /etc/fstab; then
+        echo "UUID=$UUID $MNT xfs noatime,nodiratime,discard 0 2" >> /etc/fstab
+        log "added fstab entry for $UUID -> $MNT"
+      else
+        log "fstab entry already present for $UUID"
+      fi
+      # Mount if not already mounted
+      if ! mountpoint -q "$MNT"; then
+        log "mounting $MNT"
+        mount "$MNT" || mount -a || true
+      else
+        log "$MNT already mounted"
+      fi
+      # Enable periodic trim
+      systemctl enable --now fstrim.timer >/dev/null 2>&1 || true
+      log "completed NVMe preparation"
+
+  - path: /etc/systemd/system/nvme-prepare.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Prepare the NVMe for persistent volumes
+      Wants=local-fs.target
+      After=local-fs.target
+      Before=k3s-bootstrap.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/nvme-prepare.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Generate a local CA, install cert-manager/trust-manager resources, and enable API OIDC
+  - path: /usr/local/sbin/gen-lab-certs.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      # Keep logs in journald via systemd; avoid tee to remove a potential early dependency.
+      KUBECTL=/usr/local/bin/kubectl
+      OPENSSL=/usr/bin/openssl
+      mkdir -p /etc/rancher/k3s/oidc /etc/k3s-certs
+      # Ensure kubectl is available even if k3s hasn't placed a kubectl shim yet (avoid mktemp/install deps)
+      if [ ! -x "$KUBECTL" ] && [ -x /usr/local/bin/k3s ]; then
+        printf '%s\n' '#!/bin/sh' 'exec /usr/local/bin/k3s kubectl "$@"' > "$KUBECTL"
+        chmod 0755 "$KUBECTL"
+      fi
+      # The lab root CA, for API OIDC and cert-manager's CA Issuer. It comes
+      # from .env (AINUR_LAB_CA_CRT and AINUR_LAB_CA_KEY, pushed with the
+      # other AINUR_* values by the bootstrap VM's push-secrets.sh), so a
+      # rebuilt ainur keeps the CA every device and every arda machine
+      # already trusts. A CA made here instead lives only on this Pi's disk,
+      # and a re-flash loses it.
+      CA_CRT=/etc/rancher/k3s/oidc/lab-ca.crt
+      CA_KEY=/etc/k3s-certs/lab-ca.key
+      env_file=/run/ainur/ainur.env
+      if [ ! -s "$env_file" ] && { [ ! -s "$CA_CRT" ] || [ ! -s "$CA_KEY" ]; }; then
+        echo "[tls-bootstrap] no lab CA yet, and nothing pushed; retrying"
+        exit 1
+      fi
+      crt="$(grep '^AINUR_LAB_CA_CRT=' "$env_file" 2>/dev/null | cut -d= -f2- | tr -d "'\"" || true)"
+      key="$(grep '^AINUR_LAB_CA_KEY=' "$env_file" 2>/dev/null | cut -d= -f2- | tr -d "'\"" || true)"
+      umask 077
+      if [ -n "$crt" ] && [ -n "$key" ]; then
+        echo "$crt" | base64 -d > "$CA_CRT.new"
+        echo "$key" | base64 -d > "$CA_KEY.new"
+        if [ "$("$OPENSSL" x509 -noout -pubkey -in "$CA_CRT.new" | sha256sum)" = \
+             "$("$OPENSSL" pkey -pubout -in "$CA_KEY.new" | sha256sum)" ]; then
+          mv "$CA_CRT.new" "$CA_CRT"; mv "$CA_KEY.new" "$CA_KEY"
+          echo "[tls-bootstrap] lab CA from .env"
+        else
+          rm -f "$CA_CRT.new" "$CA_KEY.new"
+          echo "[tls-bootstrap] WARNING: AINUR_LAB_CA_CRT and AINUR_LAB_CA_KEY don't match; ignoring them"
+        fi
+      fi
+      if [ ! -s "$CA_CRT" ] || [ ! -s "$CA_KEY" ]; then
+        echo "[tls-bootstrap] WARNING: no lab CA in .env; making a new one, which a rebuild won't keep"
+        "$OPENSSL" genrsa -out "$CA_KEY" 4096
+        "$OPENSSL" req -x509 -new -nodes -key "$CA_KEY" -sha256 -days 3650 \
+          -subj "/CN=Lab Root CA" -addext "basicConstraints=critical,CA:true" -out "$CA_CRT"
+      fi
+      umask 022
+
+      # Namespaces are created by ArgoCD/Helm (CreateNamespace=true)
+
+      # Install/refresh cert-manager CA Secret for ClusterIssuer
+      if [ -s "$CA_CRT" ] && [ -s "$CA_KEY" ]; then
+        "$KUBECTL" get ns cert-manager >/dev/null 2>&1 || "$KUBECTL" create ns cert-manager
+        "$KUBECTL" -n cert-manager create secret tls cluster-root-ca \
+          --cert="$CA_CRT" --key="$CA_KEY" -o yaml --dry-run=client | "$KUBECTL" apply -f -
+        # Wait for CRDs to be installed before applying CRs from files
+        for i in $(seq 1 120); do
+          CI_CRD=$($KUBECTL get crd clusterissuers.cert-manager.io >/dev/null 2>&1 && echo ok || true)
+          TM_CRD=$($KUBECTL get crd bundles.trust.cert-manager.io >/dev/null 2>&1 && echo ok || true)
+          [ "$CI_CRD" = ok ] && [ "$TM_CRD" = ok ] && break
+          sleep 2
+        done
+        # Apply static manifests if present (idempotent)
+        [ -f /etc/k3s-manifests/clusterissuer-local-ca.yaml ] && "$KUBECTL" apply -f /etc/k3s-manifests/clusterissuer-local-ca.yaml || true
+        [ -f /etc/k3s-manifests/trust-bundle.yaml ] && "$KUBECTL" apply -f /etc/k3s-manifests/trust-bundle.yaml || true
+      fi
+
+      # trust-manager will inject a ConfigMap named "lab-ca" into labeled namespaces
+      # (ainur.kidd.network/ca=inject). Argo CD and other apps mount this for outbound TLS trust.
+
+      # Expose CA for browser download + fingerprint (optional, only if namespace exists)
+      if [ -s "$CA_CRT" ] && "$KUBECTL" get ns ainur-cert >/dev/null 2>&1; then
+        TMP_SHA=$(mktemp)
+        sha256sum "$CA_CRT" | awk '{print $1}' > "$TMP_SHA"
+        "$KUBECTL" -n ainur-cert create configmap lab-ca \
+          --from-file=ca.crt="$CA_CRT" \
+          --from-file=ca.sha256="$TMP_SHA" \
+          -o yaml --dry-run=client | "$KUBECTL" apply -f - || true
+        rm -f "$TMP_SHA"
+      fi
+
+      # Headlamp will consume the trust-manager managed ConfigMap "lab-ca"; no manual ConfigMap needed
+
+      # Ensure k3s apiserver OIDC config points to HTTPS issuer and CA
+      CFG=/etc/rancher/k3s/config.yaml
+      mkdir -p /etc/rancher/k3s
+      if ! grep -q "oidc-issuer-url" "$CFG" 2>/dev/null; then
+        if [ -s "$CA_CRT" ]; then
+          printf "\nkube-apiserver-arg:\n  - oidc-issuer-url=https://dex.kidd.network\n  - oidc-client-id=headlamp\n  - oidc-username-claim=email\n  - oidc-groups-claim=groups\n  - oidc-ca-file=%s\n" "$CA_CRT" >> "$CFG"
+        else
+          echo "[tls-bootstrap] WARNING: CA file $CA_CRT not present; skipping OIDC api-server args for now"
+        fi
+      fi
+      # Nothing else to wait for here; cert-manager and trust-manager reconcile after Helm installs
+
+  - path: /etc/systemd/system/tls-bootstrap.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Generate lab TLS certs and configure OIDC
+      # Ensure k3s is up and staged manifests are installed first
+      After=k3s.service k3s-manifests-install.service
+      Wants=k3s.service k3s-manifests-install.service
+
+      [Service]
+      Type=oneshot
+      Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      Environment=KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+      StandardOutput=journal
+      StandardError=journal
+      Restart=on-failure
+      RestartSec=15s
+      ExecStart=/usr/local/sbin/gen-lab-certs.sh
+      # Restart k3s once to apply kube-apiserver OIDC flags after the CA and configs are in place,
+      # then wait until the API is responsive to avoid a window where controllers can’t read resources.
+      ExecStartPost=/usr/local/sbin/restart-and-wait-k3s.sh
+      RemainAfterExit=yes
+
+  - path: /usr/local/sbin/restart-and-wait-k3s.sh
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      set -eu
+      systemctl restart k3s || true
+      # Prefer k3s kubectl shim if present
+      KUBECTL="/usr/local/bin/kubectl"
+      K3S_BIN="/usr/local/bin/k3s"
+      if [ ! -x "$KUBECTL" ] && [ -x "$K3S_BIN" ]; then
+        USE_K3S=1
+      else
+        USE_K3S=0
+      fi
+      # Wait up to 5 minutes for API server to become ready
+      for i in $(seq 1 150); do
+        if [ "$USE_K3S" -eq 1 ]; then
+          if "$K3S_BIN" kubectl --request-timeout=5s get --raw=/readyz 2>/dev/null | grep -q 'ok'; then
+            exit 0
+          fi
+        else
+          if "$KUBECTL" --request-timeout=5s get --raw=/readyz 2>/dev/null | grep -q 'ok'; then
+            exit 0
+          fi
+        fi
+        sleep 2
+      done
+      # Fallback check
+      if [ "$USE_K3S" -eq 1 ]; then
+        "$K3S_BIN" kubectl get nodes || true
+      else
+        "$KUBECTL" get nodes || true
+      fi
+      exit 0
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Install and configure k3s bootstrap orchestrator
+  - path: /usr/local/bin/k3s-bootstrap.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      # Basic error trap
+      trap 'echo "[k3s-bootstrap] ERROR at line ${LINENO}"' ERR
+      # Extra verbosity for troubleshooting
+      echo "==== k3s-bootstrap: start $(date -Is) ===="
+      echo "[sys] uname: $(uname -a)"
+      echo "[net] hostname: $(hostname)"
+      ip -brief addr || true
+      ip route || true
+
+      # Installed already: the SD card Pi, rebooting. Its k3s starts itself,
+      # and installing again would wait for a push no one may be making (the
+      # tokens are pushed, not kept in the image). A netbooted Pi starts from
+      # nothing every boot, so it never gets here.
+      if [ -f /etc/systemd/system/k3s.service ] || [ -f /etc/systemd/system/k3s-agent.service ]; then
+        echo "[k3s-bootstrap] k3s already installed; nothing to do"
+        exit 0
+      fi
+
+      # Orchestrate: discover and run k3s-<nn>-*.sh in order
+      shopt -s nullglob
+      scripts=(/usr/local/bin/k3s-[0-9][0-9]-*.sh)
+      if [ ${#scripts[@]} -eq 0 ]; then
+        echo "[k3s-bootstrap] no k3s-<nn>-*.sh scripts found in /usr/local/bin"
+      else
+        # Natural sort by version-like numbers in names
+        mapfile -t scripts < <(printf '%s\n' "${scripts[@]}" | sort -V)
+        for s in "${scripts[@]}"; do
+          echo "[k3s-bootstrap] running $s"
+          bash "$s"
+        done
+      fi
+      echo "==== k3s-bootstrap: end $(date -Is) ===="
+      exit 0
+
+  - path: /usr/local/bin/k3s-10-leader-election.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      echo "[leader] starting leader election"
+      U=$(awk -F: '$3>=1000 && $1!="nobody"{print $1; exit}' /etc/passwd)
+      K3S_STATE_DIR="${K3S_STATE_DIR:-/tmp/k3s}"
+      mkdir -p "$K3S_STATE_DIR"
+      LEADER_PATH="/tmp/k3s/k3s-leader"
+      TOKEN_PATH="/tmp/k3s/k3s-token"
+      AGENT_TOKEN_PATH="/tmp/k3s/k3s-agent-token"
+      CLOUD_INIT_BASE_URL="${CLOUD_INIT_BASE_URL:-http://bootstrap.kidd.network}"
+      LEADER_URL="${CLOUD_INIT_BASE_URL%/}/k3s/k3s-leader"
+      echo "[paths] USER=$U"
+      echo "[paths] LEADER_FILE=$LEADER_PATH TOKEN_PATH=$TOKEN_PATH AGENT_TOKEN_PATH=$AGENT_TOKEN_PATH"
+      echo "[http] LEADER_URL=$LEADER_URL"
+      if REMOTE_LEADER=$(curl -sfL --connect-timeout 3 --max-time 5 "$LEADER_URL" | head -n1); then
+        if [ -n "$REMOTE_LEADER" ]; then
+          echo "[leader] remote leader found: $REMOTE_LEADER"
+          printf '%s\n' "$REMOTE_LEADER" > "$LEADER_PATH" || true
+        fi
+      else
+        echo "[leader] remote leader not found at $LEADER_URL"
+      fi
+      # A netbooted Pi has nowhere to share a claim, so electing itself makes a
+      # cluster of one. Wait for the SD card Pi's ainur to name the leader
+      # instead; k3s-bootstrap.service retries every 10s.
+      if [ ! -s "$LEADER_PATH" ] && grep -qw 'root=/dev/nfs' /proc/cmdline; then
+        echo "[leader] netbooted and no leader served yet; retrying"
+        exit 1
+      fi
+      # The k3s tokens are pushed, never served: say this Pi is waiting for
+      # them, and how it booted (the SD card Pi becomes the server, so it
+      # needs the server token too), and come back in 10s. push-secrets.sh
+      # (the bootstrap VM, or ainur's secrets-pusher) writes /run/ainur/k3s.env.
+      if [ ! -s /run/ainur/k3s.env ]; then
+        mkdir -p /run/ainur; chmod 700 /run/ainur
+        if grep -qw 'root=/dev/nfs' /proc/cmdline; then echo netboot; else echo sd; fi > /run/ainur/awaiting-push
+        echo "[token] waiting for the k3s tokens to be pushed; retrying"
+        exit 1
+      fi
+      if [ -f "$LEADER_PATH" ]; then
+        echo "[leader] existing file detected"; ls -l "$LEADER_PATH" || true; echo "[leader] content: $(head -n1 "$LEADER_PATH" 2>/dev/null || true)"
+      else
+        echo "[leader] no existing leader file"
+      fi
+      MY_IP=$(hostname -I | awk '{print $1}')
+      echo "[k3s] this node IP: $MY_IP"
+      K3S_ROLE="server"
+      LEADER_IP=""
+      if [ ! -f "$LEADER_PATH" ]; then
+        echo "[k3s] no leader file; trying to become leader"
+        if ( set -o noclobber; printf '%s\n' "$MY_IP" > "$LEADER_PATH" ) 2>/dev/null; then
+          echo "[k3s] elected leader: $MY_IP"
+          K3S_ROLE="server"
+        else
+          echo "[k3s] leader file created by another node"
+        fi
+      fi
+      if [ -f "$LEADER_PATH" ]; then
+        LEADER_IP=$(head -n1 "$LEADER_PATH" 2>/dev/null || true)
+        echo "[leader] file read: '${LEADER_IP:-}'"
+        if [ -n "${LEADER_IP:-}" ] && [ "$LEADER_IP" = "$MY_IP" ]; then
+          echo "[k3s] this node is leader ($LEADER_IP); proceeding as server"
+          K3S_ROLE="server"
+        elif [ -n "${LEADER_IP:-}" ]; then
+          echo "[k3s] leader $LEADER_IP declared; joining as agent (skipping ping/backoff)"
+          K3S_ROLE="agent"
+        else
+          echo "[k3s] leader file empty; claiming leadership as $MY_IP"
+          printf '%s\n' "$MY_IP" > "$LEADER_PATH"
+          K3S_ROLE="server"
+        fi
+      fi
+      echo "[k3s] selected role: $K3S_ROLE"
+      mkdir -p /run/k3s-bootstrap
+      {
+        echo "USER_NAME=$U"
+        echo "K3S_STATE_DIR=$K3S_STATE_DIR"
+        echo "LEADER_FILE=$LEADER_PATH"
+        echo "TOKEN_PATH=$TOKEN_PATH"
+        echo "AGENT_TOKEN_PATH=$AGENT_TOKEN_PATH"
+        echo "K3S_ROLE=$K3S_ROLE"
+        echo "LEADER_IP=$LEADER_IP"
+      } > /run/k3s-bootstrap/env
+
+  - path: /usr/local/bin/k3s-20-install.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      # Default tokens can be overridden via environment before invoking this script;
+      # prefer file-based tokens if present for both server and agent.
+      K3S_TOKEN="${K3S_TOKEN:-}"
+      K3S_AGENT_TOKEN="${K3S_AGENT_TOKEN:-}"
+      INSTALL_K3S_VERSION="${INSTALL_K3S_VERSION:-v1.37.2+k3s1}"
+      echo "[install] starting k3s install"
+      STATE="/run/k3s-bootstrap/env"
+      if [ -f "$STATE" ]; then
+        # shellcheck disable=SC1090
+        . "$STATE"
+      else
+        echo "[install] WARNING: state file missing; recomputing basics"
+        USER_NAME=$(awk -F: '$3>=1000 && $1!="nobody"{print $1; exit}' /etc/passwd)
+        TOKEN_PATH="/tmp/k3s/k3s-token"
+        AGENT_TOKEN_PATH="/tmp/k3s/k3s-agent-token"
+        K3S_ROLE="server"
+      fi
+      # Ensure state dir exists (for cases sourced from env file too)
+      if [ -n "${K3S_STATE_DIR:-}" ]; then mkdir -p "$K3S_STATE_DIR"; fi
+      if [ -z "${K3S_TOKEN:-}" ] && [ -f "$TOKEN_PATH" ]; then
+        K3S_TOKEN="$(tr -d '\n' < "$TOKEN_PATH")"
+        echo "[token] using server token from $TOKEN_PATH"
+      fi
+      if [ -z "${K3S_AGENT_TOKEN:-}" ] && [ -f "$AGENT_TOKEN_PATH" ]; then
+        K3S_AGENT_TOKEN="$(tr -d '\n' < "$AGENT_TOKEN_PATH")"
+        echo "[token] using agent token from $AGENT_TOKEN_PATH"
+      fi
+      # Otherwise the pushed ones (k3s-10 waited for them). A netbooted Pi
+      # gets only the agent token.
+      # shellcheck disable=SC1091
+      . /run/ainur/k3s.env
+      : "${K3S_TOKEN:=${AINUR_K3S_TOKEN:-}}"
+      : "${K3S_AGENT_TOKEN:=${AINUR_K3S_AGENT_TOKEN:-}}"
+      # Base args kept minimal; netboot overlays (if any) appended below
+      K3S_COMMON_ARGS=""
+      # One server, so k3s's default SQLite datastore, not etcd (--cluster-init,
+      # which is for several servers; the netbooted Pis can't hold a datastore).
+      # etcd's constant small writes on the SD card stalled the API whenever
+      # the card was busy. Overlays add their own server args.
+      K3S_SERVER_ARGS=" --node-label=kidd.network/role=control-plane --default-local-storage-path=/var/mnt/nvme/local-path --token ${K3S_TOKEN}" # --disable=servicelb
+      K3S_AGENT_ARGS=" --node-label=kidd.network/role=worker --token ${K3S_AGENT_TOKEN}"
+      # Append any staged overlays from previous steps (e.g., netboot args)
+      ARGS_DIR="/run/k3s-bootstrap"
+      if [ -f "$ARGS_DIR/K3S_COMMON_ARGS" ]; then
+        K3S_COMMON_ARGS="$K3S_COMMON_ARGS $(tr '\n' ' ' < "$ARGS_DIR/K3S_COMMON_ARGS")"
+      fi
+      if [ -f "$ARGS_DIR/K3S_SERVER_ARGS" ]; then
+        K3S_SERVER_ARGS="$K3S_SERVER_ARGS $(tr '\n' ' ' < "$ARGS_DIR/K3S_SERVER_ARGS")"
+      fi
+      if [ -f "$ARGS_DIR/K3S_AGENT_ARGS" ]; then
+        K3S_AGENT_ARGS="$K3S_AGENT_ARGS $(tr '\n' ' ' < "$ARGS_DIR/K3S_AGENT_ARGS")"
+      fi
+      if [ -n "${AGENT_TOKEN_PATH:-}" ]; then
+        echo "[token] ensuring agent token file at $AGENT_TOKEN_PATH"
+        printf '%s\n' "$K3S_AGENT_TOKEN" > "$AGENT_TOKEN_PATH"
+      else
+        echo "[token] WARNING: AGENT_TOKEN_PATH unset; skipping agent token file creation"
+      fi
+      if [ "$K3S_ROLE" = "server" ]; then
+        if [ -f "${TOKEN_PATH:-}" ]; then
+          echo "[token] token present at $TOKEN_PATH (size $(stat -c%s "$TOKEN_PATH" 2>/dev/null || echo -n 0))"
+        else
+          echo "[token] token MISSING at ${TOKEN_PATH:-'(unset)'}"
+        fi
+        curl -sfL --retry 5 --retry-connrefused --connect-timeout 5 --max-time 120 https://get.k3s.io | \
+          INSTALL_K3S_VERSION="$INSTALL_K3S_VERSION" \
+          K3S_TOKEN="$K3S_TOKEN" K3S_AGENT_TOKEN="$K3S_AGENT_TOKEN" \
+          INSTALL_K3S_EXEC=" $K3S_COMMON_ARGS $K3S_SERVER_ARGS" \
+          sh -s -
+        if [ -f /var/lib/rancher/k3s/server/node-token ]; then
+          cp /var/lib/rancher/k3s/server/node-token "$TOKEN_PATH" || true
+          chown "${USER_NAME:-root}":"${USER_NAME:-root}" "$TOKEN_PATH" 2>/dev/null || true
+          echo "[token] published server node-token to $TOKEN_PATH"
+          if [ -n "${AGENT_TOKEN_PATH:-}" ]; then
+            if [ -f /var/lib/rancher/k3s/server/agent-token ]; then
+              cp /var/lib/rancher/k3s/server/agent-token "$AGENT_TOKEN_PATH" || true
+            else
+              cp /var/lib/rancher/k3s/server/node-token "$AGENT_TOKEN_PATH" || true
+            fi
+          fi
+        fi
+      else
+        echo "[token] using agent token from K3S_AGENT_TOKEN variable"
+        if [ -n "${LEADER_IP:-}" ]; then
+          echo "[agent] using leader $LEADER_IP"
+          # The server keeps a hash of each agent's node password and refuses
+          # any other ("Node password rejected"). A netbooted Pi's root is in
+          # RAM, so k3s would make up a new one every boot and the Pi could
+          # never rejoin. Derive it instead: the same Pi always has the same.
+          mkdir -p /etc/rancher/node
+          printf '%s' "${K3S_AGENT_TOKEN}:$(hostname)" | sha256sum | cut -d' ' -f1 \
+            | tr -d '\n' > /etc/rancher/node/password
+          chmod 600 /etc/rancher/node/password
+          curl -sfL --retry 5 --retry-connrefused --connect-timeout 5 --max-time 120 https://get.k3s.io | \
+            INSTALL_K3S_VERSION="$INSTALL_K3S_VERSION" \
+            K3S_URL="https://$LEADER_IP:6443" K3S_TOKEN="$K3S_AGENT_TOKEN" \
+            INSTALL_K3S_EXEC=" $K3S_COMMON_ARGS $K3S_AGENT_ARGS" \
+            sh -s -
+        else
+          echo "[k3s] WARNING: leader missing; deferring agent install"
+        fi
+      fi
+
+  - path: /etc/systemd/system/k3s-bootstrap.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=K3s Bootstrap (leader election)
+      Wants=network-online.target
+      After=network-online.target remote-fs.target
+      # After=network-online.target remote-fs.target home.mount
+      # Ensure the shared home (where k3s-leader/k3s-token live) is mounted
+      # before running the bootstrap logic to avoid race conditions.
+      # RequiresMountsFor=/home/ubuntu
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/k3s-bootstrap.sh
+      Restart=on-failure
+      RestartSec=10s
+      Environment=SKIP_NETWORK_WAITS=0
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Priorities, for when a Pi runs short of memory: the kubelet evicts lower
+  # ones first, and the scheduler pre-empts them to place higher ones.
+  # ainur-critical is what the cluster and arda depend on (cert-manager,
+  # trust-manager, Dex, Omni); ainur-optional is what can wait (Homepage).
+  # Argo CD uses Kubernetes' own system-cluster-critical. Anything unset is 0.
+  - path: /etc/k3s-manifests/00-priority-classes.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: scheduling.k8s.io/v1
+      kind: PriorityClass
+      metadata:
+        name: ainur-critical
+      value: 1000000
+      description: What ainur and arda depend on; evicted last.
+      ---
+      apiVersion: scheduling.k8s.io/v1
+      kind: PriorityClass
+      metadata:
+        name: ainur-optional
+      value: -1000
+      preemptionPolicy: Never
+      description: Nice to have; evicted first, and never displaces anything.
+
+  # Install cert-manager via k3s HelmChart
+  - path: /etc/k3s-manifests/00-cert-manager.helm.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: cert-manager
+        namespace: kube-system
+      spec:
+        chart: cert-manager
+        repo: https://charts.jetstack.io
+        targetNamespace: cert-manager
+        createNamespace: true
+        valuesContent: |
+          installCRDs: true
+          replicaCount: 1
+          global:
+            priorityClassName: ainur-critical
+
+  # Install trust-manager to distribute CA bundles
+  - path: /etc/k3s-manifests/01-trust-manager.helm.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: trust-manager
+        namespace: kube-system
+      spec:
+        chart: trust-manager
+        repo: https://charts.jetstack.io
+        targetNamespace: cert-manager
+        createNamespace: true
+        valuesContent: |
+          priorityClassName: ainur-critical
+          secretTargets:
+            enabled: true
+            authorizedSecrets:
+              - lab-ca-secret
+
+  - path: /etc/k3s-manifests/03-clusterissuer-local-ca.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        name: local-ca
+      spec:
+        ca:
+          # Secret is created at runtime by gen-lab-certs.sh
+          secretName: cluster-root-ca
+
+  - path: /etc/k3s-manifests/05-trust-bundle-namespaced.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: trust.cert-manager.io/v1alpha1
+      kind: Bundle
+      metadata:
+        # Name this Bundle to match the desired ConfigMap name in target namespaces.
+        # Some trust-manager versions default the ConfigMap name to the Bundle name.
+        name: lab-ca
+      spec:
+        sources:
+          - secret:
+              name: cluster-root-ca
+              key: tls.crt
+              namespace: cert-manager
+        target:
+          configMap:
+            key: ca.crt
+          namespaceSelector:
+            matchLabels:
+              ainur.kidd.network/ca: "inject"
+
+  # - path: /etc/k3s-manifests/06-traefik-config.helm.yaml
+  #   permissions: '0644'
+  #   content: |
+  #     ---
+  #     apiVersion: helm.cattle.io/v1
+  #     kind: HelmChartConfig
+  #     metadata:
+  #       name: traefik
+  #       namespace: kube-system
+  #     spec:
+  #       valuesContent: |
+  #         service:
+  #           type: ClusterIP
+  #         ports:
+  #           web:
+  #             port: 80
+  #             hostPort: 80
+  #           websecure:
+  #             port: 443
+  #             hostPort: 443
+
+    # Install Argo CD via k3s HelmChart with OIDC and lab CA trust
+  - path: /etc/k3s-manifests/21-argocd.helm.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: argocd
+        labels:
+          ainur.kidd.network/ca: inject
+      ---
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: argocd
+        namespace: kube-system
+      spec:
+        chart: argo-cd
+        repo: https://argoproj.github.io/argo-helm
+        targetNamespace: argocd
+        createNamespace: true
+        # version: 9.0.5
+        valuesContent: |
+          global:
+            domain: argocd.kidd.network
+            priorityClassName: system-cluster-critical
+          dex:
+            enabled: false
+          server:
+            metrics:
+              enabled: true
+            autoscaling:
+              enabled: false
+              minReplicas: 1
+            extraArgs:
+              - --insecure
+            service:
+              type: ClusterIP
+            # Trust the lab CA for outbound TLS (e.g., Dex, Git/Helm behind internal CA)
+            env:
+              - name: SSL_CERT_DIR
+                value: /etc/ssl/local-ca
+            volumes:
+              - name: lab-ca
+                configMap:
+                  name: lab-ca
+                  optional: true
+            volumeMounts:
+              - name: lab-ca
+                mountPath: /etc/ssl/local-ca
+                readOnly: true
+          repoServer:
+            metrics:
+              enabled: true
+            autoscaling:
+              enabled: true
+              minReplicas: 1
+            # Trust the lab CA for outbound TLS (e.g., Helm chart repos, Git)
+            env:
+              - name: SSL_CERT_DIR
+                value: /etc/ssl/local-ca
+            volumes:
+              - name: lab-ca
+                configMap:
+                  name: lab-ca
+                  optional: true
+            volumeMounts:
+              - name: lab-ca
+                mountPath: /etc/ssl/local-ca
+                readOnly: true
+          applicationSet:
+            replicas: 1
+            metrics:
+              enabled: true
+          # Metrics Services, for Prometheus; their ServiceMonitor is in
+          # src/manifests/ainur/monitoring/bootstrap-charts-metrics.yaml (not the chart's:
+          # at first boot its CRD doesn't exist yet, and the install would fail).
+          controller:
+            metrics:
+              enabled: true
+          notifications:
+            enabled: false
+          configs:
+            params:
+              application.namespaces: "*"
+            cm:
+              oidc.config: |
+                name: Dex
+                issuer: https://dex.kidd.network
+                clientID: argocd
+                clientSecret: $ainur-secrets:AINUR_OIDC_CLIENT_SECRET
+                usernameClaim: email
+                groupsClaim: groups
+                requestedScopes:
+                  - openid
+                  - profile
+                  - email
+                  - groups
+            # LLDAP's admins group. Anyone else Dex knows gets no rights.
+            rbac:
+              policy.csv: |
+                g, admins, role:admin
+              scopes: '[groups, email]'
+
+  - path: /etc/k3s-manifests/22-argocd-apps.helm.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChart
+      metadata:
+        name: argocd-apps
+        namespace: kube-system
+      spec:
+        chart: argocd-apps
+        repo: https://argoproj.github.io/argo-helm
+        targetNamespace: argocd
+        createNamespace: true
+        # version: 2.0.2
+        valuesContent: |
+          applications:
+            ainur:
+              namespace: argocd
+              finalizers:
+                - resources-finalizer.argocd.argoproj.io
+              project: "ainur"
+              sources:
+                - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+                  path: src/manifests/ainur
+                  targetRevision:  main
+              destination:
+                server: https://kubernetes.default.svc
+                namespace: ainur
+              syncPolicy:
+                syncOptions:
+                  - CreateNamespace=true
+                # Keep retrying a failed sync: a fresh cluster has to come up on
+                # its own, and most failures are ordering (a CRD, webhook or
+                # Secret not there yet) that resolves itself.
+                retry:
+                  limit: -1
+                  backoff:
+                    duration: 30s
+                    factor: 2
+                    maxDuration: 10m
+                automated:
+                  prune: true
+                  selfHeal: true
+
+            system-addons:
+              namespace: argocd
+              project: "system-addons"
+              sources:
+                - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+                  path: src/manifests/system-addons
+                  targetRevision:  main
+              destination:
+                server: https://kubernetes.default.svc
+                namespace: argocd
+              syncPolicy:
+                # Keep retrying a failed sync: a fresh cluster has to come up on
+                # its own, and most failures are ordering (a CRD, webhook or
+                # Secret not there yet) that resolves itself.
+                retry:
+                  limit: -1
+                  backoff:
+                    duration: 30s
+                    factor: 2
+                    maxDuration: 10m
+                automated:
+                  prune: true
+                  selfHeal: true
+
+          projects:
+            ainur:
+              namespace: argocd
+              description: "Project for managing Important applications"
+              sourceRepos:
+                - "https://github.com/andrewiankidd/project-iluvatar.git"
+                - "*"
+              sourceNamespaces:
+                - ainur
+                - argocd
+              destinations:
+                - namespace: ainur
+                  server: "https://kubernetes.default.svc"
+                - namespace: ainur-*
+                  server: "https://kubernetes.default.svc"
+              clusterResourceWhitelist:
+                - group: "*"
+                  kind: "*"
+              orphanedResources:
+                warn: true
+
+            system-addons:
+              namespace: argocd
+              description: "System add-ons (cluster-wide agents)"
+              sourceRepos:
+                - "https://github.com/andrewiankidd/project-iluvatar.git"
+              sourceNamespaces:
+                - argocd
+              destinations:
+                - namespace: kube-system
+                  server: "https://kubernetes.default.svc"
+                - namespace: argocd
+                  server: "https://kubernetes.default.svc"
+
+  - path: /etc/k3s-manifests/23-argocd-ingress.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: argocd-ingress
+        namespace: argocd
+        annotations:
+          kubernetes.io/ingress.class: traefik
+          # A lab-CA certificate like the rest, not Traefik's default one;
+          # and the tls block is what makes Homepage link to https://.
+          cert-manager.io/cluster-issuer: local-ca
+          kidd.network/tunnel: "true"
+          kidd.network/zero-trust: "true"
+          gethomepage.dev/enabled: "true"
+          gethomepage.dev/instance: private
+          gethomepage.dev/group: Cluster
+          gethomepage.dev/name: Argo CD
+          gethomepage.dev/description: GitOps
+          # Its pods, for the status badge (the default looks for the Ingress's name).
+          gethomepage.dev/pod-selector: app.kubernetes.io/name=argocd-server
+          gethomepage.dev/icon: mdi-source-branch
+      spec:
+        ingressClassName: traefik
+        tls:
+          - hosts:
+              - argocd.kidd.network
+            secretName: argocd-tls
+        rules:
+          - host: argocd.kidd.network
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: argocd-server
+                      port:
+                        number: 80
+
+  # arda's apps, in ainur's Argo CD: ainur is the control plane for both
+  # clusters, so arda runs no Argo CD of its own. arda-bootstrap
+  # (src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml) registers arda
+  # as the cluster named "arda", and patches in the health check the root
+  # app's sync waves wait on; this is the rest.
+  - path: /etc/k3s-manifests/24-arda-apps.yaml
+    permissions: '0644'
+    content: |
+      ---
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: arda
+        namespace: argocd
+      spec:
+        description: arda's apps, deployed to the cluster named arda
+        sourceRepos:
+          - "*"
+        destinations:
+          - name: arda
+            namespace: "*"
+          # The root app below writes arda's Applications here, on ainur.
+          - server: https://kubernetes.default.svc
+            namespace: argocd
+        clusterResourceWhitelist:
+          - group: "*"
+            kind: "*"
+      ---
+      # The root: every Application in src/manifests/arda, each deploying to
+      # arda. Their sync waves wait for the wave before to be Healthy.
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: arda
+        namespace: argocd
+      spec:
+        project: arda
+        source:
+          repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+          targetRevision: main
+          path: src/manifests/arda
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: argocd
+        syncPolicy:
+          # Keep retrying a failed sync: a fresh cluster has to come up on
+          # its own, and most failures are ordering (a CRD, webhook or
+          # Secret not there yet) that resolves itself.
+          retry:
+            limit: -1
+            backoff:
+              duration: 30s
+              factor: 2
+              maxDuration: 10m
+          automated:
+            prune: true
+            selfHeal: true
+      ---
+      # arda-bootstrap's rights here: arda's cluster Secret, and argocd-cm.
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: arda-bootstrap
+        namespace: argocd
+      rules:
+        - apiGroups: [""]
+          resources: [secrets]
+          verbs: [create]
+        - apiGroups: [""]
+          resources: [secrets]
+          resourceNames: [cluster-arda]
+          verbs: [get, patch, update]
+        - apiGroups: [""]
+          resources: [configmaps]
+          resourceNames: [argocd-cm]
+          verbs: [get, patch]
+      ---
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: arda-bootstrap
+        namespace: argocd
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: arda-bootstrap
+      subjects:
+        - kind: ServiceAccount
+          name: arda-bootstrap
+          namespace: ainur-sidero-omni
+
+  # Generic k3s manifests installer: copies all /etc/k3s-manifests/*.y*ml into k3s manifests once available
+  - path: /usr/local/sbin/k3s-install-manifests.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      src="/etc/k3s-manifests"
+      dst="/var/lib/rancher/k3s/server/manifests"
+      shopt -s nullglob
+      for f in "$src"/*.yaml "$src"/*.yml; do
+        b=$(basename "$f")
+        install -D -m0644 "$f" "$dst/$b"
+      done
+
+  # The ARDA_* values from the bootstrap VM's .env, pushed to
+  # /run/ainur/arda.env by its push-secrets.sh, as the arda-secrets Secret,
+  # which arda-bootstrap-job.yaml hands out on arda. The pusher starts this
+  # whenever .env changes; with nothing pushed (a reboot, the VM off), the
+  # Secret stays as it is.
+  - path: /usr/local/sbin/arda-secrets.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      f=/run/ainur/arda.env
+      if [ ! -s "$f" ]; then
+        echo "[arda-secrets] nothing pushed; leaving arda-secrets as it is"
+        exit 0
+      fi
+      k3s kubectl create namespace ainur-sidero-omni --dry-run=client -o yaml | k3s kubectl apply -f -
+      k3s kubectl -n ainur-sidero-omni create secret generic arda-secrets \
+        --from-env-file="$f" --dry-run=client -o yaml | k3s kubectl apply -f -
+      echo "[arda-secrets] applied"
+
+  - path: /etc/systemd/system/arda-secrets.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=arda secrets, as pushed by the bootstrap VM
+      Wants=k3s.service
+      After=k3s.service
+      # The k3s server only: agents have no kubeconfig to apply them with.
+      ConditionPathExists=/etc/rancher/k3s/k3s.yaml
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/arda-secrets.sh
+
+  # The AINUR_* values, pushed to /run/ainur/ainur.env the same way: the
+  # ainur-secrets Secret in each namespace that reads one (Dex, Argo CD, Omni,
+  # Homepage, monitoring, and netboot's builder and pusher), and headlamp-oidc
+  # in the shape Headlamp's chart expects.
+  - path: /usr/local/sbin/ainur-secrets.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      f=/run/ainur/ainur.env
+      if [ ! -s "$f" ]; then
+        echo "[ainur-secrets] nothing pushed; leaving ainur-secrets as it is"
+        exit 0
+      fi
+      put() {
+        k3s kubectl create namespace "$1" --dry-run=client -o yaml | k3s kubectl apply -f -
+        k3s kubectl -n "$1" create secret generic "$2" "${@:3}" --dry-run=client -o yaml \
+          | k3s kubectl label --local -f - app.kubernetes.io/part-of=argocd -o yaml \
+          | k3s kubectl apply -f -
+      }
+      tmp="$(mktemp -d)"
+      trap 'rm -rf "$tmp"' EXIT
+      # The lab CA's key goes nowhere: gen-lab-certs.sh has already made it
+      # cert-manager's. The push key only to netboot, whose secrets-pusher
+      # hands netbooted Pis their k3s agent token with it.
+      grep -v '^AINUR_LAB_CA_' "$f" > "$tmp/netboot"
+      # The apps' copy: no push key, and no k3s join tokens (a server token
+      # is as good as cluster-admin); only netboot's pusher hands those out.
+      grep -v -e '^AINUR_PUSH_KEY=' -e '^AINUR_K3S_' "$tmp/netboot" > "$tmp/apps"
+      put ainur-netboot ainur-secrets --from-env-file="$tmp/netboot"
+      for ns in ainur-dex argocd ainur-sidero-omni ainur-homepage ainur-monitoring; do
+        put "$ns" ainur-secrets --from-env-file="$tmp/apps"
+      done
+      put ainur-headlamp headlamp-oidc \
+        --from-literal=OIDC_CLIENT_ID=headlamp \
+        --from-literal=OIDC_CLIENT_SECRET="$(grep '^AINUR_OIDC_CLIENT_SECRET=' "$f" | cut -d= -f2-)" \
+        --from-literal=SSO_SECRET="$(grep '^AINUR_SSO_SECRET=' "$f" | cut -d= -f2-)" \
+        --from-literal=OIDC_ISSUER_URL=https://dex.kidd.network \
+        --from-literal=OIDC_SCOPES="openid profile email"
+      echo "[ainur-secrets] applied"
+
+  - path: /etc/systemd/system/ainur-secrets.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=ainur secrets, as pushed by the bootstrap VM
+      Wants=k3s.service
+      After=k3s.service
+      # The k3s server only: agents have no kubeconfig to apply them with.
+      ConditionPathExists=/etc/rancher/k3s/k3s.yaml
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/ainur-secrets.sh
+
+  - path: /etc/systemd/system/k3s-manifests-install.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Install all staged k3s manifests
+      Wants=k3s.service
+      After=k3s.service
+      ConditionPathExists=/var/lib/rancher/k3s/server/manifests
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/k3s-install-manifests.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/k3s-ready-dispatch.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Dispatch post-k3s setup when ready
+      After=k3s.service
+      StartLimitIntervalSec=0
+
+      [Service]
+      Type=oneshot
+      # The path unit fires on either path; k3s.yaml can come first, and
+      # k3s-manifests-install skips itself until the manifests dir exists.
+      ExecStartPre=/bin/sh -c 'until [ -d /var/lib/rancher/k3s/server/manifests ]; do sleep 2; done'
+      ExecStart=/bin/sh -c 'systemctl start k3s-manifests-install.service tls-bootstrap.service ainur-secrets.service arda-secrets.service || true'
+      # Stay active once run: k3s-ready.path re-fires whenever this unit is
+      # inactive and its paths exist, so without it the dispatch loops forever.
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/k3s-ready.path
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Trigger post-k3s setup when k3s is ready
+
+      [Path]
+      PathExists=/etc/rancher/k3s/k3s.yaml
+      PathExists=/var/lib/rancher/k3s/server/manifests
+      Unit=k3s-ready-dispatch.service
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - 'modprobe tun || true'
+  # No apt cache refreshes or unattended upgrades: they rewrite ~120 MB on the
+  # SD card, and the image is rebuilt rather than upgraded in place.
+  - 'systemctl disable --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service || true'
+  - [ mkdir, -p, /run/log/journal ]
+  - [ systemctl, restart, systemd-journald ]
+  - [ bash, /usr/local/sbin/set-hostname.sh ]
+  - [ systemctl, daemon-reload ]
+  - [ systemctl, enable, --now, ssh-prepare.service ]
+  - [ systemctl, enable, --now, nvme-prepare.service ]
+  # Not waiting for it: its first run waits for the k3s tokens to be pushed
+  # and fails, retrying every 10s, and a failed runcmd fails cloud-final,
+  # which drops the Pi to emergency.target (no sshd, so no push either).
+  - [ systemctl, enable, --now, --no-block, k3s-bootstrap.service, k3s-ready.path ]
+
+final_message: "Cloud-init for valar-0 complete."
+
+output:
+  all: '| tee -a /var/log/cloud-init-output.log >/dev/console'

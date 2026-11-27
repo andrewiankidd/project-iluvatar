@@ -1,0 +1,60 @@
+# Introduces the media apps to each other through their APIs (wiring.mjs),
+# every 15 minutes: a rebuilt cluster, or Seerr's wizard finished, is wired
+# up by the next run. Only adds what's missing, so the UI's changes stay.
+#
+# Runs on Seerr's image, already on the node, for its Node.js.
+#
+# What only the UIs can do:
+#   - Jellyfin's first-run wizard (its admin user, the two libraries)
+#   - Seerr's first-run wizard (sign in with Jellyfin or Plex, pick libraries)
+#   - indexers in Prowlarr beyond the Internet Archive (wiring.mjs adds that one)
+#   - Bazarr's languages and subtitle providers
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: wiring
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            # Let through to qBittorrent (its NetworkPolicy, qbittorrent.yaml).
+            app: wiring
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: wiring
+              image: ghcr.io/seerr-team/seerr:v3.5.2
+              command: [node, /wiring/wiring.mjs]
+              env:
+                - name: SONARR_KEY
+                  valueFrom: { secretKeyRef: { name: media, key: sonarr-api-key } }
+                - name: RADARR_KEY
+                  valueFrom: { secretKeyRef: { name: media, key: radarr-api-key } }
+                - name: PROWLARR_KEY
+                  valueFrom: { secretKeyRef: { name: media, key: prowlarr-api-key } }
+                - name: SEERR_KEY
+                  valueFrom: { secretKeyRef: { name: media, key: seerr-api-key } }
+                - name: CHAPTARR_KEY
+                  valueFrom: { secretKeyRef: { name: media, key: chaptarr-api-key } }
+                # ARDA_LETTERBOXD_USER: whose watchlist Radarr follows (letterboxd.yaml).
+                - name: LETTERBOXD_USER
+                  valueFrom: { secretKeyRef: { name: media, key: letterboxd-user, optional: true } }
+              volumeMounts:
+                - name: wiring
+                  mountPath: /wiring
+              resources:
+                requests: { cpu: 10m, memory: 64Mi }
+                limits: { memory: 128Mi }
+          volumes:
+            - name: wiring
+              configMap:
+                name: wiring

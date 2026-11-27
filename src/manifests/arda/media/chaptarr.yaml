@@ -1,0 +1,196 @@
+# Chaptarr: books and audiobooks, at chaptarr.kidd.network behind the Dex
+# login. A Readarr fork (Readarr itself is archived): Sonarr's model for
+# authors and series, ebooks and audiobooks in one instance, each with its
+# own root folder (wiring.mjs).
+#
+# Its own login is "External": the Dex login in front is the only one. Its
+# API key is fixed (the media Secret) so Prowlarr, Seerr and wiring.yaml can
+# use it; set through the environment, which overrides config.xml.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chaptarr-config
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chaptarr
+  labels:
+    app: chaptarr
+    kidd.network/media-volume: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume
+  selector:
+    matchLabels:
+      app: chaptarr
+  template:
+    metadata:
+      labels:
+        app: chaptarr
+    spec:
+      # Its folders under /data (storage.yaml), owned by the apps' user.
+      initContainers:
+        - name: layout
+          image: alpine:3.22
+          command:
+            - sh
+            - -c
+            - |
+              for d in torrents/books torrents/audiobooks media/books media/audiobooks; do
+                mkdir -p "/data/$d" && chown 1000:1000 "/data/$d" "$(dirname /data/$d)"
+              done
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+      containers:
+        - name: chaptarr
+          image: chaptarr/chaptarr:0.9.1000
+          env:
+            - { name: PUID, value: "1000" }
+            - { name: PGID, value: "1000" }
+            - { name: TZ, value: Europe/London }
+            - { name: Chaptarr__Auth__Method, value: External }
+            - name: Chaptarr__Auth__ApiKey
+              valueFrom:
+                secretKeyRef:
+                  name: media
+                  key: chaptarr-api-key
+          ports:
+            - name: http
+              containerPort: 8789
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+          # Adding a book loads its author's whole catalogue (thousands of
+          # books for a prolific author), which ran past 1 GiB.
+          resources:
+            requests: { cpu: 20m, memory: 384Mi }
+            limits: { memory: 2Gi }
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: chaptarr-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: media
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chaptarr
+spec:
+  selector:
+    app: chaptarr
+  ports:
+    - name: http
+      port: 8789
+      targetPort: http
+---
+# External auth (Dex in front): only Traefik and wiring may reach it; outbound
+# is limited to qBittorrent, Prowlarr, CoreDNS and the public internet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: chaptarr
+spec:
+  podSelector:
+    matchLabels:
+      app: chaptarr
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: wiring
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 8789
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: qbittorrent
+      ports:
+        - port: 8080
+    - to:
+        - podSelector:
+            matchLabels:
+              app: prowlarr
+      ports:
+        - port: 9696
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chaptarr
+  annotations:
+    kidd.network/tunnel: "true"
+    kidd.network/zero-trust: "true"
+    # Behind the Dex login (and Cloudflare Access on the internet).
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
+    # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Media
+    gethomepage.dev/name: Chaptarr
+    gethomepage.dev/description: Books and audiobooks
+    gethomepage.dev/icon: readarr.png
+    gethomepage.dev/href: https://chaptarr.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: chaptarr.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: chaptarr
+                port:
+                  name: http

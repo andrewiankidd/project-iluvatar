@@ -1,0 +1,61 @@
+# Only Traefik reaches the portal (80). Outbound is limited to CoreDNS,
+# Minecraft server pods in this namespace (pings, info, BlueMap), arda's
+# Kubernetes API (listing server Services), and the public internet (pip
+# install playwright at start).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: minecraft-portal
+spec:
+  podSelector:
+    matchLabels:
+      app: minecraft-portal
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 80
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - podSelector: {}
+      ports:
+        - { protocol: TCP, port: 25565 }
+        - { protocol: UDP, port: 19132 }
+        - { protocol: TCP, port: 8099 }
+        - { protocol: TCP, port: 8100 }
+    # arda's Kubernetes API (valinor-53..56 on 6443; kubernetes Service 443).
+    - to:
+        - ipBlock: { cidr: 192.168.1.53/32 }
+        - ipBlock: { cidr: 192.168.1.54/32 }
+        - ipBlock: { cidr: 192.168.1.55/32 }
+        - ipBlock: { cidr: 192.168.1.56/32 }
+      ports:
+        - { protocol: TCP, port: 6443 }
+    - to:
+        - ipBlock: { cidr: 10.96.0.1/32 }
+      ports:
+        - { protocol: TCP, port: 443 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16

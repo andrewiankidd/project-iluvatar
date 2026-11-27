@@ -1,0 +1,250 @@
+# Home Assistant (the container image), its /config on Longhorn, and the
+# Ingress.
+#
+# /config is a Longhorn volume: everything made in the UI lives there
+# (.storage, the SQLite history, automations.yaml and friends). Argo never
+# prunes or deletes it, and VolSync backs it up nightly like every Longhorn
+# volume. configuration.yaml is laid over it from Git.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: config
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+# The Matter Server's fabric: the keys every paired Matter device trusts.
+# Lose it and every device has to be paired again, so Argo never deletes it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: matter-data
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: homeassistant
+  labels:
+    app: homeassistant
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume, and one owner of port 8123
+  selector:
+    matchLabels:
+      app: homeassistant
+  template:
+    metadata:
+      labels:
+        app: homeassistant
+    spec:
+      # On the node's own network, so discovery works: mDNS and SSDP are
+      # multicast on the LAN, which a pod network never sees. Home Assistant
+      # listens on arda's node address (192.168.1.53:8123), which is also
+      # what the Service points at. Cluster DNS still, for *.svc names.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      initContainers:
+        # The files configuration.yaml includes, made if missing (Home
+        # Assistant only makes them when it makes configuration.yaml itself).
+        # And the hass-oidc-auth component for the Dex login, at the pinned
+        # release and checked against its hash: fetched once per version
+        # into the volume, so a restart (or a restore from backup) needs no
+        # internet. Home Assistant installs its few Python requirements into
+        # /config/deps on the first start, the same way.
+        - name: includes
+          image: ghcr.io/home-assistant/home-assistant:2026.11.2
+          env:
+            - name: OIDC_VERSION
+              value: "1.2.1"
+            - name: OIDC_SHA256
+              value: e5badaaacaa63cfd6fe733924a05e76d75058836190398598fb24de57cd47ccd
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              # The Matter Server runs as uid 1000.
+              chown 1000:1000 /matter
+              mkdir -p /config/themes
+              for f in automations.yaml scripts.yaml scenes.yaml; do
+                [ -e "/config/$f" ] || echo '[]' > "/config/$f"
+              done
+              dest=/config/custom_components/auth_oidc
+              if ! grep -q "\"version\": \"$OIDC_VERSION\"" "$dest/manifest.json" 2>/dev/null; then
+                url="https://github.com/christiaangoossens/hass-oidc-auth/releases/download/v$OIDC_VERSION/hass-oidc-auth.zip"
+                curl -fsSL -o /tmp/oidc.zip "$url"
+                echo "$OIDC_SHA256  /tmp/oidc.zip" | sha256sum -c -
+                rm -rf "$dest.new" && mkdir -p "$dest.new"
+                python3 -m zipfile -e /tmp/oidc.zip "$dest.new"
+                rm -rf "$dest" && mv "$dest.new" "$dest"
+                echo "hass-oidc-auth $OIDC_VERSION installed"
+              fi
+              # The HTTP settings (http.json) as the confirmed ones in Home
+              # Assistant's store, nothing pending: Git is their source, and a
+              # change in the UI's network settings lasts until the next start.
+              python3 - <<'EOF'
+              import datetime, json, os
+              conf = json.load(open("/git/http.json"))
+              conf.update(created_at=datetime.datetime.now(datetime.UTC).isoformat(),
+                          error=None, error_message=None)
+              os.makedirs("/config/.storage", exist_ok=True)
+              with open("/config/.storage/http.new", "w") as f:
+                  json.dump({"version": 3, "minor_version": 1, "key": "http",
+                             "data": {"stable": conf, "pending": None,
+                                      "yaml_migration_done": True}}, f, indent=2)
+              os.chmod("/config/.storage/http.new", 0o600)
+              os.replace("/config/.storage/http.new", "/config/.storage/http")
+              EOF
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: configuration
+              mountPath: /git
+              readOnly: true
+            - name: matter
+              mountPath: /matter
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
+      containers:
+        - name: homeassistant
+          image: ghcr.io/home-assistant/home-assistant:2026.11.2
+          env:
+            - name: TZ
+              value: Europe/London
+            # sitecustomize.py: the lab CA under Python's strict checks.
+            - name: PYTHONPATH
+              value: /pycustom
+          ports:
+            - name: http
+              containerPort: 8123
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: configuration
+              mountPath: /config/configuration.yaml
+              subPath: configuration.yaml
+              readOnly: true
+            - name: sitecustomize
+              mountPath: /pycustom
+            # The lab CA, which dex.kidd.network's certificate is from.
+            - name: lab-ca
+              mountPath: /lab-ca
+              readOnly: true
+          # The first start installs integrations' requirements; give it time.
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket:
+              port: http
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests: { cpu: 100m, memory: 512Mi }
+            limits: { memory: 2Gi }
+        # The Matter Server (matter.js, the Python one's successor; what the
+        # add-on runs), which Home Assistant's Matter integration talks to.
+        # In this pod so it shares the host network and moves with Home
+        # Assistant: Matter needs the LAN (IPv6 link-local, mDNS), and its
+        # WebSocket API has no login, so it listens on localhost only, at
+        # ws://localhost:5580/ws (setup.py).
+        - name: matter-server
+          image: ghcr.io/matter-js/matterjs-server:1.6.0
+          env:
+            - name: LISTEN_ADDRESS
+              value: 127.0.0.1
+            - name: STORAGE_PATH
+              value: /data
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: matter
+              mountPath: /data
+          resources:
+            requests: { cpu: 20m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: matter
+          persistentVolumeClaim:
+            claimName: matter-data
+        - name: config
+          persistentVolumeClaim:
+            claimName: config
+        - name: configuration
+          configMap:
+            name: homeassistant-config
+        - name: sitecustomize
+          configMap:
+            name: homeassistant-sitecustomize
+        # From arda-bootstrap (src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml).
+        # Without it only the Dex login fails; the local one still works.
+        - name: lab-ca
+          secret:
+            secretName: lab-ca
+            optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: homeassistant
+  labels:
+    app: homeassistant
+spec:
+  selector:
+    app: homeassistant
+  ports:
+    - name: http
+      port: 8123
+      targetPort: http
+---
+# LAN only (arda's Traefik, with its lab-CA certificate); no tunnel until the
+# companion app needs it away from home. No Dex forward-auth in front (it
+# would break the companion app): Home Assistant does the Dex login itself
+# (configuration.yaml).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: homeassistant
+  annotations:
+    # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Apps
+    gethomepage.dev/name: Home Assistant
+    gethomepage.dev/description: The house
+    gethomepage.dev/icon: home-assistant.png
+    gethomepage.dev/href: https://homeassistant.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: homeassistant.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: homeassistant
+                port:
+                  name: http

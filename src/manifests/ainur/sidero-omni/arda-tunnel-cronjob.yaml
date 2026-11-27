@@ -1,0 +1,277 @@
+# Puts ainur's sites on the internet through arda's Cloudflare tunnel, since
+# ainur has none of its own. Every 5 minutes, each ainur Ingress annotated
+# kidd.network/tunnel: "true" (as on arda) gets a copy on arda, in the
+# cloudflared namespace, sending its hosts on to ainur's Traefik
+# (src/manifests/arda/cloudflared/ainur.yaml). external-dns-tunnel then
+# publishes them; arda's LAN DNS leaves them alone (kidd.network/lan-dns:
+# "false"), since at home *.kidd.network already points at ainur.
+#
+# If an Ingress is also annotated kidd.network/zero-trust: "true", the
+# cronjob creates a Cloudflare Access policy (self_hosted app) for it via
+# the Cloudflare API, so the internet side requires a valid Cloudflare
+# Access token in addition to the Dex login.
+#
+# Only for sites with a login of their own (Dex): the tunnel adds none.
+# Copies of Ingresses that lose the annotation, or go, are removed.
+#
+# Does nothing until talos-default is up.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: arda-tunnel
+  namespace: ainur-sidero-omni
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: arda-tunnel
+rules:
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: arda-tunnel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: arda-tunnel
+subjects:
+  - kind: ServiceAccount
+    name: arda-tunnel
+    namespace: ainur-sidero-omni
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: arda-tunnel
+  namespace: ainur-sidero-omni
+spec:
+  schedule: "*/5 * * * *"
+  # On again since 2026-11-23 (suspended from 2026-11-19, BACKLOG): only
+  # Dex's sign-in and the users' page carry the annotation.
+  suspend: false
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          serviceAccountName: arda-tunnel
+          restartPolicy: Never
+          containers:
+            - name: copy
+              image: alpine/kubectl:1.37.1
+              env:
+                - name: OMNI_ENDPOINT
+                  value: https://omni.kidd.network
+                - name: CLUSTER
+                  value: talos-default
+                - name: OMNICTL_URL
+                  value: https://github.com/siderolabs/omni/releases/download/v1.13.3/omnictl-linux-arm64
+              # ARDA_CLOUDFLARE_ACCOUNT_ID, ARDA_CLOUDFLARE_API_TOKEN and
+              # ARDA_CLOUDFLARE_ACCESS_EMAILS from ainur's arda-secrets Secret
+              # (pushed from bootstrap/netboot/.env), same as unifi-cronjob.yaml.
+              envFrom:
+                - secretRef:
+                    name: arda-secrets
+                    optional: true
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  apk add --no-cache ca-certificates curl jq >/dev/null
+                  cat /etc/omni/lab-root-ca.crt >> /etc/ssl/certs/ca-certificates.crt
+                  # omnictl from the omni-tools volume, fetched once per version.
+                  fetch() { f="/tools/$(echo "$2" | sha256sum | cut -c1-12)-$1"; [ -s "$f" ] ||
+                    { curl -fsSL -o "$f.$$" "$2" && chmod +x "$f.$$" && mv "$f.$$" "$f"; }; ln -sf "$f" "/usr/local/bin/$1"; }
+                  fetch omnictl "$OMNICTL_URL"
+                  chmod +x /usr/local/bin/omnictl
+                  export OMNI_SERVICE_ACCOUNT_KEY="$(cat /omni-data/automation.key)"
+
+                  kubectl get ingress -A -o json > /tmp/ainur.json
+                  if ! omnictl kubeconfig /tmp/arda --cluster "$CLUSTER" \
+                      --service-account --user arda-tunnel --ttl 10m --force ||
+                    ! kubectl --kubeconfig /tmp/arda get --raw /readyz >/dev/null; then
+                    echo "arda is not up yet"
+                    exit 0
+                  fi
+
+                  # Each host, whole, to the ainur Service; ainur's Traefik
+                  # routes by host as it does on the LAN.
+                  jq '{apiVersion: "v1", kind: "List", items: [.items[]
+                    | select(.metadata.annotations["kidd.network/tunnel"] == "true")
+                    | {apiVersion: "networking.k8s.io/v1", kind: "Ingress",
+                       metadata: {
+                         name: ("ainur-" + .metadata.namespace + "-" + .metadata.name),
+                         namespace: "cloudflared",
+                         labels: {"kidd.network/copy-of": "ainur"},
+                         annotations: {"kidd.network/tunnel": "true",
+                                       "kidd.network/lan-dns": "false"}},
+                       spec: {ingressClassName: "traefik",
+                         rules: [.spec.rules[] | {host: .host, http: {paths: [{
+                           path: "/", pathType: "Prefix",
+                           backend: {service: {name: "ainur", port: {name: "https"}}}}]}}]}}]}' \
+                    /tmp/ainur.json > /tmp/copies.json
+                  echo "ainur Ingresses on the tunnel: $(jq -r '[.items[].spec.rules[].host] | join(" ")' /tmp/copies.json)"
+
+                  if [ "$(jq '.items | length' /tmp/copies.json)" -gt 0 ]; then
+                    kubectl --kubeconfig /tmp/arda -n cloudflared apply -f /tmp/copies.json --prune \
+                      -l kidd.network/copy-of=ainur \
+                      --prune-allowlist=networking.k8s.io/v1/Ingress
+                  else
+                    kubectl --kubeconfig /tmp/arda -n cloudflared delete ingress \
+                      -l kidd.network/copy-of=ainur --ignore-not-found
+                  fi
+
+                  # --- Cloudflare Zero Trust ---
+                  # For Ingresses annotated kidd.network/zero-trust: "true"
+                  # (and kidd.network/tunnel: "true"), manage a reusable
+                  # Cloudflare Access allow policy and a self_hosted Access
+                  # app per host ("k8s: <host>"). Checks both ainur and arda.
+                  # Only apps named "k8s: *" are modified or pruned.
+                  if [ -z "${ARDA_CLOUDFLARE_ACCOUNT_ID:-}" ] || [ -z "${ARDA_CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${ARDA_CLOUDFLARE_ACCESS_EMAILS:-}" ]; then
+                    echo "zero-trust: ARDA_CLOUDFLARE_ACCOUNT_ID, ARDA_CLOUDFLARE_API_TOKEN or ARDA_CLOUDFLARE_ACCESS_EMAILS unset; skipping"
+                    exit 0
+                  fi
+
+                  kubectl --kubeconfig /tmp/arda get ingress -A -o json > /tmp/arda.json
+                  jq -s '[.[].items[]
+                    | select(.metadata.annotations["kidd.network/tunnel"] == "true"
+                             and .metadata.annotations["kidd.network/zero-trust"] == "true")
+                    | .spec.rules[]?.host
+                    | select(. != null and . != "")]
+                    | unique' /tmp/ainur.json /tmp/arda.json > /tmp/zt-hosts.json
+                  jq -r '.[]' /tmp/zt-hosts.json > /tmp/zt-hosts.txt
+                  echo "zero-trust Ingresses: $(jq -r 'join(" ")' /tmp/zt-hosts.json)"
+
+                  # Build include rules from comma-separated emails (or @domain entries).
+                  jq -nc --arg raw "$ARDA_CLOUDFLARE_ACCESS_EMAILS" '
+                    $raw | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))
+                    | map(if startswith("@")
+                          then {email_domain: {domain: ltrimstr("@")}}
+                          else {email: {email: .}}
+                          end)
+                    | sort_by(tojson)
+                  ' > /tmp/zt-include.json
+                  if ! jq -e 'length > 0' /tmp/zt-include.json >/dev/null; then
+                    echo "zero-trust: ARDA_CLOUDFLARE_ACCESS_EMAILS has no entries; skipping"
+                    exit 0
+                  fi
+
+                  CF_API="https://api.cloudflare.com/client/v4/accounts/$ARDA_CLOUDFLARE_ACCOUNT_ID"
+                  cf() {
+                    method=$1; path=$2; data=${3:-}
+                    if [ -n "$data" ]; then
+                      resp=$(curl -sS -X "$method" "$CF_API$path" \
+                        -H "Authorization: Bearer $ARDA_CLOUDFLARE_API_TOKEN" \
+                        -H "Content-Type: application/json" \
+                        --data "$data")
+                    else
+                      resp=$(curl -sS -X "$method" "$CF_API$path" \
+                        -H "Authorization: Bearer $ARDA_CLOUDFLARE_API_TOKEN" \
+                        -H "Content-Type: application/json")
+                    fi
+                    if ! printf '%s' "$resp" | jq -e '.success == true' >/dev/null 2>&1; then
+                      echo "zero-trust: Cloudflare API $method $path failed: $resp" >&2
+                      return 1
+                    fi
+                    printf '%s\n' "$resp"
+                  }
+
+                  # 1. Ensure the shared reusable Access policy exists and matches .env.
+                  POLICY_NAME="k8s-zero-trust-allow"
+                  POLICY_PAYLOAD=$(jq -nc --arg name "$POLICY_NAME" --slurpfile inc /tmp/zt-include.json \
+                    '{name: $name, decision: "allow", include: $inc[0]}')
+                  cf GET /access/policies > /tmp/zt-policies.json
+                  POLICY_CUR=$(jq -c --arg name "$POLICY_NAME" \
+                    '[.result[] | select(.name == $name)][0] // empty' /tmp/zt-policies.json)
+                  if [ -z "$POLICY_CUR" ]; then
+                    echo "zero-trust: creating reusable policy $POLICY_NAME"
+                    POLICY_ID=$(cf POST /access/policies "$POLICY_PAYLOAD" | jq -r '.result.id')
+                  else
+                    POLICY_ID=$(printf '%s' "$POLICY_CUR" | jq -r '.id')
+                    CUR_DECISION=$(printf '%s' "$POLICY_CUR" | jq -r '.decision // ""')
+                    CUR_INC=$(printf '%s' "$POLICY_CUR" | jq -c '(.include // []) | sort_by(tojson)')
+                    WANT_INC=$(jq -c '.' /tmp/zt-include.json)
+                    if [ "$CUR_DECISION" != "allow" ] || [ "$CUR_INC" != "$WANT_INC" ]; then
+                      echo "zero-trust: updating reusable policy $POLICY_NAME (id=$POLICY_ID)"
+                      cf PUT "/access/policies/$POLICY_ID" "$POLICY_PAYLOAD" >/dev/null
+                    fi
+                  fi
+
+                  # 2. Ensure a self_hosted Access app exists for each annotated host.
+                  cf GET /access/apps > /tmp/zt-apps.json
+                  while read -r host; do
+                    [ -n "$host" ] || continue
+                    APP_NAME="k8s: $host"
+                    APP_CUR=$(jq -c --arg h "$host" \
+                      '[.result[] | select(.domain == $h)][0] // empty' /tmp/zt-apps.json)
+                    APP_PAYLOAD=$(jq -nc --arg name "$APP_NAME" --arg h "$host" --arg pid "$POLICY_ID" \
+                      '{name: $name, domain: $h, type: "self_hosted", session_duration: "24h",
+                        policies: [{id: $pid, precedence: 1}]}')
+                    if [ -z "$APP_CUR" ]; then
+                      echo "zero-trust: creating Access app for $host"
+                      cf POST /access/apps "$APP_PAYLOAD" >/dev/null
+                    else
+                      CUR_NAME=$(printf '%s' "$APP_CUR" | jq -r '.name // ""')
+                      if [ "$CUR_NAME" != "$APP_NAME" ]; then
+                        echo "zero-trust: leaving manually managed Access app for $host (name=$CUR_NAME)"
+                        continue
+                      fi
+                      APP_ID=$(printf '%s' "$APP_CUR" | jq -r '.id')
+                      CUR_TYPE=$(printf '%s' "$APP_CUR" | jq -r '.type // ""')
+                      CUR_PIDS=$(printf '%s' "$APP_CUR" | jq -c '[.policies[]?.id]')
+                      WANT_PIDS=$(jq -nc --arg pid "$POLICY_ID" '[$pid]')
+                      if [ "$CUR_TYPE" != "self_hosted" ] || [ "$CUR_PIDS" != "$WANT_PIDS" ]; then
+                        echo "zero-trust: updating Access app for $host (id=$APP_ID)"
+                        cf PUT "/access/apps/$APP_ID" "$APP_PAYLOAD" >/dev/null
+                      fi
+                    fi
+                  done < /tmp/zt-hosts.txt
+
+                  # 3. Prune managed ("k8s: *") Access apps whose Ingress lost the annotation.
+                  jq -r '.result[] | select((.name // "") | startswith("k8s: ")) | "\(.id) \(.domain)"' \
+                    /tmp/zt-apps.json > /tmp/zt-managed.txt
+                  while read -r app_id domain; do
+                    [ -n "$app_id" ] || continue
+                    if ! jq -e --arg h "$domain" 'any(.[]; . == $h)' /tmp/zt-hosts.json >/dev/null; then
+                      echo "zero-trust: deleting Access app for $domain (id=$app_id)"
+                      cf DELETE "/access/apps/$app_id" >/dev/null
+                    fi
+                  done < /tmp/zt-managed.txt
+              volumeMounts:
+                - name: tools
+                  mountPath: /tools
+                - name: omni-data
+                  mountPath: /omni-data
+                  readOnly: true
+                - name: lab-root-ca
+                  mountPath: /etc/omni/lab-root-ca.crt
+                  subPath: ca.crt
+                  readOnly: true
+          # For the automation key on Omni's ReadWriteOnce data volume, as in
+          # omni-cluster-template-sync-job.yaml.
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: omni
+                  topologyKey: kubernetes.io/hostname
+          volumes:
+            - name: tools
+              persistentVolumeClaim:
+                claimName: omni-tools
+            - name: omni-data
+              persistentVolumeClaim:
+                claimName: omni
+                readOnly: true
+            - name: lab-root-ca
+              configMap:
+                name: lab-ca

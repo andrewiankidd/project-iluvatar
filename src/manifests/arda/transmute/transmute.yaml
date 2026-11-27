@@ -1,0 +1,260 @@
+# Transmute (../transmute.yml), as its own Kubernetes example has it: user
+# 1000, its data (database, uploads, results) in /app/data.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    # Uploads and their conversions, kept 30 days with the guest that made
+    # them: scratch space, not worth R2 (kyverno-policies/volsync.yaml).
+    kidd.network/backup: "false"
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transmute
+  labels:
+    app: transmute
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume (SQLite)
+  selector:
+    matchLabels:
+      app: transmute
+  template:
+    metadata:
+      labels:
+        app: transmute
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # Straight in as a guest, never Transmute's login page: its page gets a
+      # script (auto-guest.html, below) that runs before the app, and with no
+      # valid session opens the browser's guest session (the same workspace,
+      # from its cookie) and stores its token, as "Use as Guest" would.
+      # Transmute reads index.html once at start, so it's patched here, from
+      # the image's own copy. If a new version's page doesn't fit, the
+      # original goes in unchanged: the login page is back, nothing worse.
+      initContainers:
+        - name: auto-guest
+          image: ghcr.io/transmute-app/transmute:v2.1.1
+          command:
+            - python
+            - -c
+            - |
+              page = open("/app/frontend/dist/index.html").read()
+              snippet = open("/auto-guest/auto-guest.html").read()
+              marker = '<script type="module"'
+              if marker in page:
+                  page = page.replace(marker, snippet + "\n    " + marker, 1)
+              else:
+                  print("auto-guest: no module script in index.html; left as it is")
+              open("/patched/index.html", "w").write(page)
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: auto-guest
+              mountPath: /auto-guest
+            - name: patched
+              mountPath: /patched
+      containers:
+        - name: transmute
+          image: ghcr.io/transmute-app/transmute:v2.1.1
+          env:
+            - name: APP_URL
+              value: https://transmute.kidd.network
+            # No Transmute accounts: the Dex login in front is the gate, and
+            # each browser gets a guest workspace.
+            - name: ALLOW_UNAUTHENTICATED
+              value: "true"
+            # A session token lasts as long as the guest workspace (30 days),
+            # not 60 minutes, so it isn't dropped mid-use.
+            - name: AUTH_ACCESS_TOKEN_EXPIRE_MINUTES
+              value: "43200"
+            # Signs the guest sessions; fixed, so they outlive a restart.
+            - name: AUTH_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: transmute
+                  key: auth-secret-key
+            - name: TRANSMUTE_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: transmute
+                  key: admin-password
+          # Guests are only allowed once the first admin account exists, which
+          # Transmute otherwise asks the first visitor to make. This makes it,
+          # once: admin, with the password in the transmute Secret (from
+          # arda-bootstrap), for Transmute's own settings. Never fails the pod.
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - python
+                  - -c
+                  - |
+                    import json, os, time, urllib.request
+                    base = "http://127.0.0.1:3313/api/users"
+                    for _ in range(60):
+                        try:
+                            status = json.load(urllib.request.urlopen(base + "/bootstrap-status", timeout=5))
+                            if status.get("requires_setup"):
+                                body = json.dumps({"username": "admin", "email": "admin@kidd.network",
+                                                   "password": os.environ["TRANSMUTE_ADMIN_PASSWORD"]}).encode()
+                                urllib.request.urlopen(urllib.request.Request(
+                                    base, data=body, headers={"Content-Type": "application/json"}), timeout=10)
+                            break
+                        except Exception:
+                            time.sleep(5)
+          ports:
+            - name: http
+              containerPort: 3313
+          readinessProbe:
+            httpGet:
+              path: /api/health/ready
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: { cpu: 100m, memory: 512Mi }
+            limits: { memory: 4Gi }
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: patched
+              mountPath: /app/frontend/dist/index.html
+              subPath: index.html
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: data
+        - name: auto-guest
+          configMap:
+            name: transmute-auto-guest
+        - name: patched
+          emptyDir:
+            sizeLimit: 1Mi
+---
+# The auto-guest script (see the Deployment). Synchronous requests on
+# purpose: it has to finish before the app starts, or the login page flashes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: transmute-auto-guest
+data:
+  auto-guest.html: |
+    <script>
+      (function () {
+        var KEY = 'transmute-access-token';
+        function call(method, url, token) {
+          var x = new XMLHttpRequest();
+          x.open(method, url, false);
+          if (token) x.setRequestHeader('Authorization', 'Bearer ' + token);
+          try { x.send(); } catch (e) { return null; }
+          return x;
+        }
+        try {
+          var token = localStorage.getItem(KEY);
+          if (token) {
+            var me = call('GET', 'api/users/me', token);
+            if (me && me.status === 200) return;
+          }
+          var guest = call('POST', 'api/guest/session');
+          if (guest && guest.status === 200) {
+            localStorage.setItem(KEY, JSON.parse(guest.responseText).access_token);
+            sessionStorage.removeItem('logged_out');
+          }
+        } catch (e) {}
+      })();
+    </script>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: transmute
+spec:
+  selector:
+    app: transmute
+  ports:
+    - name: http
+      port: 3313
+      targetPort: http
+---
+# Only Traefik reaches Transmute; conversions are local, so all egress is
+# blocked (prevents SSRF via uploaded media/documents).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: transmute
+spec:
+  podSelector:
+    matchLabels:
+      app: transmute
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 3313
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: transmute
+  annotations:
+    # LAN only, behind the Dex login.
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex-users@kubernetescrd
+    # On the internet too, for friends away from home; the sign-in above
+    # (LLDAP's users) guards it there as on the LAN.
+    kidd.network/tunnel: "true"
+    # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    # Also on the users' page (userpage.kidd.network).
+    gethomepage.dev/instance.users: "true"
+    gethomepage.dev/group: Apps
+    gethomepage.dev/name: Transmute
+    gethomepage.dev/description: Convert and compress files
+    gethomepage.dev/icon: mdi-flask-outline
+    gethomepage.dev/href: https://transmute.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: transmute.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: transmute
+                port:
+                  name: http

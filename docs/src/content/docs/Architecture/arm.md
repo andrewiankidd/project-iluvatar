@@ -1,0 +1,175 @@
+---
+title: 🍓 ARM / Pi (Ainur)
+slug: architecture/arm
+description: Raspberry Pi bootstrap nodes and accessories
+sidebar:
+  order: 2
+draft: false
+---
+
+![Raspberry Pi 5 cluster](../../../assets/docs/about/pi-cluster-1u.jpg)
+> Milo didn't do networking in college, but I did
+
+#### About
+A mistake I've made in the past is having one big server with everything on it, meaning a single point of failure for everything.
+
+To avoid this happening this time around, I wanted to build not only completely separate clusters for certain workloads, but also ensure I have redundancy within those clusters too.
+
+I also thought it would be a good scenario to introduce some ARM processors to my rack, ideally with some small single board computers
+
+##### Overall goals:
+ - Small, Redundant, Reproducible cluster
+ - Low power consumption (Relatively)
+ - Stackable/Rackable
+ - Separate OS and Data disks
+ - Should be somewhat 'cool' too
+
+## Hardware Configuration
+
+![Raspberry Pi 5 cluster node exploded view](../../../assets/docs/arm-cluster-hw-assembled.png)
+> Raspberry Pi 5 with NVMe and PoE - pricey little computers
+
+Since I wanted to utilize ARM for the bootstrap layer I ended up with a few Raspberry Pi 5's.
+
+In order to get NVMe and PoE support, you have to pick up additional "HATs" (Hardware Attached on Top) that sit on the Pi and connect to its GPIO headers.
+
+This makes the per node cost quite expensive compared to equivalent x86 hardware which has a lot of this stuff out of the box
+
+
+### Price Guide
+> Prices are based on time of writing, 8GB Pi5, late 2024
+
+| Configuration               | Master | Netboot | Cluster Storage  | Cost                   |
+|-----------------------------|--------|-------|------------------|------------------------|
+| Pi + SD + NVMe + PoE        |  ✅   |  ❌   |  ✅              | £80+£5+£15+£22 = £122 |
+| Pi + SD + NVMe              |  ✅   |  ❌   |  ✅              | £80+£5+£15 = £100     |
+| Pi + SD + PoE               |  ✅   |  ❌   |  ❌              | £80+£5+£22 = £107     |
+| Pi + SD                     |  ✅   |  ❌   |  ❌              | £80+£5 = £85          |
+| Pi + NVMe + PoE             |  ❌   |  ✅   |  ✅              | £80+£15+£22 = £117    |
+| Pi + NVMe                   |  ❌   |  ✅   |  ✅              | £80+£15 = £95         |
+| Pi + PoE                    |  ❌   |  ✅   |  ❌              | £80+£22 = £102        |
+| Pi                          |  ❌   |  ✅   |  ❌              | £80                   |
+
+### Final Shopping List
+ - **Raspberry Pi 5 16GB (x1)** - Control Plane node
+ - **Raspberry Pi 5 8GB (x2)** - Worker nodes
+ - **GeeekPi P33 M.2 NVME M-Key PoE+ Hat (x3)** - Enables PoE and NVMe support
+ - **Patriot P320 128GB NVMe SSD (x3)** - For important distributed/replicated data
+ - **PNY Pro Elite microSDXC card 64GB Class 10 UHS-I U3 100MB/s A1 V30 (x3)** - (optional) For persistent OS usage
+
+:::note[Moan]
+These were originally purchased for and subsequently used in a working NixOS implementation of this cluster, but [the community repo I was using was archived](https://github.com/nix-community/raspberry-pi-nix). [TalOS isn't supported at all as of yet](https://github.com/siderolabs/talos/issues/7978).
+
+Given the proprietry nature of the RPi and the headaches caused by this, in future I'd probably opt for a true open source SBC.
+:::
+
+## Software Configuration
+
+### OS: Ubuntu Server
+![ubuntu logo](../../../assets/docs/architecture/ubuntu.png)
+
+The bootstrap plane runs lightweight Ubuntu Server images on Raspberry Pi 5s. Canonical’s ARM build gives me a familiar package ecosystem, smooth PoE/NVMe support, and enough flexibility to host the PXE, DNS, Git, and Argo seed workloads that bring new hardware online.
+
+### Configuration: Cloud Init
+![cloud-init logo](../../../assets/docs/architecture/cloud-init.svg)
+
+Cloud-init config lives in `bootstrap/netboot/assets/ubuntuserver/boot/user-data` and bakes in everything needed to turn a freshly booted Pi into a k3s node plus PXE helper.
+
+- **Base OS + SSH prep**: sets the hostname deterministically, installs core packages (NFS/iSCSI/XFS tooling, zstd, etc.), and regenerates SSH host keys on first boot.
+- **Netboot image stamping**: idempotently writes the staged OS image to disk (dd/zstd) and records the hash so repeat boots skip re-flashing.
+- **NVMe prep**: formats the first NVMe disk as XFS if it has no filesystem, mounts it at `/var/mnt/nvme`, and enables trim. On the k3s server (valar-50) it holds every persistent volume, through k3s's local-path provisioner (`--default-local-storage-path=/var/mnt/nvme/local-path`).
+- **k3s bootstrap orchestration**: leader/agent election via `k3s-*-scripts`, optional token fetch from the bootstrap HTTP site, installs k3s (`v1.37.2+k3s1`, pinned) as server or agent, and restarts until the API is ready.
+- **TLS/PKI bootstrap**: generates a local root CA, seeds cert-manager/trust-manager manifests, configures kube-apiserver OIDC flags, and publishes the CA ConfigMap for apps (plus an optional CA download site).
+
+### Orchestration: K3s
+![k3s logo](../../../assets/docs/architecture/k3s.png)
+
+K3s is a lightweight, production-grade Kubernetes distribution designed for environments where full Kubernetes is too heavy. It bundles the core Kubernetes components into a single small binary, replaces heavier dependencies with simpler alternatives (like using SQLite by default instead of etcd), and trims out non-essential features. ainur keeps that SQLite default: it has one server, and etcd's constant small writes on the SD card stalled the API whenever the card was busy.
+
+Resource usage is low enough for edge devices, small VMs, and embedded systems, while still supporting standard Kubernetes APIs, Helm charts, and controllers.
+
+### Deployment: ArgoCD
+![argo logo](../../../assets/docs/architecture/argo.png)
+
+Argo CD is a Git-driven deployment controller for Kubernetes that continuously applies the desired application state stored in a Git repository.
+
+It watches manifests, Helm charts, or Kustomize configs and ensures the cluster matches them, handling updates, rollbacks, and drift detection automatically.
+
+It's widely used for GitOps workflows where Kubernetes configuration, application releases, and operational changes are all version-controlled and applied declaratively.
+
+### Workloads: ArgoCD Applications
+![Screenshot of ArgoCD application list view](../../../assets/docs/arm-cluster-argocd-applications.png)
+> ArgoCD: How heroes ship
+
+#### Pi-Netboot
+This application is made of several key components:
+ - **pi-netboot-builder** - Dockerized bash script for pulling ubuntu server for Pi and processing it into a usable netboot image.
+ - **bootstrap-http** - Nginx web server that hosts the custom `cloud-init` cloud config files to pre-configure the OS with at boot
+ - **tftp-server** - TFTP file server for hosting the Pi's boot partition files
+ - **nfs-server** - NFS file server for hosting the Pis root partition files
+ - **kube-vip** - A virtual IP the LAN boots from. It, and everything above, runs on valar-50 alone (`kidd.network/role: control-plane`), next to the volumes they serve
+
+Defined at [`src/manifests/ainur/pi-netboot.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/pi-netboot.yml)
+
+#### Dex (OIDC)
+[`src/manifests/ainur/dex.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/dex.yml)
+- **Helm chart** from dexidp with repo-side values to keep config in Git.
+- **Ingress** at with TLS from the local CA.
+- **OIDC clients** for Argo CD and Headlamp, matching their redirect URIs.
+- **CA injection** via namespace labels for trust-manager bundles.
+- **Admin RBAC** seeded via `rbac-admin-user.yml` for initial access.
+
+#### Headlamp
+[`src/manifests/ainur/headlamp.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/headlamp.yml)
+- **Helm chart** install with Dex OIDC wiring and client IDs/secrets from values.
+- **Ingress**  with cert-manager TLS.
+- **Trusted CA**: mounts the injected `lab-ca` ConfigMap for outbound TLS.
+- **Sync-wave** after Dex so authentication is ready first.
+- **arda too**, as a second cluster: an Omni kubeconfig for `talos-default` (admin), kept fresh by the `arda-headlamp` CronJob.
+- **A Dex login in front of all of it** (oauth2-proxy). Headlamp's own login is checked in the browser, and its server hands a kubeconfig cluster's rights to any request; the proxy makes sure nothing reaches Headlamp, and so neither cluster, without a login.
+
+#### Homepage
+[`src/manifests/ainur/homepage.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/homepage.yml)
+
+Three Homepage instances, one per tier. Who gets in is decided by groups in LLDAP, the lab's one list of people and passwords, behind Dex:
+
+- **kidd.network**, for anyone, no sign-in: the games, media players and utilities.
+- **userpage.kidd.network**, for anyone who signs in (LLDAP's `users`): adds the apps friends and family get.
+- **admin.kidd.network**, LAN only, for LLDAP's `admins`: everything.
+
+Services list themselves on the right pages with `gethomepage.dev/*` annotations on their Ingress, on either cluster. Every page shows a card per machine, both clusters, drawn from Prometheus.
+
+![kidd.network: media, games, utilities, the areas, other sites, and the machines](../../../assets/docs/homepage/homepage-public.jpeg)
+
+![userpage.kidd.network: the friends and family apps added](../../../assets/docs/homepage/homepage-users.jpeg)
+
+![admin.kidd.network: the whole lab](../../../assets/docs/homepage/homepage-admin.jpeg)
+
+#### Storage: local-path
+ainur ran Longhorn until 2026-11. Its volumes were small (the netboot files and Omni's state), and Longhorn's own pods and images cost the 8 GB netbooted Pis more than the replication was worth, so every volume is now k3s's built-in local-path on valar-50's NVMe, with the pods that use them pinned there. Longhorn lives on arda, where the data is.
+
+#### Priorities
+Two PriorityClasses, created by cloud-init before any chart: `ainur-critical` (cert-manager, trust-manager, Dex, Omni, kube-vip and the netboot servers) and `ainur-optional` (Homepage). Argo CD uses Kubernetes' own `system-cluster-critical`. A Pi short of memory evicts the optional pods first and the critical ones last.
+
+#### Observability
+[`src/manifests/ainur/monitoring.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/monitoring.yml), [`loki.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/loki.yml), [`ainur-logs.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/ainur-logs.yml)
+- **Prometheus, Alertmanager and Grafana** (kube-prometheus-stack) for both clusters: arda runs the same chart in agent mode and writes its metrics here, so every dashboard and rule covers both, with a `cluster` selector.
+- **Loki** for both clusters' logs and events, collected by Grafana Alloy.
+- **On valar-50's NVMe**, at fixed paths that outlive a rebuild: 15 days of metrics, 14 of logs.
+- **Grafana** at grafana.kidd.network, behind Dex.
+- **The lab's own alerts** beside the standard ones: a disk stalling on I/O, Omni's or a game volume's backup missed, a faulted Longhorn volume, arda going quiet, and anything published not answering from outside (arda probes its tunnel sites from Cloudflare's side and its game ports through the router).
+- **A dead man's switch**: Alertmanager reschedules an alert on the public ntfy.sh every 10 minutes, so if ainur itself goes quiet for 30, that one still reaches your phone.
+
+#### Sidero Omni
+[`src/manifests/ainur/sidero-omni.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/sidero-omni.yml)
+- **Helm chart** from SideroLabs with repo-side overrides.
+- **Ingress** for the Omni UI/API with local TLS and CA injection.
+- **GPG/PKI assets** provisioned via bundled PVC and generator manifests.
+- **On valar-50**, with its volumes, at `ainur-critical`.
+- **Future Talos/PXE** management to converge with the netboot stack.
+
+#### Cert download site
+[`src/manifests/ainur/cert.yml`](https://github.com/andrewiankidd/project-iluvatar/blob/main/src/manifests/ainur/cert.yml)
+- **Static site** served via nginx to publish the self-signed CA and fingerprint.
+- **Namespace labels** request trust-manager CA injection.
+- **Ingress/TLS** terminates with the same local CA issued by cert-manager.

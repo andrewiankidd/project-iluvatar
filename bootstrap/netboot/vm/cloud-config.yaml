@@ -1,0 +1,43 @@
+#cloud-config
+
+package_update: true
+packages:
+  - git
+  - docker.io
+  - docker-compose-v2
+  - nfs-common
+  - tftp-hpa
+  - dnsmasq
+  - ipcalc
+  - python3
+  - dhcpdump
+  - yq
+
+write_files:
+  - path: /etc/netplan/10-static-ip.yaml
+    permissions: '0600'
+    content: |
+      network:
+        version: 2
+        ethernets:
+          extra0:
+            optional: true
+            match:
+              macaddress: "52:54:00:4b:ab:cd"
+            dhcp4: false
+            dhcp6: false
+            addresses:
+              - 192.168.1.66/24
+            routes:
+              - to: default
+                via: 192.168.1.1
+            nameservers:
+              addresses: [192.168.1.1, 1.1.1.1]
+
+runcmd:
+  - netplan generate
+  - netplan apply
+  - [ systemctl, daemon-reload ]
+
+output:
+  {all: '| tee -a /var/log/cloud-init-output.log'}

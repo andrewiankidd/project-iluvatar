@@ -1,0 +1,8 @@
+# cloudflared's configuration. The tunnel itself comes from its token
+# (TUNNEL_TOKEN), so this names no tunnel and holds nothing secret.
+no-autoupdate: true
+metrics: 0.0.0.0:2000
+ingress:
+  # Every host to Traefik, which routes by host as usual. Which hosts reach
+  # the tunnel at all is decided in DNS, by external-dns-tunnel.yml.
+  - service: http://traefik.kube-system.svc.cluster.local:80

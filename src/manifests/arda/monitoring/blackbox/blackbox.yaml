@@ -1,0 +1,165 @@
+# Checks from outside: does what we publish answer the way the internet
+# reaches it? arda's Prometheus agent probes through this exporter, and
+# ainur's rules alert (ExternalCheckFailing, lab-rules.yaml).
+#
+# The exporter resolves names through Cloudflare's public DNS, not the LAN's
+# (which points *.kidd.network straight at ainur and arda), so:
+#   - a tunnel site is fetched from Cloudflare's edge, through the tunnel;
+#   - a game port is reached at our public address, through the router's
+#     port forward (the router hairpins it back in).
+# What it can't see: our line from outside (it starts inside), and UDP:
+# Dragonwilds and Bedrock's UDP ports go unchecked.
+#
+# No list of hosts: the two ScrapeConfigs below find them, from the same
+# annotations that publish them.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blackbox-exporter
+data:
+  blackbox.yml: |
+    modules:
+      # Any answer from the app counts, a login page or a redirect included.
+      # Cloudflare's own errors when the tunnel is down are 5xx (502, 530).
+      tunnel_https:
+        prober: http
+        timeout: 15s
+        http:
+          preferred_ip_protocol: ip4
+          no_follow_redirects: true
+          valid_status_codes: [200, 201, 204, 301, 302, 303, 307, 308, 401, 403]
+      tcp_connect:
+        prober: tcp
+        timeout: 10s
+        tcp:
+          preferred_ip_protocol: ip4
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blackbox-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: blackbox-exporter
+  template:
+    metadata:
+      labels:
+        app: blackbox-exporter
+    spec:
+      # Public DNS: see the top of this file.
+      dnsPolicy: None
+      dnsConfig:
+        nameservers: [1.1.1.1, 1.0.0.1]
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: blackbox-exporter
+          image: prom/blackbox-exporter:v0.27.0
+          args: ["--config.file=/config/blackbox.yml"]
+          ports:
+            - name: http
+              containerPort: 9115
+          readinessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: config
+          configMap:
+            name: blackbox-exporter
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blackbox-exporter
+spec:
+  selector:
+    app: blackbox-exporter
+  ports:
+    - name: http
+      port: 9115
+      targetPort: http
+---
+# Every Ingress the tunnel publishes (kidd.network/tunnel: "true"), each host
+# over HTTPS from Cloudflare's side.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: external-tunnel
+  labels:
+    release: monitoring   # what arda's Prometheus agent selects
+spec:
+  kubernetesSDConfigs:
+    - role: Ingress
+  metricsPath: /probe
+  params:
+    module: [tunnel_https]
+  scrapeInterval: 60s
+  scrapeTimeout: 20s
+  relabelings:
+    - sourceLabels: [__meta_kubernetes_ingress_annotation_kidd_network_tunnel]
+      regex: "true"
+      action: keep
+    - sourceLabels: [__address__]   # the rule's host
+      targetLabel: __param_target
+      replacement: https://${1}/
+    - sourceLabels: [__param_target]
+      targetLabel: instance
+    - targetLabel: probe
+      replacement: tunnel
+    - targetLabel: __address__
+      replacement: blackbox-exporter.monitoring.svc:9115
+---
+# Every TCP port the router forwards to us (kidd.network/port-forward: "true"
+# on a Service), at the name it's published under.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: external-port-forward
+  labels:
+    release: monitoring
+spec:
+  kubernetesSDConfigs:
+    - role: Service
+  metricsPath: /probe
+  params:
+    module: [tcp_connect]
+  scrapeInterval: 60s
+  scrapeTimeout: 15s
+  relabelings:
+    - sourceLabels: [__meta_kubernetes_service_annotation_kidd_network_port_forward]
+      regex: "true"
+      action: keep
+    - sourceLabels: [__meta_kubernetes_service_port_protocol]
+      regex: TCP
+      action: keep
+    - sourceLabels:
+        - __meta_kubernetes_service_annotation_external_dns_kubernetes_io_hostname
+        - __meta_kubernetes_service_port_number
+      regex: "([^,]+).*;(.+)"
+      targetLabel: __param_target
+      replacement: ${1}:${2}
+    - sourceLabels: [__param_target]
+      targetLabel: instance
+    - targetLabel: probe
+      replacement: port-forward
+    - targetLabel: __address__
+      replacement: blackbox-exporter.monitoring.svc:9115

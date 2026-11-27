@@ -1,0 +1,51 @@
+# What arda's workloads should reserve, from what they actually use: the
+# VPA recommender measures each workload (through metrics-server), and
+# Goldilocks shows its suggestions per namespace. Read-only: nothing is
+# resized automatically.
+#
+# The dashboard has no login of its own: it's at goldilocks.kidd.network on
+# the LAN only, behind the Dex login (goldilocks/ingress.yaml).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: goldilocks
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  sources:
+    - repoURL: https://charts.fairwinds.com/stable
+      chart: goldilocks
+      targetRevision: 11.2.1
+      helm:
+        valueFiles:
+          - $values/src/manifests/arda/goldilocks/values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      path: src/manifests/arda/goldilocks
+      directory:
+        include: ingress.yaml
+  destination:
+    name: arda
+    namespace: goldilocks
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      # The VPA CRDs are large.
+      - ServerSideApply=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

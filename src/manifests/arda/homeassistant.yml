@@ -1,0 +1,58 @@
+# Home Assistant on arda, at homeassistant.kidd.network on the LAN: the start
+# of replacing Nest and the Hue cloud (BACKLOG.md, "Home Assistant and a local
+# assistant"). The container image, not Home Assistant OS: no Supervisor, so
+# no add-ons; what an add-on would be (Whisper, Piper, Ollama, a Zigbee
+# coordinator's bridge) runs here as its own app instead.
+#
+# On the host's network (homeassistant/deployment.yaml), so its discovery
+# (mDNS, SSDP, Hue, Chromecast) sees the LAN, which Talos's baseline Pod
+# Security refuses; hence the privileged namespace below.
+#
+# Nothing to click through: a CronJob (homeassistant/setup.py) does onboarding
+# through its API, the owner "admin" with ARDA_HOMEASSISTANT_PASSWORD, adds
+# the integrations and builds the "Local" voice pipeline: Whisper and Piper
+# (homeassistant/voice.yaml), Ollama (homeassistant/ollama.yaml), and the
+# Matter Server beside Home Assistant (homeassistant/deployment.yaml).
+# Logins go through Dex by the hass-oidc-auth component, with that owner's
+# password as the fallback (homeassistant/configuration.yaml); not a Dex
+# forward-auth in front, which would break the companion apps. Reads the
+# homeassistant and lab-ca Secrets from
+# src/manifests/ainur/sidero-omni/arda-bootstrap-job.yaml.
+#
+# Not on the tunnel: LAN only for now.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: homeassistant
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/homeassistant
+  destination:
+    name: arda
+    namespace: homeassistant
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Talos enforces the baseline Pod Security standard, which forbids
+    # hostNetwork.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

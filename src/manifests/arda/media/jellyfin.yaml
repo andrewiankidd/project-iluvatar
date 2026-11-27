@@ -1,0 +1,238 @@
+# Jellyfin: plays the library, at jellyfin.kidd.network, LAN only. Its own
+# users, made in its first-run wizard (the admin first); Seerr signs in with
+# them.
+#
+# Libraries, added in that wizard: /data/media/tv (Shows) and
+# /data/media/movies (Movies). It reads the same volume as everything else
+# (storage.yaml).
+#
+# Transcodes on an Intel GPU (Quick Sync; the ProDesks' UHD 630), which only
+# nodes with the siderolabs/i915 Talos extension offer (devic.es/dri, from
+# ../generic-device-plugin.yml): for now the workers, not valinor-53, which
+# crashed with it (BACKLOG.md, "Media"). So Jellyfin runs on a worker. Quick
+# Sync is switched on in its settings before it starts, while they are still
+# the defaults; after that they are the UI's (Dashboard → Playback →
+# Transcoding).
+#
+# New files are found by a library scan every 30 minutes, not by watching:
+# the volume is NFS (ReadWriteMany), and a file another node writes there
+# raises no event here. Jellyfin doesn't watch book libraries at all.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jellyfin-config
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi   # metadata and artwork grow with the library
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jellyfin
+  labels:
+    app: jellyfin
+    kidd.network/media-volume: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume
+  selector:
+    matchLabels:
+      app: jellyfin
+  template:
+    metadata:
+      labels:
+        app: jellyfin
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        # Quick Sync on, if hardware acceleration is still off (a new volume,
+        # or the defaults Jellyfin writes on its first start). Jellyfin fills
+        # in every setting this file leaves out with its default.
+        - name: quick-sync
+          image: alpine:3.22
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              f=/config/config/encoding.xml
+              if [ -s "$f" ] && ! grep -q '<HardwareAccelerationType>none<' "$f"; then
+                echo "already set"; exit 0
+              fi
+              mkdir -p /config/config
+              cat > "$f" <<'EOF'
+              <?xml version="1.0" encoding="utf-8"?>
+              <EncodingOptions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+                <HardwareAccelerationType>qsv</HardwareAccelerationType>
+                <QsvDevice>/dev/dri/renderD128</QsvDevice>
+                <VaapiDevice>/dev/dri/renderD128</VaapiDevice>
+                <EnableHardwareEncoding>true</EnableHardwareEncoding>
+                <EnableTonemapping>true</EnableTonemapping>
+                <EnableDecodingColorDepth10Hevc>true</EnableDecodingColorDepth10Hevc>
+                <EnableDecodingColorDepth10Vp9>true</EnableDecodingColorDepth10Vp9>
+                <HardwareDecodingCodecs>
+                  <string>h264</string>
+                  <string>hevc</string>
+                  <string>mpeg2video</string>
+                  <string>vc1</string>
+                  <string>vp8</string>
+                  <string>vp9</string>
+                </HardwareDecodingCodecs>
+              </EncodingOptions>
+              EOF
+              echo "Quick Sync on"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+        # "Scan Media Library" every 30 minutes, instead of its default 12
+        # hours (the header says why). The task's id is fixed in Jellyfin's
+        # source; this file is its triggers, rewritten on every start.
+        - name: library-scan
+          image: alpine:3.22
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /config/config/ScheduledTasks
+              echo '[{"Type":"IntervalTrigger","IntervalTicks":18000000000}]' \
+                > /config/config/ScheduledTasks/7738148f-fcd0-7979-c7ce-b148e06b3aed.js
+              echo "library scan every 30 minutes"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+      containers:
+        - name: jellyfin
+          image: ghcr.io/jellyfin/jellyfin:10.11.11
+          env:
+            - { name: TZ, value: Europe/London }
+            - { name: JELLYFIN_PublishedServerUrl, value: https://jellyfin.kidd.network }
+          ports:
+            - name: http
+              containerPort: 8096
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: cache
+              mountPath: /cache
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 50m, memory: 384Mi }
+            # The Intel GPU (../generic-device-plugin.yml): only nodes with i915 offer it.
+            limits: { memory: 2Gi, devic.es/dri: "1" }
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: jellyfin-config
+        # Transcodes and image cache: nothing worth keeping.
+        - name: cache
+          emptyDir:
+            sizeLimit: 20Gi
+        - name: data
+          persistentVolumeClaim:
+            claimName: media
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jellyfin
+spec:
+  selector:
+    app: jellyfin
+  ports:
+    - name: http
+      port: 8096
+      targetPort: http
+---
+# Only Traefik and Seerr reach Jellyfin; outbound is limited to CoreDNS and the
+# public internet (metadata/plugins), blocking other cluster services and LAN.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jellyfin
+spec:
+  podSelector:
+    matchLabels:
+      app: jellyfin
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: seerr
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 8096
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jellyfin
+  annotations:
+    # LAN only. Its own login. On both Homepages, the public one too (copied
+    # to ainur's by its arda-homepage CronJob): its link works at home.
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Media
+    gethomepage.dev/name: Jellyfin
+    gethomepage.dev/description: Watch
+    gethomepage.dev/icon: jellyfin.png
+    gethomepage.dev/href: https://jellyfin.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: jellyfin.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jellyfin
+                port:
+                  name: http

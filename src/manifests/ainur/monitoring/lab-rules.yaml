@@ -1,0 +1,125 @@
+# The lab's own alerts, beside kube-prometheus-stack's standard ones (node
+# down, pod crash-looping, Job failed, disk filling, and so on). Each is
+# something that has already happened here and went unnoticed.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: lab
+spec:
+  groups:
+    - name: lab
+      rules:
+        # valar-50's SD card, 2026-11-19: our own CronJobs wrote ~8.6 MB/s to
+        # it, I/O pressure sat near 70%, and k3s's API stalled until kube-vip
+        # dropped the VIP. Any node stalled on I/O this long is in trouble.
+        - alert: NodeIOStalled
+          expr: rate(node_pressure_io_stalled_seconds_total[10m]) > 0.25
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.cluster }}/{{ $labels.instance }} is stalled on disk I/O {{ $value | humanizePercentage }} of the time"
+            description: "Something is writing (or reading) far more than usual. On valar-50 that's the SD card, which stalls k3s's API with it."
+
+        # Omni's nightly backup to R2 (ainur-sidero-omni/omni-backup).
+        - alert: OmniBackupMissing
+          expr: time() - kube_cronjob_status_last_successful_time{cronjob="omni-backup"} > 2 * 86400
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            summary: "Omni hasn't been backed up to R2 for {{ $value | humanizeDuration }}"
+            description: "A new NVMe on valar-50 would mean an empty Omni and re-registering every arda machine. kubectl -n ainur-sidero-omni logs -l job-name --tail=50 for the last run."
+
+        # arda's volumes, backed up nightly to R2 by VolSync (arda's Kyverno
+        # policy). out_of_sync is 1 once a scheduled backup is missed.
+        - alert: VolumeBackupMissing
+          expr: volsync_volume_out_of_sync{role="source"} == 1
+          for: 2h
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.cluster }} {{ $labels.obj_namespace }}/{{ $labels.obj_name }} has missed its scheduled backup"
+            description: "VolSync's {{ $labels.role }} for it hasn't completed on schedule. kubectl -n {{ $labels.obj_namespace }} get replicationsources for its status."
+
+        # A Longhorn volume that's lost its last good replica. Degraded (fewer
+        # replicas than wanted) is normal while arda has one machine.
+        - alert: LonghornVolumeFaulted
+          expr: longhorn_volume_robustness == 3
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Longhorn volume {{ $labels.volume }} on {{ $labels.cluster }} is faulted"
+            description: "Its data is unavailable. Check the Longhorn UI and the node it was on."
+
+        # What we publish, checked the way the internet reaches it: tunnel
+        # sites from Cloudflare's side, game ports through the router's port
+        # forwards (arda's monitoring/blackbox). Also fires if the checks
+        # themselves stop running, which would otherwise look like a pass.
+        - alert: ExternalCheckFailing
+          expr: |
+            probe_success{probe=~"tunnel|port-forward"} == 0
+              or up{job=~"scrapeConfig/monitoring/external-.*"} == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.instance }} doesn't answer from outside ({{ $labels.probe }}{{ $labels.job }})"
+            description: "For a tunnel site: cloudflared, the app, or Cloudflare. For a game port: the server, the router's port forward, or the public address in DNS (ddns). If it names a scrapeConfig job, the blackbox exporter on arda is down."
+
+        # A container that keeps restarting, however slowly. KubePodCrashLooping
+        # wants 15 minutes of CrashLoopBackOff without a break; arda's GitLab
+        # runner (2026-11-22) crashed every ~7 minutes but ran in between,
+        # waiting out gitlab.com's rate limit, so that alert stayed pending for
+        # 30 hours and 250 restarts. Same threshold as Homepage's status tile.
+        - alert: PodRestartingOften
+          expr: round(increase(kube_pod_container_status_restarts_total[1h])) >= 5
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.cluster }} {{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) restarted {{ $value }} times in the last hour"
+            description: "kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} -c {{ $labels.container }} --previous for why it last stopped."
+
+        # cert-manager renews the lab CA's certificates (all the LAN's HTTPS)
+        # 30 days before they expire; one still this close hasn't renewed.
+        - alert: CertificateExpiringSoon
+          expr: (certmanager_certificate_expiration_timestamp_seconds - time()) < 14 * 86400
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Certificate {{ $labels.namespace }}/{{ $labels.name }} expires in {{ $value | humanizeDuration }}"
+            description: "cert-manager hasn't renewed it. kubectl -n {{ $labels.namespace }} describe certificate {{ $labels.name }}, and cert-manager's logs."
+
+        # An Argo CD app (either cluster) that Git and the cluster disagree on,
+        # for longer than a sync and its retries take.
+        - alert: ArgoAppOutOfSync
+          expr: argocd_app_info{sync_status!="Synced"} == 1
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Argo CD app {{ $labels.name }} is {{ $labels.sync_status }}"
+            description: "Git and the cluster disagree, and syncing hasn't fixed it. argocd.kidd.network shows the diff and the last sync's errors."
+
+        - alert: ArgoAppUnhealthy
+          expr: argocd_app_info{health_status!~"Healthy|Progressing"} == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Argo CD app {{ $labels.name }} is {{ $labels.health_status }}"
+            description: "One of its resources is failing. argocd.kidd.network shows which."
+
+        # A cluster that stops reporting looks exactly like a healthy, quiet
+        # one on a dashboard.
+        - alert: ClusterNotReporting
+          expr: absent_over_time(up{cluster="arda"}[10m])
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No metrics from arda for 10 minutes"
+            description: "arda is down, or its Prometheus agent can't reach prometheus.kidd.network."

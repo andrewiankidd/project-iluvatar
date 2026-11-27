@@ -1,0 +1,58 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sidero-omni
+  namespace: ainur
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: ainur
+  sources:
+    - repoURL: https://github.com/siderolabs/omni.git
+      # The v1.13.3 release, which ships the v2 helm chart (chart 2.13.3).
+      targetRevision: v1.13.3
+      path: deploy/helm/omni
+      helm:
+        valueFiles:
+          - $values/src/manifests/ainur/sidero-omni/values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision:  main
+      path: src/manifests/ainur/sidero-omni
+      # The Helm values above, not a manifest.
+      directory:
+        exclude: values.yaml
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision:  main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ainur-sidero-omni
+  # The nightly backup stops Omni (sidero-omni/omni-backup-cronjob.yaml);
+  # without this, self-heal would start it again mid-backup.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: omni
+      jsonPointers:
+        - /spec/replicas
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - RespectIgnoreDifferences=true
+    managedNamespaceMetadata:
+      labels:
+        ainur.kidd.network/ca: inject
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

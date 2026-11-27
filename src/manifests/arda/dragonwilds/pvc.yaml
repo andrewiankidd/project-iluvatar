@@ -1,0 +1,13 @@
+# The server's install (downloaded again on each start) and its world.
+# Argo never prunes or deletes it, so removing the app keeps the world.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dragonwilds-data
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 30Gi

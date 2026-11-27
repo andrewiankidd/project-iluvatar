@@ -1,0 +1,251 @@
+# ---------------------------------------------------------------------------
+# Omni Helm chart values — v2 chart (siderolabs/omni @ v1.13.3)
+#
+# Omni serves the Web UI, gRPC and the SideroLink API over h2c on one internal
+# port and demuxes by Content-Type; Traefik terminates TLS once per host.
+#
+# Machines trust the lab CA because it is baked into the Talos image they boot
+# (talos-schematic-job.yaml). Since Omni 1.13 a machine's installer is built
+# from the schematic it booted with, so the CA survives install and reboots.
+# ---------------------------------------------------------------------------
+
+fullnameOverride: omni
+
+image:
+  repository: ghcr.io/siderolabs/omni
+  pullPolicy: IfNotPresent
+  tag: ""   # use chart appVersion (v1.13.3)
+
+replicaCount: 1
+
+# --- Persistence -----------------------------------------------------------
+# The chart auto-creates a single PVC at /data that holds etcd, sqlite,
+# generated machine configs, and etcd backups. Sized up from the chart
+# default (16Gi) only if you want headroom.
+persistence:
+  enabled: true
+  # Ours (omni-pvc.yaml); the chart then makes none. The settings below match it.
+  existingClaim: omni
+  storageClassName: local-path
+  accessModes:
+    - ReadWriteOnce
+  size: 20Gi
+
+# --- etcd encryption key ---------------------------------------------------
+# The omni-gpg Secret is created by gpg-generator.yaml (a Job that runs
+# pre-sync). We just point the chart at it.
+etcdEncryptionKey:
+  existingSecret: omni-gpg
+
+# --- Resources -------------------------------------------------------------
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# --- Lab CA trust for outbound TLS -----------------------------------------
+# Omni makes outbound calls to Dex (OIDC) and possibly to internal Helm/Git
+# endpoints, all signed by the lab CA. Mount the lab-ca ConfigMap (published
+# by trust-manager via the cluster-wide Bundle) over the system trust store.
+extraVolumes:
+  - name: lab-ca
+    configMap:
+      name: lab-ca
+      optional: true
+
+extraVolumeMounts:
+  - name: lab-ca
+    mountPath: /etc/ssl/certs/ca-certificates.crt
+    subPath: ca.crt
+    readOnly: true
+
+# --- Services --------------------------------------------------------------
+# main: omni Web UI + gRPC + siderolink API (h2c, ClusterIP)
+# k8sProxy: Kubernetes API proxy (HTTPS, separate service because it does not
+#   support h2c).
+# wireguard: SideroLink WireGuard tunnel (UDP NodePort). The chart default of
+#   30180 is fine; advertise it via the node IP below.
+#
+# NOTE: do NOT override service.main.annotations here. The chart default
+# (traefik.ingress.kubernetes.io/service.serversscheme: h2c) is required for
+# Traefik to talk h2c to the backend.
+# Omni reads this over config.auth.oidc.clientSecret.
+env:
+  - name: OMNI_AUTH_OIDC_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: ainur-secrets
+        key: AINUR_OIDC_CLIENT_SECRET
+
+service:
+  main:
+    type: ClusterIP
+  k8sProxy:
+    type: ClusterIP
+  wireguard:
+    type: NodePort
+    nodePort: 30180
+    port: 50180
+
+# --- Ingress ---------------------------------------------------------------
+# Three Ingresses, all terminated at Traefik. All three reference the SAME
+# TLS secret (omni-tls) which is provisioned once by cert-manager from the
+# multi-SAN Certificate declared in extraObjects below.
+#
+# Why one Certificate instead of three ingress-shim auto-issued ones: three
+# separate Certificates with separate Secrets would race on issuance and
+# renewal. One Certificate, one Secret, three Ingresses referencing it is
+# the same pattern v1 used and matches the chart README's worked example.
+#
+# Validation note: the chart enforces that ingress.X.host MUST match the host
+# in config.services.X.advertisedURL below, and that TLS presence matches
+# the https:// scheme. Keep them in lockstep.
+ingress:
+  main:
+    enabled: true
+    className: traefik
+    host: omni.kidd.network
+    annotations:
+      gethomepage.dev/enabled: "true"
+      gethomepage.dev/instance: admin
+      gethomepage.dev/group: Cluster
+      gethomepage.dev/name: Omni
+      gethomepage.dev/description: Talos machines and clusters
+      gethomepage.dev/icon: mdi-server-network
+    tls:
+      - secretName: omni-tls
+        hosts:
+          - omni.kidd.network
+  kubernetesProxy:
+    enabled: true
+    className: traefik
+    host: omni.kubernetes.kidd.network
+    tls:
+      - secretName: omni-tls
+        hosts:
+          - omni.kubernetes.kidd.network
+  siderolinkApi:
+    enabled: true
+    className: traefik
+    host: omni.siderolink.kidd.network
+    tls:
+      - secretName: omni-tls
+        hosts:
+          - omni.siderolink.kidd.network
+
+# --- Extra objects deployed by the chart -----------------------------------
+# Single multi-SAN Certificate for all three Omni ingresses. cert-manager
+# materialises this into the `omni-tls` Secret which the three Ingresses
+# above share.
+extraObjects:
+  - apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: omni
+    spec:
+      secretName: omni-tls
+      issuerRef:
+        kind: ClusterIssuer
+        name: local-ca
+      dnsNames:
+        - omni.kidd.network
+        - omni.kubernetes.kidd.network
+        - omni.siderolink.kidd.network
+
+# --- Omni config -----------------------------------------------------------
+# This block gets rendered into a Secret and mounted at /config/config.yaml.
+# The omni binary reads it via --config-path.
+config:
+  # Required since Omni 1.13: it does not start until the EULA is accepted.
+  eulaAccept:
+    name: Andrew Kidd
+    email: contact@andrewkidd.co.uk
+
+  # Where Talos images come from. The same URLs are in talos-schematic-job.yaml;
+  # point both at a self-hosted Image Factory to go offline.
+  registries:
+    factories:
+      primary:
+        url: https://factory.talos.dev
+        pxeURL: https://pxe.factory.talos.dev
+
+  account:
+    # UUID, must not change across the lifetime of the install.
+    id: "8a6f8e9c-9d2a-4f8e-8c6e-9f01d3b7a4c1"
+    name: "Omni"
+
+  services:
+    api:
+      advertisedURL: https://omni.kidd.network
+    kubernetesProxy:
+      advertisedURL: https://omni.kubernetes.kidd.network
+    machineAPI:
+      advertisedURL: https://omni.siderolink.kidd.network
+    siderolink:
+      joinTokensMode: strict
+      eventSinkPort: 8091
+      wireGuard:
+        # MUST be IP:PORT format. Set to a LAN-reachable node IP that exposes
+        # service.wireguard.nodePort. For a stable endpoint later, front this
+        # with a kube-vip Service (similar to how pi-netboot does it) and
+        # advertise the VIP instead.
+        advertisedEndpoint: "192.168.1.50:30180"
+    workloadProxy:
+      enabled: false
+
+  auth:
+    # Auth0 default is enabled: true in the chart; explicitly disable it so
+    # Omni doesn't try to use Auth0 alongside our Dex OIDC client.
+    auth0:
+      enabled: false
+    saml:
+      enabled: false
+    oidc:
+      enabled: true
+      providerURL: https://dex.kidd.network
+      clientID: omni
+      # The client secret is OMNI_AUTH_OIDC_CLIENT_SECRET (env, below), from
+      # the ainur-secrets Secret.
+      scopes:
+        - openid
+        - profile
+        - email
+
+    # Bootstrap admins. These are seeded on first run.
+    initialUsers:
+      - admin@kidd.network
+      - omni@local
+
+    # What the Jobs here (template sync, Talos schematic) use omnictl as.
+    # Written on first start to the data volume, which they mount; a year
+    # is the longest Omni allows.
+    initialServiceAccount:
+      enabled: true
+      name: automation
+      role: Admin
+      keyPath: /data/automation.key
+      lifetime: 8760h
+
+  etcdBackup:
+    localPath: /data/etcd-backup
+    s3Enabled: false
+
+  storage:
+    default:
+      kind: etcd
+      etcd:
+        embedded: true
+        embeddedDBPath: /data/etcd/
+        privateKeySource: file:///omni.asc
+    sqlite:
+      path: /data/secondary-storage/sqlite.db
+
+# --- Placement and priority ----------------------------------------------
+# On valar-50, with its data (local-path on its NVMe), and among the last
+# things evicted if memory runs short.
+nodeSelector:
+  kidd.network/role: control-plane
+priorityClassName: ainur-critical

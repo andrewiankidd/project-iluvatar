@@ -1,0 +1,33 @@
+# The library and the downloads, on one filesystem so that Sonarr and Radarr
+# import by hardlink (instant, no second copy) rather than by copying:
+#
+#   /data/torrents/tv, /data/torrents/movies   qBittorrent's, by category
+#   /data/media/tv, /data/media/movies         the library: Jellyfin, Plex, Bazarr
+#
+# Every app mounts all of /data, at the same path, so a path one app hands
+# another means the same file (TRaSH's guides, "Hardlinks and instant moves").
+#
+# A stand-in until the NAS: one Longhorn volume, its two replicas on the
+# 1 TB disks of valinor-53 and -56. ReadWriteMany (2026-11-24): Longhorn
+# shares it over NFS from a share-manager pod, so the apps run on any node
+# rather than all on whichever one it was attached to (ReadWriteOnce), and
+# hardlinks still work, one filesystem. The NAS replaces it with an NFS
+# PersistentVolume of the same name, bound to this claim: the apps don't
+# change, and the paths inside stay the same.
+#
+# Not backed up: a library is re-fetchable and far too big for R2's nightly
+# runs. Each app's own settings (its *-config volume) are backed up as usual.
+# Argo never prunes or deletes it, so removing the app keeps the library.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: media
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    # Out of VolSync's nightly backups (../kyverno-policies/volsync.yaml).
+    kidd.network/backup: "false"
+spec:
+  accessModes: [ReadWriteMany]
+  resources:
+    requests:
+      storage: 200Gi

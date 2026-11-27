@@ -1,0 +1,115 @@
+# A Dex login in front of all of Headlamp. Headlamp checks its own login for
+# ainur, but arda comes from a kubeconfig (../sidero-omni/arda-headlamp-
+# cronjob.yaml), and Headlamp hands that kubeconfig's rights to any request,
+# logged in or not. With this in front, nothing reaches Headlamp, and so
+# neither cluster, without a Dex login. Headlamp's own ainur login then goes
+# through on the same Dex session.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oauth2-proxy
+  namespace: ainur-headlamp
+  annotations:
+    secret.reloader.stakater.com/reload: headlamp-oidc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oauth2-proxy
+  template:
+    metadata:
+      labels:
+        app: oauth2-proxy
+    spec:
+      # The cookie key, derived from AINUR_SSO_SECRET, the same on every
+      # rebuild, so sign-ins outlive a restart.
+      initContainers:
+        - name: cookie-secret
+          image: alpine:3.20
+          command:
+            - sh
+            - -c
+            - printf '%s' "$SSO_SECRET:kidd-admins-cookie" | sha256sum | cut -c1-32 | tr -d '\n' > /secret/cookie
+          env:
+            # AINUR_SSO_SECRET (.env): dedicated random cookie seed, separate
+            # from the OIDC client secret.
+            - name: SSO_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: headlamp-oidc
+                  key: SSO_SECRET
+          volumeMounts:
+            - name: cookie
+              mountPath: /secret
+      containers:
+        - name: oauth2-proxy
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.12.0
+          args:
+            - --http-address=0.0.0.0:4180
+            - --reverse-proxy=true
+            - --provider=oidc
+            - --oidc-issuer-url=https://dex.kidd.network
+            - --provider-ca-file=/etc/ssl/local-ca/ca.crt
+            - --client-id=headlamp-proxy
+            - --redirect-url=https://headlamp.kidd.network/oauth2/callback
+            - --cookie-secret-file=/secret/cookie
+            - --cookie-secure=true
+            # The admins tier's sign-in cookie, shared by every oauth2-proxy of
+            # that tier (both clusters): same name, domain and key (derived
+            # from AINUR_SSO_SECRET, ":kidd-admins-cookie"), so one sign-in
+            # covers all of them. One per tier, not one for all: oauth2-proxy
+            # deletes a session that fails its group check, so a shared one
+            # would sign a friend out of everything at the first admin link.
+            - --cookie-name=_kidd_admins
+            # Dex shows no consent page (skipApprovalScreen) unless asked to,
+            # and oauth2-proxy asks by default (approval_prompt=force).
+            - --approval-prompt=auto
+            - --cookie-domain=.kidd.network
+            - --whitelist-domain=.kidd.network
+            - --email-domain=*
+            # Only LLDAP's admins group (Dex's groups claim).
+            - --scope=openid email profile groups
+            - --allowed-group=admins
+            - --skip-provider-button=true
+            - --code-challenge-method=S256
+            - --upstream=http://headlamp.ainur-headlamp.svc:80
+          env:
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: headlamp-oidc
+                  key: OIDC_CLIENT_SECRET
+          ports:
+            - name: http
+              containerPort: 4180
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+          volumeMounts:
+            - name: cookie
+              mountPath: /secret
+              readOnly: true
+            - name: local-ca
+              mountPath: /etc/ssl/local-ca
+              readOnly: true
+      volumes:
+        - name: cookie
+          emptyDir:
+            medium: Memory
+        - name: local-ca
+          configMap:
+            name: lab-ca
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oauth2-proxy
+  namespace: ainur-headlamp
+spec:
+  selector:
+    app: oauth2-proxy
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

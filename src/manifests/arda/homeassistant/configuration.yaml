@@ -1,0 +1,75 @@
+# Home Assistant's configuration.yaml, from Git (kustomization.yaml makes it a
+# ConfigMap, mounted over /config/configuration.yaml). Only what should be
+# declarative lives here. Integrations, devices, users, dashboards and the
+# history live in the volume (/config/.storage and the database), which
+# VolSync backs up; the core integrations and the voice pipeline are put
+# there by setup.py, the rest is made in the UI.
+#
+# Settings put here are locked in the UI. Onboarding is setup.py's, so what
+# its screens would ask is here instead, except the home's location, which
+# stays out of a public repository: ARDA_HOMEASSISTANT_LATITUDE/LONGITUDE in
+# .env, or the Settings > System > General map.
+
+# The usual set: the frontend, onboarding, discovery (zeroconf, ssdp, dhcp),
+# Assist, history, energy, the companion apps' mobile_app, and the rest.
+default_config:
+
+frontend:
+  themes: !include_dir_merge_named themes
+
+# Edited from the UI, which writes these files (the Deployment makes them
+# if missing).
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+homeassistant:
+  name: Home
+  internal_url: https://homeassistant.kidd.network
+  time_zone: Europe/London
+  country: GB
+  currency: GBP
+  unit_system: metric
+  language: en-GB
+
+# The Dex login (hass-oidc-auth, which the Deployment installs): "Log in
+# with Dex" beside the usual username and password, which stay as the
+# fallback. Dex's "admin" becomes Home Assistant's owner, also "admin"
+# (setup.py), through user linking. Only LLDAP's admins group gets in, as
+# admins; anyone else Dex knows is turned away (Home Assistant's own
+# password is the way in with LLDAP down). Dex is the only place users are made, so linking by
+# username stays on.
+#
+# The companion apps log in with a code: the app shows one, you sign in with
+# Dex in a browser and enter it. Or they use the owner's password directly.
+auth_oidc:
+  client_id: homeassistant   # Dex's public client (src/manifests/ainur/dex/values.yaml)
+  discovery_url: https://dex.kidd.network/.well-known/openid-configuration
+  display_name: Dex
+  roles:
+    admin: admins
+    user: admins
+  features:
+    automatic_user_linking: true
+    force_https: true
+  network:
+    tls_ca_path: /lab-ca/ca.crt
+
+# No http: section. Since 2026.11 Home Assistant keeps its HTTP settings
+# (the reverse proxy ones among them) in .storage/http and reads YAML only
+# once, as a trial that reverts unless confirmed in the UI. They are in
+# http.json instead, which the Deployment writes into that store at every
+# start.
+#
+# What http.json trusts as proxies, and why: Traefik's requests carry
+# X-Forwarded-For, which Home Assistant answers with a 400 unless they come
+# from a trusted proxy. Home Assistant is on the host network, so Traefik
+# reaches it from its pod address (10.244.0.0/16) when they share a node,
+# and from its node's address when they don't (flannel masquerades), and
+# arda's nodes are on the LAN (192.168.1.0/24). The cost: a LAN device could
+# claim to be another address, which only matters to ip_ban and the logs.
+
+# Every entity's state, for Prometheus, at /api/prometheus. It wants a login:
+# setup.py keeps a long-lived token for it in the homeassistant-metrics
+# Secret, and the ServiceMonitor in metrics.yaml scrapes with that.
+prometheus:

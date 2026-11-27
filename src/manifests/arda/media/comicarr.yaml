@@ -1,0 +1,248 @@
+# Comicarr: comics and manga, at comicarr.kidd.network behind the Dex login.
+# Mylar3's successor: monitors series, searches Prowlarr (and MangaDex for
+# manga chapters), sends to qBittorrent, files into the library.
+#
+# It has no "external" login mode, so it keeps its own: user admin, its
+# password the comicarr-password key of the media Secret. Rather than its
+# first-run page (whose one-time token is only in the log), the seed init
+# container writes the login, the fixed API key, qBittorrent, Prowlarr and
+# the library folders into its config.ini before it starts. Only those keys:
+# everything else stays the UI's.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: comicarr-config
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: comicarr
+  labels:
+    app: comicarr
+    kidd.network/media-volume: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume (SQLite)
+  selector:
+    matchLabels:
+      app: comicarr
+  template:
+    metadata:
+      labels:
+        app: comicarr
+    spec:
+      initContainers:
+        - name: layout
+          image: alpine:3.22
+          command:
+            - sh
+            - -c
+            - |
+              for d in torrents/comics media/comics media/manga; do
+                mkdir -p "/data/$d" && chown 1000:1000 "/data/$d" "$(dirname /data/$d)"
+              done
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+        - name: seed
+          image: ghcr.io/frankieramirez/comicarr:0.65.0
+          command:
+            - python
+            - -c
+            - |
+              import bcrypt, configparser, os
+              path = "/config/comicarr/config.ini"
+              os.makedirs(os.path.dirname(path), exist_ok=True)
+              ini = configparser.ConfigParser(interpolation=None)
+              ini.optionxform = str
+              ini.read(path, encoding="utf-8")
+              def put(section, key, value):
+                  if not ini.has_section(section):
+                      ini.add_section(section)
+                  ini.set(section, key, str(value))
+              password = os.environ["COMICARR_PASSWORD"]
+              stored = ini.get("Interface", "http_password", fallback="")
+              # Re-hashed only when it no longer matches, so a restart keeps it.
+              try:
+                  current = stored and bcrypt.checkpw(password.encode(), stored.encode())
+              except ValueError:
+                  current = False
+              if not current:
+                  put("Interface", "http_password", bcrypt.hashpw(password.encode(), bcrypt.gensalt(12)).decode())
+              put("Interface", "http_username", "admin")
+              put("Interface", "authentication", 2)
+              put("API", "api_enabled", True)
+              put("API", "api_key", os.environ["COMICARR_API_KEY"])
+              put("General", "destination_dir", "/data/media/comics")
+              put("General", "manga_destination_dir", "/data/media/manga")
+              put("Torrents", "enable_torrents", True)
+              put("Client", "torrent_downloader", 5)
+              put("qBittorrent", "qbittorrent_host", "http://qbittorrent.media.svc:8080")
+              put("qBittorrent", "qbittorrent_label", "comics")
+              put("qBittorrent", "qbittorrent_folder", "/data/torrents/comics")
+              put("Prowlarr", "enable_prowlarr", True)
+              put("Prowlarr", "prowlarr_host", "http://prowlarr.media.svc:9696")
+              put("Prowlarr", "prowlarr_apikey", os.environ["PROWLARR_API_KEY"])
+              # ComicVine, for comics search (ARDA_COMICVINE_API_KEY; optional).
+              if os.environ.get("COMICVINE_API_KEY"):
+                  put("CV", "comicvine_api", os.environ["COMICVINE_API_KEY"])
+              with open(path, "w", encoding="utf-8") as f:
+                  ini.write(f)
+              os.chown(path, 1000, 1000)
+              os.chown(os.path.dirname(path), 1000, 1000)
+              print("comicarr: config.ini seeded")
+          env:
+            - name: COMICARR_PASSWORD
+              valueFrom: { secretKeyRef: { name: media, key: comicarr-password } }
+            - name: COMICARR_API_KEY
+              valueFrom: { secretKeyRef: { name: media, key: comicarr-api-key } }
+            - name: PROWLARR_API_KEY
+              valueFrom: { secretKeyRef: { name: media, key: prowlarr-api-key } }
+            - name: COMICVINE_API_KEY
+              valueFrom: { secretKeyRef: { name: media, key: comicvine-api-key, optional: true } }
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 128Mi }
+      containers:
+        - name: comicarr
+          image: ghcr.io/frankieramirez/comicarr:0.65.0
+          env:
+            - { name: PUID, value: "1000" }
+            - { name: PGID, value: "1000" }
+            - { name: TZ, value: Europe/London }
+          ports:
+            - name: http
+              containerPort: 8090
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 20m, memory: 256Mi }
+            limits: { memory: 1Gi }
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: comicarr-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: media
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: comicarr
+spec:
+  selector:
+    app: comicarr
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
+---
+# Only Traefik reaches Comicarr; outbound is limited to qBittorrent, Prowlarr,
+# CoreDNS and the public internet (ComicVine / MangaDex).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: comicarr
+spec:
+  podSelector:
+    matchLabels:
+      app: comicarr
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 8090
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: qbittorrent
+      ports:
+        - port: 8080
+    - to:
+        - podSelector:
+            matchLabels:
+              app: prowlarr
+      ports:
+        - port: 9696
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: comicarr
+  annotations:
+    kidd.network/tunnel: "true"
+    kidd.network/zero-trust: "true"
+    # Behind the Dex login (and Cloudflare Access on the internet, plus its own: see the top).
+    traefik.ingress.kubernetes.io/router.middlewares: oauth2-proxy-dex@kubernetescrd
+    # On the private Homepage (copied to ainur's by its arda-homepage CronJob).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Media
+    gethomepage.dev/name: Comicarr
+    gethomepage.dev/description: Comics and manga
+    gethomepage.dev/icon: mylar.png
+    gethomepage.dev/href: https://comicarr.kidd.network
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: comicarr.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: comicarr
+                port:
+                  name: http

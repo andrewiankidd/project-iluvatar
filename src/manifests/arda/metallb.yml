@@ -1,0 +1,48 @@
+# Gives arda's LoadBalancer Services a LAN address: MetalLB in L2 mode,
+# answering ARP for 192.168.1.58 from whichever node is up (metallb/pool.yaml).
+# Without it they stay <pending> and nothing on the LAN can reach the games.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metallb
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  sources:
+    - repoURL: https://metallb.github.io/metallb
+      chart: metallb
+      targetRevision: 0.16.2
+      helm:
+        valuesObject:
+          speaker:
+            # Talos labels control planes exclude-from-external-load-balancers,
+            # and arda's control plane runs the workloads: announce from it too.
+            ignoreExcludeLB: true
+    - repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+      targetRevision: main
+      path: src/manifests/arda/metallb
+  destination:
+    name: arda
+    namespace: metallb-system
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    # The speakers run on the host network; Talos enforces baseline.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,0 +1,168 @@
+# Speech for Assist, on arda's CPUs: Whisper (speech to text) and Piper (text
+# to speech), the Wyoming servers Home Assistant OS would run as add-ons.
+# setup.py adds both to Home Assistant by their Service names and puts them
+# in the "Local" voice pipeline.
+#
+# Each downloads its models on the first start into its volume (backed up
+# like every Longhorn volume), so a restart or restore needs no internet.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: whisper-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: whisper
+  labels:
+    app: whisper
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume
+  selector:
+    matchLabels:
+      app: whisper
+  template:
+    metadata:
+      labels:
+        app: whisper
+    spec:
+      # No <NAME>_PORT=tcp://... variables from the Services (Ollama reads OLLAMA_*).
+      enableServiceLinks: false
+      containers:
+        - name: whisper
+          image: rhasspy/wyoming-whisper:3.9.1
+          # "auto": the model the add-on picks for the language, fast on CPU.
+          args: ["--model", "auto", "--language", "en"]
+          ports:
+            - name: wyoming
+              containerPort: 10300
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            tcpSocket:
+              port: wyoming
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits: { memory: 2Gi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: whisper-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: whisper
+spec:
+  selector:
+    app: whisper
+  ports:
+    - name: wyoming
+      port: 10300
+      targetPort: wyoming
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: piper-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: piper
+  labels:
+    app: piper
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: piper
+  template:
+    metadata:
+      labels:
+        app: piper
+    spec:
+      # No <NAME>_PORT=tcp://... variables from the Services (Ollama reads OLLAMA_*).
+      enableServiceLinks: false
+      containers:
+        - name: piper
+          image: rhasspy/wyoming-piper:2.5.4
+          # A British voice; others download on demand when chosen in the UI.
+          args: ["--voice", "en_GB-alba-medium"]
+          ports:
+            - name: wyoming
+              containerPort: 10200
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            tcpSocket:
+              port: wyoming
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 1Gi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: piper-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: piper
+spec:
+  selector:
+    app: piper
+  ports:
+    - name: wyoming
+      port: 10200
+      targetPort: wyoming
+---
+# Outbound restricted to CoreDNS and the public internet (voice/model downloads),
+# blocking other cluster services and the home LAN. Ingress stays open because
+# Home Assistant runs on hostNetwork.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: voice
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [whisper, piper]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16

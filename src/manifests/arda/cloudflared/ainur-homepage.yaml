@@ -1,0 +1,78 @@
+# ainur's public sites on the internet, through arda's tunnel, since ainur
+# has none of its own: kidd.network and homepage.kidd.network (the public
+# Homepage: no login, only what isn't marked private) and ntfy.kidd.network
+# (the lab's alerts; ntfy's own login). The tunnel hands every host to arda's
+# Traefik (config.yaml), and this Ingress sends these on to ainur's Traefik,
+# which serves them as on the LAN.
+#
+# external-dns-tunnel publishes these names (kidd.network/tunnel); arda's
+# LAN DNS leaves them alone (kidd.network/lan-dns: "false"), since on the
+# LAN they already point at ainur, kept by ainur's unifi CronJob.
+#
+# The hop to ainur is HTTPS on the LAN without checking ainur's certificate:
+# arda's Traefik doesn't hold the lab CA. The internet side is Cloudflare's.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ainur-homepage
+  annotations:
+    traefik.ingress.kubernetes.io/service.serversscheme: https
+    traefik.ingress.kubernetes.io/service.serverstransport: cloudflared-ainur@kubernetescrd
+spec:
+  # ainur by name: on the LAN, *.kidd.network is ainur's VIP (ainur's unifi
+  # CronJob). A name, not an EndpointSlice: Argo CD doesn't manage those.
+  type: ExternalName
+  externalName: ainur.kidd.network
+  ports:
+    - name: https
+      port: 443
+---
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: ainur
+spec:
+  insecureSkipVerify: true
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ainur-homepage
+  annotations:
+    kidd.network/tunnel: "true"
+    kidd.network/lan-dns: "false"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ainur-homepage
+                port:
+                  name: https
+    - host: homepage.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ainur-homepage
+                port:
+                  name: https
+    # ainur's ntfy (src/manifests/ainur/monitoring/ntfy.yaml), so a phone
+    # gets the lab's alerts away from home. ntfy has its own login.
+    - host: ntfy.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ainur-homepage
+                port:
+                  name: https

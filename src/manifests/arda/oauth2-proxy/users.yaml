@@ -1,0 +1,185 @@
+# The users tier's oauth2-proxy: deployment.yaml's, but letting through
+# LLDAP's users group (and admins), for the sites friends and family get
+# (Middleware dex-users, middleware.yaml). Its own pages and Dex's callback
+# are under /oauth2-users on auth.kidd.network; its cookie is the shared one.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oauth2-proxy-users
+  labels:
+    app: oauth2-proxy-users
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oauth2-proxy-users
+  template:
+    metadata:
+      labels:
+        app: oauth2-proxy-users
+    spec:
+      # The cookie key, derived from AINUR_SSO_SECRET, the same on every
+      # rebuild, so logins outlive a restart.
+      initContainers:
+        - name: cookie-secret
+          image: alpine:3.22
+          command:
+            - sh
+            - -c
+            - printf '%s' "$SSO_SECRET:kidd-users-cookie" | sha256sum | cut -c1-32 | tr -d '\n' > /secret/cookie
+          env:
+            # AINUR_SSO_SECRET (.env): dedicated random cookie seed, separate
+            # from the OIDC client secret.
+            - name: SSO_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: dex
+                  key: cookie-seed
+          volumeMounts:
+            - name: cookie
+              mountPath: /secret
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+      containers:
+        - name: oauth2-proxy-users
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.12.0
+          args:
+            - --http-address=0.0.0.0:4180
+            - --reverse-proxy=true
+            - --provider=oidc
+            - --oidc-issuer-url=https://dex.kidd.network
+            - --provider-ca-file=/etc/dex/ca.crt
+            - --client-id=arda
+            - --redirect-url=https://auth.kidd.network/oauth2-users/callback
+            - --proxy-prefix=/oauth2-users
+            - --code-challenge-method=S256
+            - --cookie-secret-file=/secret/cookie
+            # The users tier's sign-in cookie, shared by every oauth2-proxy of
+            # that tier (both clusters): same name, domain and key (derived
+            # from AINUR_SSO_SECRET, ":kidd-users-cookie"), so one sign-in
+            # covers all of them. One per tier, not one for all: oauth2-proxy
+            # deletes a session that fails its group check, so a shared one
+            # would sign a friend out of everything at the first admin link.
+            - --cookie-name=_kidd_users
+            # Dex shows no consent page (skipApprovalScreen) unless asked to,
+            # and oauth2-proxy asks by default (approval_prompt=force).
+            - --approval-prompt=auto
+            - --cookie-domain=.kidd.network
+            - --cookie-secure=true
+            - --whitelist-domain=.kidd.network
+            - --email-domain=*
+            # The users tier: LLDAP's users group, and admins (Dex's groups
+            # claim; either will do).
+            - --scope=openid email profile groups
+            - --allowed-group=users
+            - --allowed-group=admins
+            - --skip-provider-button=true
+            - --set-xauthrequest=true
+            - --upstream=static://202
+          env:
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: dex
+                  key: client-secret
+          ports:
+            - name: http
+              containerPort: 4180
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+          volumeMounts:
+            - name: cookie
+              mountPath: /secret
+              readOnly: true
+            - name: dex
+              mountPath: /etc/dex
+              readOnly: true
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+      volumes:
+        - name: cookie
+          emptyDir:
+            medium: Memory
+        - name: dex
+          secret:
+            secretName: dex
+            items:
+              - key: ca.crt
+                path: ca.crt
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oauth2-proxy-users
+spec:
+  selector:
+    app: oauth2-proxy-users
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Only Traefik reaches oauth2-proxy-users, and it only needs CoreDNS and
+# ainur's Dex (192.168.1.59:443).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: oauth2-proxy-users
+spec:
+  podSelector:
+    matchLabels:
+      app: oauth2-proxy-users
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 4180
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 192.168.1.59/32
+      ports:
+        - { protocol: TCP, port: 443 }
+---
+# Its pages and Dex's callback, beside the admins' on auth.kidd.network.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oauth2-proxy-users
+  annotations:
+    # On the internet too, through the tunnel: the sign-in friends use away
+    # from home (MeTube, Transmute). It publishes auth.kidd.network.
+    kidd.network/tunnel: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: auth.kidd.network
+      http:
+        paths:
+          - path: /oauth2-users
+            pathType: Prefix
+            backend:
+              service:
+                name: oauth2-proxy-users
+                port:
+                  name: http

@@ -1,0 +1,202 @@
+# CouchDB 3.5, the LiveSync plugin's server. Each vault is a database the
+# plugin makes itself; the admin user "obsidian" is the only login.
+#
+# Set a vault up in the plugin with:
+#   URI       https://obsidian-sync.kidd.network
+#   Username  obsidian
+#   Password  ARDA_OBSIDIAN_PASSWORD
+#   Database  one per vault, e.g. the vault's name in lower case
+# and turn on end-to-end encryption there: the passphrase stays on the
+# devices, so CouchDB and its backups hold only ciphertext.
+#
+# The browser Obsidian (web.yaml) can use http://couchdb.obsidian.svc:5984.
+#
+# The databases. Argo never prunes or deletes it, so removing the app keeps
+# the notes; VolSync backs it up nightly like every Longhorn volume.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: couchdb-data
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: couchdb
+  labels:
+    app: couchdb
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume
+  selector:
+    matchLabels:
+      app: couchdb
+  template:
+    metadata:
+      labels:
+        app: couchdb
+    spec:
+      # The image's entrypoint writes the admin's hash into
+      # /opt/couchdb/etc/local.d, so that is a writable emptyDir with the
+      # LiveSync settings copied in, not the ConfigMap itself.
+      initContainers:
+        - name: config
+          image: couchdb:3.5.3
+          command: ["sh", "-c", "cp /config/livesync.ini /local.d/ && chown -R 5984:5984 /local.d"]
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: local-d
+              mountPath: /local.d
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
+      containers:
+        - name: couchdb
+          image: couchdb:3.5.3
+          env:
+            - name: COUCHDB_USER
+              value: obsidian
+            - name: COUCHDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: obsidian
+                  key: password
+          ports:
+            - name: http
+              containerPort: 5984
+            - name: metrics
+              containerPort: 17986
+          volumeMounts:
+            - name: data
+              mountPath: /opt/couchdb/data
+            - name: local-d
+              mountPath: /opt/couchdb/etc/local.d
+          # Not /_up: with require_valid_user every path wants the login.
+          readinessProbe:
+            tcpSocket:
+              port: http
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: couchdb-data
+        - name: config
+          configMap:
+            name: couchdb-config
+        - name: local-d
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: couchdb
+spec:
+  selector:
+    app: couchdb
+  ports:
+    - name: http
+      port: 5984
+      targetPort: http
+---
+# CouchDB's metrics (livesync.ini: [prometheus]), on a Service of their own so
+# nothing routes the internet to them: documents, requests, replication.
+apiVersion: v1
+kind: Service
+metadata:
+  name: couchdb-metrics
+  labels:
+    app: couchdb-metrics
+spec:
+  selector:
+    app: couchdb
+  ports:
+    - name: metrics
+      port: 17986
+      targetPort: metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: couchdb
+spec:
+  selector:
+    matchLabels:
+      app: couchdb-metrics
+  endpoints:
+    - port: metrics
+      path: /_node/_local/_prometheus
+---
+# Only Traefik and obsidian-web reach CouchDB (5984), and monitoring scrapes
+# metrics (17986). Single-node database needs no outbound connections.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: couchdb
+spec:
+  podSelector:
+    matchLabels:
+      app: couchdb
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: obsidian-web
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 5984
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 17986
+  egress: []
+---
+# On the internet through the tunnel (HTTPS is Cloudflare's), and on the LAN
+# at arda's address, where arda's Traefik answers with its lab-CA certificate
+# (../traefik/values.yaml).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: couchdb
+  annotations:
+    kidd.network/tunnel: "true"
+    # On the private Homepage: CouchDB's own admin page (Fauxton), with
+    # CouchDB's login (user obsidian).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: admin
+    gethomepage.dev/group: Notes
+    gethomepage.dev/name: Obsidian sync
+    gethomepage.dev/description: The vaults' CouchDB (Self-hosted LiveSync)
+    gethomepage.dev/icon: couchdb.png
+    gethomepage.dev/href: https://obsidian-sync.kidd.network/_utils/
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: obsidian-sync.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: couchdb
+                port:
+                  name: http

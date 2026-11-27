@@ -1,0 +1,210 @@
+# Plex: plays the same library as Jellyfin, at plex.kidd.network and
+# directly at 192.168.1.58:32400 (Plex's apps on the LAN connect straight to
+# the server), LAN only. Plex accounts, not Dex.
+#
+# Hardware transcoding on the Intel GPU (devic.es/dri, as Jellyfin): Plex
+# uses it only with a Plex Pass, and "Use hardware acceleration when
+# available" (Settings → Transcoder, on by default).
+#
+# Claiming (tying the server to a Plex account) happens when the container
+# starts while the server is unclaimed, with a claim token from
+# https://plex.tv/claim. The token lasts four minutes, far shorter than a
+# trip through .env and the bootstrap VM, so it isn't an ARDA_* value: get
+# one and hand it to whoever is deploying, who puts it straight into the plex
+# Secret (kubectl -n media create secret generic plex --from-literal=claim=claim-...)
+# and restarts Plex within the four minutes. After that the claim lives in
+# plex-config (backed up), and the Secret can go. Until then Plex runs
+# unclaimed, with no libraries.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: plex-config
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi   # metadata and artwork grow with the library
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plex
+  labels:
+    app: plex
+    kidd.network/media-volume: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # one writer per volume
+  selector:
+    matchLabels:
+      app: plex
+  template:
+    metadata:
+      labels:
+        app: plex
+    spec:
+      initContainers:
+        # The settings that matter, written into Preferences.xml before each
+        # start (once Plex has made it, at its first); the rest stay the UI's.
+        # The library follows the disk by itself: a film Radarr imports
+        # appears in Plex without a scan (inotify works, as every media pod
+        # shares the node), plus an hourly scan to catch anything missed.
+        - name: settings
+          image: alpine:3.22
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              f="/config/Library/Application Support/Plex Media Server/Preferences.xml"
+              [ -f "$f" ] || { echo "no Preferences.xml yet (first start)"; exit 0; }
+              set_pref() {
+                if grep -q " $1=\"" "$f"; then
+                  sed -i "s| $1=\"[^\"]*\"| $1=\"$2\"|" "$f"
+                else
+                  sed -i "s|<Preferences |<Preferences $1=\"$2\" |" "$f"
+                fi
+              }
+              set_pref FSEventLibraryUpdatesEnabled 1
+              set_pref FSEventLibraryPartialScanEnabled 1
+              set_pref ScheduledLibraryUpdatesEnabled 1
+              set_pref ScheduledLibraryUpdateInterval 3600
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+      containers:
+        - name: plex
+          image: plexinc/pms-docker:1.43.5.11079-b3b13e506
+          env:
+            - { name: TZ, value: Europe/London }
+            - { name: PLEX_UID, value: "1000" }
+            - { name: PLEX_GID, value: "1000" }
+            - name: ADVERTISE_IP
+              value: https://plex.kidd.network:443,http://192.168.1.58:32400
+            - name: PLEX_CLAIM
+              valueFrom: { secretKeyRef: { name: plex, key: claim, optional: true } }
+          ports:
+            - name: http
+              containerPort: 32400
+          readinessProbe:
+            httpGet:
+              path: /identity
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: transcode
+              mountPath: /transcode
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 50m, memory: 384Mi }
+            # The Intel GPU (../generic-device-plugin.yml): only nodes with i915 offer it.
+            limits: { memory: 2Gi, devic.es/dri: "1" }
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: plex-config
+        - name: transcode
+          emptyDir:
+            sizeLimit: 20Gi
+        - name: data
+          persistentVolumeClaim:
+            claimName: media
+---
+# For the web and for Seerr.
+apiVersion: v1
+kind: Service
+metadata:
+  name: plex
+spec:
+  selector:
+    app: plex
+  ports:
+    - name: http
+      port: 32400
+      targetPort: http
+---
+# Plex's apps on the LAN, straight to the server. Not port-forwarded: LAN only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: plex-lan
+  annotations:
+    # 192.168.1.58, shared with arda's other LAN services (../metallb/pool.yaml).
+    metallb.io/allow-shared-ip: arda
+spec:
+  type: LoadBalancer
+  selector:
+    app: plex
+  ports:
+    - name: http
+      port: 32400
+      targetPort: http
+---
+# Outbound limited to CoreDNS and the public internet (Plex auth/metadata),
+# blocking other cluster services and the LAN. Ingress stays open so LAN Plex
+# apps can connect straight to 192.168.1.58:32400 via MetalLB.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: plex
+spec:
+  podSelector:
+    matchLabels:
+      app: plex
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: plex
+  annotations:
+    # LAN only. Plex accounts. On both Homepages, the public one too (copied
+    # to ainur's by its arda-homepage CronJob): its link works at home.
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Media
+    gethomepage.dev/name: Plex
+    gethomepage.dev/description: Watch (Plex accounts)
+    gethomepage.dev/icon: plex.png
+    gethomepage.dev/href: https://plex.kidd.network/web
+    # Its pods are on arda, where ainur's Homepage can't look: no status badge.
+    gethomepage.dev/external: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: plex.kidd.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: plex
+                port:
+                  name: http

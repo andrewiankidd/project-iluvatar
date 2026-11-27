@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: dragonwilds
+  annotations:
+    external-dns.kubernetes.io/hostname: dragonwilds.kidd.network
+    external-dns.kubernetes.io/target: home.kidd.network
+    # 192.168.1.58, shared with the other games (../metallb/pool.yaml), and
+    # forwarded from the internet by ainur's unifi CronJob.
+    metallb.io/allow-shared-ip: arda
+    kidd.network/port-forward: "true"
+    # On the public Homepage at kidd.network. No web page of its own (UDP
+    # only), so the link is the game's; players find the server in-game.
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Games
+    gethomepage.dev/name: Dragonwilds
+    gethomepage.dev/description: "KiddNet Dragonwilds: in the game's server list"
+    gethomepage.dev/icon: mdi-sword-cross
+    gethomepage.dev/href: https://dragonwilds.runescape.com
+    gethomepage.dev/external: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app: dragonwilds
+  ports:
+    - name: game
+      port: 7777
+      targetPort: game
+      protocol: UDP
+    - name: beacon
+      port: 8888
+      targetPort: beacon
+      protocol: UDP

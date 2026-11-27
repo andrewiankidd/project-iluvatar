@@ -1,0 +1,29 @@
+# Argo CD's and cert-manager's metrics. Both are installed by k3s at first
+# boot (user-data), before the ServiceMonitor CRD exists, so their charts
+# only make the metrics Services and the monitors live here.
+
+# Argo CD (both clusters' apps): sync and health per app, reconcile times,
+# Git and Helm fetches. Every Service in argocd with a port http-metrics.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd
+spec:
+  namespaceSelector:
+    matchNames: [argocd]
+  selector: {}
+  endpoints:
+    - port: http-metrics
+---
+# cert-manager and trust-manager: every certificate's expiry and renewal,
+# so the lab CA's certificates (all the LAN's HTTPS) can't lapse unseen.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cert-manager
+spec:
+  namespaceSelector:
+    matchNames: [cert-manager]
+  selector: {}
+  endpoints:
+    - targetPort: 9402

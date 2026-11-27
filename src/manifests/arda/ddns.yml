@@ -1,0 +1,42 @@
+# home.kidd.network: this network's public IPv4 address, kept current.
+#
+# What cannot go through the Cloudflare Tunnel (cloudflared.yml) reaches arda
+# through the router's port forwards instead, at this address. Its records
+# are CNAMEs to home.kidd.network (the Minecraft servers' are set in
+# minecraft.yml), so a change of address is one update here.
+#
+# DNS only: proxying would hide the address the forwards need.
+#
+# Reads the cloudflare-api-token Secret, in this app's namespace, as
+# external-dns.yml does.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ddns
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: arda
+  source:
+    repoURL: https://github.com/andrewiankidd/project-iluvatar.git
+    targetRevision: main
+    path: src/manifests/arda/ddns
+  destination:
+    name: arda
+    namespace: ddns
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    # Keep retrying a failed sync: a fresh cluster has to come up on
+    # its own, and most failures are ordering (a CRD, webhook or
+    # Secret not there yet) that resolves itself.
+    retry:
+      limit: -1
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
+    automated:
+      prune: true
+      selfHeal: true
